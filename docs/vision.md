@@ -8,6 +8,8 @@ Until now a website served a person who came alone. More and more, a person come
 
 Sites, in turn, increasingly need exactly these skills, and today they must buy them and pay for every visitor. BYOA connects the two: **a site asks for skills, the visitor's agents provide them, the visitor controls the cost.**
 
+BYOA is not an alternative to the AI companies; it connects them. The most capable agents often come with subscriptions from large providers, and they are central to the protocol. Next to them stand API keys, open models and models on the visitor's own hardware. The protocol gives every provider the same way into every site, and every person the same right to choose which agent to bring, or to use several at once.
+
 ## 2. Roles
 
 | Role | Who | Responsibility |

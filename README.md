@@ -31,6 +31,7 @@ People no longer browse alone: everyone arrives with their own set of agents. BY
 - **Transport-agnostic core.** The browser comes first; the same messages are meant to serve desktop apps on Windows, macOS and Linux, and agent-to-agent interaction later.
 - **Build on what exists:** OpenAI-compatible inference APIs, OAuth, MCP and WebMCP, A2A agent cards.
 - **Open and neutral.** No vendor owns the protocol.
+- **For everyone, against no one.** BYOA does not compete with AI providers — it connects them. The most capable agents often come with subscriptions from large providers, and they are central to BYOA; next to them stand API keys, open models and models on the visitor's own hardware. Every provider gets the same way into every site, and every person the same right to choose which agent to bring, or to use several at once.
 
 ## Where it came from
 
