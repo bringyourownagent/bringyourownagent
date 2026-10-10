@@ -1,6 +1,12 @@
 # Changelog
 
-Both libraries share one version number and one rule set. Dates are UTC.
+The libraries share one version number and one rule set. Dates are UTC.
+
+## 0.0.2 for .NET (2026-10-10)
+
+- First release of the .NET library, NuGet package `BringYourOwnAgent`, with the same rules as the Python and Node.js 0.0.2: `Manifest.Validate`, `Gate.CheckCall` and `Gate.ApplyOpinion`. It passes the same 173 shared test vectors. Targets .NET 8 (no dependencies) and .NET Standard 2.0 (depends on System.Text.Json).
+- Published only from GitHub Actions, through NuGet trusted publishing.
+- No change to any rule or code, or to the Python and Node.js packages.
 
 ## 0.0.2 (2026-10-10)
 

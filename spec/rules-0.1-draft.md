@@ -2,7 +2,7 @@
 
 > **DRAFT FOR DISCUSSION.** This is a first proposal, not a standard. Every code, field name and decision below may change before specification v0.1. Comments and objections are welcome as GitHub issues.
 
-This document lists the first rules of BYOA that a program can check, in plain English. Each rule has a stable code. The reference implementations in [`../sdk/`](../sdk/) (Python and Node.js, version 0.0.1) implement exactly these rules, and the shared test vectors in [`../sdk/test-vectors/`](../sdk/test-vectors/) pin down their behaviour.
+This document lists the first rules of BYOA that a program can check, in plain English. Each rule has a stable code. The reference implementations in [`../sdk/`](../sdk/) (Python, Node.js and .NET, version 0.0.2) implement exactly these rules, and the shared test vectors in [`../sdk/test-vectors/`](../sdk/test-vectors/) pin down their behaviour.
 
 There are two groups of rules:
 

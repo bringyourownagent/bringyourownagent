@@ -1,6 +1,6 @@
 # BYOA shared test vectors
 
-These JSON files are the contract between the BYOA implementations. The Python and Node.js libraries both load them and must produce the same results; any future implementation should load them too. The rules they test are in [`../../spec/rules-0.1-draft.md`](../../spec/rules-0.1-draft.md) (a draft for discussion).
+These JSON files are the contract between the BYOA implementations. The Python, Node.js and .NET libraries all load them and must produce the same results; any future implementation should load them too. The rules they test are in [`../../spec/rules-0.1-draft.md`](../../spec/rules-0.1-draft.md) (a draft for discussion).
 
 | File | Function under test |
 |---|---|

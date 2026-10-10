@@ -1,0 +1,69 @@
+# Publishes sdk/dotnet to nuget.org when a tag like dotnet-v0.0.2 is pushed.
+# Uses NuGet trusted publishing (OIDC): no long-lived API key is stored anywhere. NuGet/login exchanges the
+# workflow's GitHub OIDC token for a temporary nuget.org API key that is valid for one hour.
+# Docs: https://learn.microsoft.com/en-us/nuget/nuget-org/trusted-publishing
+# nuget.org side: your user name -> Trusted Publishing -> add a policy: policy owner = the nuget.org account
+# (or organization) that will own the package BringYourOwnAgent, repository owner bringyourownagent,
+# repository bringyourownagent, workflow file publish-dotnet.yml, environment "nuget".
+# GitHub side: environment "nuget" with the secret NUGET_USER = the nuget.org profile name of the policy
+# owner (the user name, not the email address).
+name: Publish NuGet package
+
+on:
+  push:
+    tags: ["dotnet-v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+      - name: Test
+        working-directory: sdk/dotnet
+        run: |
+          dotnet run --project tests/BringYourOwnAgent.Tests -c Release -f net8.0
+          dotnet run --project tests/BringYourOwnAgent.Tests -c Release -f net8.0 -p:TestNetStandard=true
+      - name: Check the tag matches the package version
+        working-directory: sdk/dotnet
+        run: |
+          version=$(dotnet msbuild src/BringYourOwnAgent/BringYourOwnAgent.csproj -getProperty:Version)
+          test "dotnet-v$version" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME does not match version $version"; exit 1; }
+      - name: Pack
+        working-directory: sdk/dotnet
+        run: dotnet pack src/BringYourOwnAgent/BringYourOwnAgent.csproj -c Release -o "$GITHUB_WORKSPACE/dist"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nuget-packages
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: nuget
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: nuget-packages
+          path: dist/
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+      - name: NuGet login (OIDC to a temporary API key)
+        uses: NuGet/login@v1
+        id: login
+        with:
+          user: ${{ secrets.NUGET_USER }}
+      - name: Push the package (the .snupkg symbols go with it)
+        run: >-
+          dotnet nuget push "dist/*.nupkg"
+          --api-key "${{ steps.login.outputs.NUGET_API_KEY }}"
+          --source https://api.nuget.org/v3/index.json
+          --skip-duplicate
