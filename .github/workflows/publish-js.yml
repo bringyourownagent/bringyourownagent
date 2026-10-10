@@ -1,0 +1,37 @@
+# Publishes sdk/js to npm when a tag like js-v0.0.2 is pushed.
+# Uses npm trusted publishing (OIDC): no npm token is stored anywhere; provenance is attached automatically.
+# npm side: package "bringyourownagent" -> Settings -> Trusted publisher: GitHub Actions,
+# organization bringyourownagent, repository bringyourownagent, workflow publish-js.yml, environment "npm".
+name: Publish npm package
+
+on:
+  push:
+    tags: ["js-v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+      - name: Test
+        working-directory: sdk/js
+        run: node --test
+      - name: Check the tag matches the package version
+        working-directory: sdk/js
+        run: |
+          version=$(node -p "require('./package.json').version")
+          test "js-v$version" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME does not match version $version"; exit 1; }
+      - name: Publish
+        working-directory: sdk/js
+        run: npm publish --access public
