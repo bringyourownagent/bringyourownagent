@@ -1,0 +1,7 @@
+{
+  "byoa": "0.1-draft",
+  "skills": ["audio.transcribe", "text.understand"],
+  "budget": { "perSession": "0.20 USD" },
+  "expiresAt": "2026-10-10T13:00:00Z",
+  "warnIf": { "sendsText": true }
+}

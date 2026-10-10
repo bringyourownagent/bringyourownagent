@@ -1,0 +1,8 @@
+{
+  "skill": "audio.transcribe",
+  "at": "2026-10-10T12:00:00Z",
+  "provider": "api-key",
+  "estimatedCost": "0.004 USD",
+  "input": { "clipSeconds": 42, "textChars": 0 },
+  "params": { "language": "ru" }
+}

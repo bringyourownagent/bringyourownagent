@@ -1,0 +1,13 @@
+{
+  "byoa": "0.1-draft",
+  "purpose": {
+    "summary": "Family geography game: recognise country names",
+    "limits": { "maxClipSeconds": 15, "maxCallsPerMinute": 20 }
+  },
+  "skills": {
+    "audio.transcribe": { "languages": ["ru", "sk"], "required": true },
+    "text.understand": { "size": "small", "required": false }
+  },
+  "privacy": "personal-voice",
+  "expectedCost": { "perSession": "0.06 USD" }
+}

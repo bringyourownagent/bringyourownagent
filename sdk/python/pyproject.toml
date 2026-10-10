@@ -1,0 +1,48 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "bringyourownagent"
+dynamic = ["version"]
+description = "Early draft reference implementation of BYOA (Bring Your Own Agent): manifest validation and the call gate."
+readme = "README.md"
+requires-python = ">=3.9"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "ultrathinker", email = "universeissilent42@gmail.com" }]
+keywords = ["byoa", "bring-your-own-agent", "ai", "agents", "agent-wallet", "protocol", "manifest", "grant", "local-models"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries",
+    "Typing :: Typed",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://bringyourownagent.org"
+Repository = "https://github.com/bringyourownagent/bringyourownagent"
+Source = "https://github.com/bringyourownagent/bringyourownagent/tree/main/sdk/python"
+Rules = "https://github.com/bringyourownagent/bringyourownagent/blob/main/spec/rules-0.1-draft.md"
+Issues = "https://github.com/bringyourownagent/bringyourownagent/issues"
+
+[project.scripts]
+bringyourownagent = "bringyourownagent.cli:main"
+
+[tool.hatch.version]
+path = "src/bringyourownagent/_version.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/bringyourownagent"]
+
+[tool.hatch.build.targets.sdist]
+include = ["/src/bringyourownagent", "/README.md", "/LICENSE"]

@@ -1,0 +1,570 @@
+{
+  "description": "Shared test vectors for checkCall / check_call (hard limits only; no purpose judge). Rules: spec/rules-0.1-draft.md, Section 5.",
+  "byoa": "0.1-draft",
+  "defaults": {
+    "manifest": {
+      "byoa": "0.1-draft",
+      "purpose": {
+        "summary": "Family geography game: recognise country names",
+        "limits": { "maxClipSeconds": 15, "maxCallsPerMinute": 20 }
+      },
+      "skills": {
+        "audio.transcribe": { "languages": ["ru", "sk"], "required": true },
+        "text.understand": { "size": "small", "required": false }
+      },
+      "privacy": "personal-voice",
+      "expectedCost": { "perSession": "0.06 USD" }
+    },
+    "grant": {
+      "byoa": "0.1-draft",
+      "skills": ["audio.transcribe", "text.understand"],
+      "budget": { "perSession": "0.20 USD" },
+      "expiresAt": "2026-10-10T13:00:00Z"
+    },
+    "call": {
+      "skill": "audio.transcribe",
+      "at": "2026-10-10T12:00:00Z",
+      "provider": "api-key",
+      "estimatedCost": "0.003 USD",
+      "input": { "clipSeconds": 9 },
+      "params": { "language": "ru" }
+    },
+    "state": {
+      "spent": "0.04 USD",
+      "callTimes": ["2026-10-10T11:59:30Z", "2026-10-10T11:59:45Z"]
+    }
+  },
+  "cases": [
+    {
+      "name": "a 9-second clip is allowed",
+      "expect": { "decision": "allowed", "reasons": [] }
+    },
+    {
+      "name": "a 42-second clip with maxClipSeconds 15 is blocked",
+      "callPatch": { "input": { "clipSeconds": 42 } },
+      "expect": { "decision": "blocked", "reasons": [{ "code": "clip-too-long" }] }
+    },
+    {
+      "name": "a clip of exactly 15 seconds is allowed",
+      "callPatch": { "input": { "clipSeconds": 15 } },
+      "expect": { "decision": "allowed", "reasons": [] }
+    },
+    {
+      "name": "the grant can make the clip limit stricter",
+      "grantPatch": { "limits": { "maxClipSeconds": 8 } },
+      "expect": { "decision": "blocked", "reasons": [{ "code": "clip-too-long" }] }
+    },
+    {
+      "name": "the grant cannot loosen the manifest clip limit",
+      "grantPatch": { "limits": { "maxClipSeconds": 60 } },
+      "callPatch": { "input": { "clipSeconds": 42 } },
+      "expect": { "decision": "blocked", "reasons": [{ "code": "clip-too-long" }] }
+    },
+    {
+      "name": "a grant clip limit applies when the manifest has none",
+      "manifestPatch": { "purpose": { "limits": null } },
+      "grantPatch": { "limits": { "maxClipSeconds": 5 } },
+      "expect": { "decision": "blocked", "reasons": [{ "code": "clip-too-long" }] }
+    },
+    {
+      "name": "a skill that is not in the grant is blocked",
+      "grantPatch": { "skills": ["audio.transcribe"] },
+      "callPatch": { "skill": "text.understand", "input": { "clipSeconds": 0, "textChars": 24 } },
+      "expect": { "decision": "blocked", "reasons": [{ "code": "skill-not-granted" }] }
+    },
+    {
+      "name": "a skill the manifest did not declare is blocked even if granted",
+      "grantPatch": { "skills": ["audio.transcribe", "text.understand", "image.generate"] },
+      "callPatch": { "skill": "image.generate", "input": { "clipSeconds": 0 } },
+      "expect": { "decision": "blocked", "reasons": [{ "code": "skill-not-declared" }] }
+    },
+    {
+      "name": "a skill neither declared nor granted gives both reasons",
+      "callPatch": { "skill": "video.generate", "input": { "clipSeconds": 0 } },
+      "expect": { "decision": "blocked", "reasons": [{ "code": "skill-not-declared" }, { "code": "skill-not-granted" }] }
+    },
+    {
+      "name": "a call that would exceed the session budget asks the visitor",
+      "statePatch": { "spent": "0.199 USD" },
+      "expect": { "decision": "ask", "reasons": [{ "code": "budget-exceeded" }] }
+    },
+    {
+      "name": "reaching the budget exactly is allowed",
+      "statePatch": { "spent": "0.197 USD" },
+      "expect": { "decision": "allowed", "reasons": [] }
+    },
+    {
+      "name": "money is exact: 0.1 + 0.2 fits a budget of 0.3",
+      "grantPatch": { "budget": { "perSession": "0.3 USD" } },
+      "callPatch": { "estimatedCost": "0.2 USD" },
+      "statePatch": { "spent": "0.1 USD" },
+      "expect": { "decision": "allowed", "reasons": [] }
+    },
+    {
+      "name": "money is exact: one millionth over the budget asks",
+      "grantPatch": { "budget": { "perSession": "0.3 USD" } },
+      "callPatch": { "estimatedCost": "0.200001 USD" },
+      "statePatch": { "spent": "0.1 USD" },
+      "expect": { "decision": "ask", "reasons": [{ "code": "budget-exceeded" }] }
+    },
+    {
+      "name": "a zero budget allows a free local model",
+      "grantPatch": { "budget": { "perSession": "0 USD" }, "localOnly": true },
+      "callPatch": { "provider": "local-model", "estimatedCost": "0 USD" },
+      "state": null,
+      "expect": { "decision": "allowed", "reasons": [] }
+    },
+    {
+      "name": "a zero budget asks before a paid call",
+      "grantPatch": { "budget": { "perSession": "0 USD" } },
+      "state": null,
+      "expect": { "decision": "ask", "reasons": [{ "code": "budget-exceeded" }] }
+    },
+    {
+      "name": "an expired grant blocks",
+      "grantPatch": { "expiresAt": "2026-10-10T11:00:00Z" },
+      "expect": { "decision": "blocked", "reasons": [{ "code": "grant-expired" }] }
+    },
+    {
+      "name": "a call at the exact expiry instant is blocked",
+      "callPatch": { "at": "2026-10-10T13:00:00Z" },
+      "expect": { "decision": "blocked", "reasons": [{ "code": "grant-expired" }] }
+    },
+    {
+      "name": "a call one millisecond before expiry is allowed",
+      "callPatch": { "at": "2026-10-10T12:59:59.999Z" },
+      "expect": { "decision": "allowed", "reasons": [] }
+    },
+    {
+      "name": "time zone offsets are compared as instants (13:30+02:00 is 11:30Z)",
+      "grantPatch": { "expiresAt": "2026-10-10T13:30:00+02:00" },
+      "expect": { "decision": "blocked", "reasons": [{ "code": "grant-expired" }] }
+    },
+    {
+      "name": "fraction digits beyond milliseconds are cut off, not rounded",
+      "grantPatch": { "expiresAt": "2026-10-10T12:00:00.0009Z" },
+      "expect": { "decision": "blocked", "reasons": [{ "code": "grant-expired" }] }
+    },
+    {
+      "name": "a leap day in a leap year is a valid expiry",
+      "grantPatch": { "expiresAt": "2028-02-29T00:00:00Z" },
+      "expect": { "decision": "allowed", "reasons": [] }
+    },
+    {
+      "name": "20 calls in the last minute block the next one (maxCallsPerMinute 20)",
+      "statePatch": { "callTimes": ["2026-10-10T11:59:01Z", "2026-10-10T11:59:02Z", "2026-10-10T11:59:03Z", "2026-10-10T11:59:04Z", "2026-10-10T11:59:05Z", "2026-10-10T11:59:06Z", "2026-10-10T11:59:07Z", "2026-10-10T11:59:08Z", "2026-10-10T11:59:09Z", "2026-10-10T11:59:10Z", "2026-10-10T11:59:11Z", "2026-10-10T11:59:12Z", "2026-10-10T11:59:13Z", "2026-10-10T11:59:14Z", "2026-10-10T11:59:15Z", "2026-10-10T11:59:16Z", "2026-10-10T11:59:17Z", "2026-10-10T11:59:18Z", "2026-10-10T11:59:19Z", "2026-10-10T11:59:20Z"] },
+      "expect": { "decision": "blocked", "reasons": [{ "code": "rate-exceeded" }] }
+    },
+    {
+      "name": "19 calls in the last minute leave room for one more",
+      "statePatch": { "callTimes": ["2026-10-10T11:59:01Z", "2026-10-10T11:59:02Z", "2026-10-10T11:59:03Z", "2026-10-10T11:59:04Z", "2026-10-10T11:59:05Z", "2026-10-10T11:59:06Z", "2026-10-10T11:59:07Z", "2026-10-10T11:59:08Z", "2026-10-10T11:59:09Z", "2026-10-10T11:59:10Z", "2026-10-10T11:59:11Z", "2026-10-10T11:59:12Z", "2026-10-10T11:59:13Z", "2026-10-10T11:59:14Z", "2026-10-10T11:59:15Z", "2026-10-10T11:59:16Z", "2026-10-10T11:59:17Z", "2026-10-10T11:59:18Z", "2026-10-10T11:59:19Z"] },
+      "expect": { "decision": "allowed", "reasons": [] }
+    },
+    {
+      "name": "a call exactly 60 seconds earlier is outside the window",
+      "statePatch": { "callTimes": ["2026-10-10T11:59:00Z", "2026-10-10T11:59:01Z", "2026-10-10T11:59:02Z", "2026-10-10T11:59:03Z", "2026-10-10T11:59:04Z", "2026-10-10T11:59:05Z", "2026-10-10T11:59:06Z", "2026-10-10T11:59:07Z", "2026-10-10T11:59:08Z", "2026-10-10T11:59:09Z", "2026-10-10T11:59:10Z", "2026-10-10T11:59:11Z", "2026-10-10T11:59:12Z", "2026-10-10T11:59:13Z", "2026-10-10T11:59:14Z", "2026-10-10T11:59:15Z", "2026-10-10T11:59:16Z", "2026-10-10T11:59:17Z", "2026-10-10T11:59:18Z", "2026-10-10T11:59:19Z"] },
+      "expect": { "decision": "allowed", "reasons": [] }
+    },
+    {
+      "name": "a call at the same instant is inside the window",
+      "statePatch": { "callTimes": ["2026-10-10T11:59:01Z", "2026-10-10T11:59:02Z", "2026-10-10T11:59:03Z", "2026-10-10T11:59:04Z", "2026-10-10T11:59:05Z", "2026-10-10T11:59:06Z", "2026-10-10T11:59:07Z", "2026-10-10T11:59:08Z", "2026-10-10T11:59:09Z", "2026-10-10T11:59:10Z", "2026-10-10T11:59:11Z", "2026-10-10T11:59:12Z", "2026-10-10T11:59:13Z", "2026-10-10T11:59:14Z", "2026-10-10T11:59:15Z", "2026-10-10T11:59:16Z", "2026-10-10T11:59:17Z", "2026-10-10T11:59:18Z", "2026-10-10T11:59:19Z", "2026-10-10T12:00:00Z"] },
+      "expect": { "decision": "blocked", "reasons": [{ "code": "rate-exceeded" }] }
+    },
+    {
+      "name": "call times after the call are not counted",
+      "statePatch": { "callTimes": ["2026-10-10T12:00:01Z", "2026-10-10T12:00:02Z", "2026-10-10T12:00:03Z", "2026-10-10T12:00:04Z", "2026-10-10T12:00:05Z", "2026-10-10T12:00:06Z", "2026-10-10T12:00:07Z", "2026-10-10T12:00:08Z", "2026-10-10T12:00:09Z", "2026-10-10T12:00:10Z", "2026-10-10T12:00:11Z", "2026-10-10T12:00:12Z", "2026-10-10T12:00:13Z", "2026-10-10T12:00:14Z", "2026-10-10T12:00:15Z", "2026-10-10T12:00:16Z", "2026-10-10T12:00:17Z", "2026-10-10T12:00:18Z", "2026-10-10T12:00:19Z", "2026-10-10T12:00:20Z"] },
+      "expect": { "decision": "allowed", "reasons": [] }
+    },
+    {
+      "name": "the grant can lower the rate",
+      "grantPatch": { "limits": { "maxCallsPerMinute": 2 } },
+      "expect": { "decision": "blocked", "reasons": [{ "code": "rate-exceeded" }] }
+    },
+    {
+      "name": "a rate of zero blocks every call",
+      "grantPatch": { "limits": { "maxCallsPerMinute": 0 } },
+      "state": null,
+      "expect": { "decision": "blocked", "reasons": [{ "code": "rate-exceeded" }] }
+    },
+    {
+      "name": "local-only grant: a call to an API key is blocked",
+      "grantPatch": { "localOnly": true },
+      "expect": { "decision": "blocked", "reasons": [{ "code": "not-local" }] }
+    },
+    {
+      "name": "local-only grant: a call to a subscription is blocked",
+      "grantPatch": { "localOnly": true },
+      "callPatch": { "provider": "subscription" },
+      "expect": { "decision": "blocked", "reasons": [{ "code": "not-local" }] }
+    },
+    {
+      "name": "local-only grant: a local model is allowed",
+      "grantPatch": { "localOnly": true },
+      "callPatch": { "provider": "local-model", "estimatedCost": "0 USD" },
+      "expect": { "decision": "allowed", "reasons": [] }
+    },
+    {
+      "name": "local-only grant: a home server is allowed",
+      "grantPatch": { "localOnly": true },
+      "callPatch": { "provider": "home-server", "estimatedCost": "0 USD" },
+      "expect": { "decision": "allowed", "reasons": [] }
+    },
+    {
+      "name": "manifest privacy local-only also requires a local provider",
+      "manifestPatch": { "privacy": "local-only" },
+      "callPatch": { "provider": "connected-account" },
+      "expect": { "decision": "blocked", "reasons": [{ "code": "not-local" }] }
+    },
+    {
+      "name": "text sent when the visitor asked to be warned gives warn",
+      "grantPatch": { "warnIf": { "sendsText": true } },
+      "callPatch": { "skill": "text.understand", "input": { "clipSeconds": 0, "textChars": 24 } },
+      "expect": { "decision": "warn", "reasons": [{ "code": "text-sent" }] }
+    },
+    {
+      "name": "an audio clip that states zero characters of text is not text",
+      "grantPatch": { "warnIf": { "sendsText": true } },
+      "callPatch": { "input": { "textChars": 0 } },
+      "expect": { "decision": "allowed", "reasons": [] }
+    },
+    {
+      "name": "zero characters is not sending text",
+      "grantPatch": { "warnIf": { "sendsText": true } },
+      "callPatch": { "skill": "text.understand", "input": { "clipSeconds": 0, "textChars": 0 } },
+      "expect": { "decision": "allowed", "reasons": [] }
+    },
+    {
+      "name": "without the condition, sending text is allowed",
+      "callPatch": { "skill": "text.understand", "input": { "clipSeconds": 0, "textChars": 24 } },
+      "expect": { "decision": "allowed", "reasons": [] }
+    },
+    {
+      "name": "a grant text limit blocks longer text",
+      "grantPatch": { "limits": { "maxTextChars": 200 } },
+      "callPatch": { "skill": "text.understand", "input": { "clipSeconds": 0, "textChars": 201 } },
+      "expect": { "decision": "blocked", "reasons": [{ "code": "text-too-long" }] }
+    },
+    {
+      "name": "a manifest text limit blocks longer text",
+      "manifestPatch": { "purpose": { "limits": { "maxTextChars": 100 } } },
+      "callPatch": { "skill": "text.understand", "input": { "clipSeconds": 0, "textChars": 101 } },
+      "expect": { "decision": "blocked", "reasons": [{ "code": "text-too-long" }] }
+    },
+    {
+      "name": "a call above the visitor's call cost threshold gives warn",
+      "grantPatch": { "warnIf": { "callCostAbove": "0.002 USD" } },
+      "expect": { "decision": "warn", "reasons": [{ "code": "call-cost-high" }] }
+    },
+    {
+      "name": "a call exactly at the call cost threshold does not warn",
+      "grantPatch": { "warnIf": { "callCostAbove": "0.003 USD" } },
+      "expect": { "decision": "allowed", "reasons": [] }
+    },
+    {
+      "name": "session spend above the visitor's threshold gives warn",
+      "grantPatch": { "warnIf": { "spendAbove": "0.04 USD" } },
+      "expect": { "decision": "warn", "reasons": [{ "code": "spend-high" }] }
+    },
+    {
+      "name": "the strictest decision wins and every reason is listed",
+      "grantPatch": { "limits": { "maxTextChars": 500 }, "warnIf": { "sendsText": true } },
+      "callPatch": { "skill": "text.understand", "input": { "clipSeconds": 0, "textChars": 5000 } },
+      "statePatch": { "spent": "0.199 USD" },
+      "expect": {
+        "decision": "blocked",
+        "reasons": [{ "code": "text-too-long" }, { "code": "budget-exceeded" }, { "code": "text-sent" }]
+      }
+    },
+    {
+      "name": "ask is stricter than warn",
+      "grantPatch": { "warnIf": { "sendsText": true } },
+      "callPatch": { "skill": "text.understand", "input": { "clipSeconds": 0, "textChars": 24 } },
+      "statePatch": { "spent": "0.199 USD" },
+      "expect": { "decision": "ask", "reasons": [{ "code": "budget-exceeded" }, { "code": "text-sent" }] }
+    },
+    {
+      "name": "an estimated cost in another currency is blocked",
+      "callPatch": { "estimatedCost": "0.003 EUR" },
+      "expect": { "decision": "blocked", "reasons": [{ "code": "currency-mismatch" }] }
+    },
+    {
+      "name": "spend recorded in another currency is blocked",
+      "statePatch": { "spent": "0.04 EUR" },
+      "expect": { "decision": "blocked", "reasons": [{ "code": "currency-mismatch" }] }
+    },
+    {
+      "name": "a currency mismatch skips the money checks that cannot be compared",
+      "grantPatch": { "warnIf": { "callCostAbove": "0.001 USD", "spendAbove": "0.001 USD" } },
+      "callPatch": { "estimatedCost": "0.5 EUR" },
+      "expect": { "decision": "blocked", "reasons": [{ "code": "currency-mismatch" }] }
+    },
+    {
+      "name": "no state means nothing spent and no calls yet",
+      "state": null,
+      "expect": { "decision": "allowed", "reasons": [] }
+    },
+    {
+      "name": "state without call times is fine",
+      "statePatch": { "callTimes": null },
+      "expect": { "decision": "allowed", "reasons": [] }
+    },
+    {
+      "name": "unknown call fields and measurements are ignored",
+      "callPatch": { "traceId": "abc-123", "input": { "imagePixels": 1000000 } },
+      "expect": { "decision": "allowed", "reasons": [] }
+    },
+    {
+      "name": "unknown manifest limits are not enforced",
+      "manifestPatch": { "purpose": { "limits": { "maxTokens": 5 } } },
+      "expect": { "decision": "allowed", "reasons": [] }
+    },
+    {
+      "name": "manifest warnings do not block",
+      "manifestPatch": { "homepage": "https://example.org", "expectedCost": null },
+      "expect": { "decision": "allowed", "reasons": [] }
+    },
+    {
+      "name": "an invalid manifest blocks every call",
+      "manifestPatch": { "privacy": "secret" },
+      "expect": { "decision": "blocked", "reasons": [{ "code": "manifest-invalid", "path": "/privacy" }] }
+    },
+    {
+      "name": "optional grant fields set to null count as absent",
+      "grant": {
+        "byoa": "0.1-draft",
+        "skills": ["audio.transcribe"],
+        "budget": { "perSession": "0.20 USD", "perDay": null },
+        "expiresAt": "2026-10-10T13:00:00Z",
+        "limits": null,
+        "localOnly": null,
+        "warnIf": null,
+        "note": null
+      },
+      "expect": { "decision": "allowed", "reasons": [] }
+    },
+    {
+      "name": "a grant with an unknown field is refused (grants fail closed)",
+      "grantPatch": { "maxSpendPerDay": "1 USD" },
+      "expect": { "decision": "blocked", "reasons": [{ "code": "grant-invalid", "path": "/maxSpendPerDay" }] }
+    },
+    {
+      "name": "a grant with an unknown budget period is refused",
+      "grantPatch": { "budget": { "perDay": "1 USD" } },
+      "expect": { "decision": "blocked", "reasons": [{ "code": "grant-invalid", "path": "/budget/perDay" }] }
+    },
+    {
+      "name": "a grant with an unknown limit is refused",
+      "grantPatch": { "limits": { "maxTokens": 10 } },
+      "expect": { "decision": "blocked", "reasons": [{ "code": "grant-invalid", "path": "/limits/maxTokens" }] }
+    },
+    {
+      "name": "a grant with an unknown warning condition is refused",
+      "grantPatch": { "warnIf": { "sendsImages": true } },
+      "expect": { "decision": "blocked", "reasons": [{ "code": "grant-invalid", "path": "/warnIf/sendsImages" }] }
+    },
+    {
+      "name": "a grant without an expiry is refused",
+      "grantPatch": { "expiresAt": null },
+      "expect": { "decision": "blocked", "reasons": [{ "code": "grant-invalid", "path": "/expiresAt" }] }
+    },
+    {
+      "name": "a grant expiring on a day that does not exist is refused",
+      "grantPatch": { "expiresAt": "2026-02-29T00:00:00Z" },
+      "expect": { "decision": "blocked", "reasons": [{ "code": "grant-invalid", "path": "/expiresAt" }] }
+    },
+    {
+      "name": "a grant expiry without a time zone offset is refused",
+      "grantPatch": { "expiresAt": "2026-10-10T13:00:00" },
+      "expect": { "decision": "blocked", "reasons": [{ "code": "grant-invalid", "path": "/expiresAt" }] }
+    },
+    {
+      "name": "a grant warning threshold in another currency is refused",
+      "grantPatch": { "warnIf": { "callCostAbove": "0.01 EUR" } },
+      "expect": { "decision": "blocked", "reasons": [{ "code": "grant-invalid", "path": "/warnIf/callCostAbove" }] }
+    },
+    {
+      "name": "a grant without a protocol version is refused",
+      "grantPatch": { "byoa": null },
+      "expect": { "decision": "blocked", "reasons": [{ "code": "grant-invalid", "path": "/byoa" }] }
+    },
+    {
+      "name": "grant skills must be an array",
+      "grantPatch": { "skills": { "audio.transcribe": true } },
+      "expect": { "decision": "blocked", "reasons": [{ "code": "grant-invalid", "path": "/skills" }] }
+    },
+    {
+      "name": "grant localOnly must be a boolean",
+      "grantPatch": { "localOnly": "yes" },
+      "expect": { "decision": "blocked", "reasons": [{ "code": "grant-invalid", "path": "/localOnly" }] }
+    },
+    {
+      "name": "every grant problem is listed, in order",
+      "grant": {
+        "byoa": "0.1-draft",
+        "skills": ["audio.transcribe", "Bad"],
+        "budget": { "perSession": "20 cents" },
+        "expiresAt": "tomorrow",
+        "extra": 1
+      },
+      "expect": {
+        "decision": "blocked",
+        "reasons": [
+          { "code": "grant-invalid", "path": "/skills/1" },
+          { "code": "grant-invalid", "path": "/budget/perSession" },
+          { "code": "grant-invalid", "path": "/expiresAt" },
+          { "code": "grant-invalid", "path": "/extra" }
+        ]
+      }
+    },
+    {
+      "name": "a call that is not an object",
+      "call": null,
+      "expect": { "decision": "blocked", "reasons": [{ "code": "call-invalid", "path": "" }] }
+    },
+    {
+      "name": "a call without a provider",
+      "callPatch": { "provider": null },
+      "expect": { "decision": "blocked", "reasons": [{ "code": "call-invalid", "path": "/provider" }] }
+    },
+    {
+      "name": "a call with an unknown provider kind",
+      "callPatch": { "provider": "magic" },
+      "expect": { "decision": "blocked", "reasons": [{ "code": "call-invalid", "path": "/provider" }] }
+    },
+    {
+      "name": "a call without an estimated cost",
+      "callPatch": { "estimatedCost": null },
+      "expect": { "decision": "blocked", "reasons": [{ "code": "call-invalid", "path": "/estimatedCost" }] }
+    },
+    {
+      "name": "a call with a negative clip length",
+      "callPatch": { "input": { "clipSeconds": -1 } },
+      "expect": { "decision": "blocked", "reasons": [{ "code": "call-invalid", "path": "/input/clipSeconds" }] }
+    },
+    {
+      "name": "a call with a fractional character count",
+      "callPatch": { "input": { "textChars": 2.5 } },
+      "expect": { "decision": "blocked", "reasons": [{ "code": "call-invalid", "path": "/input/textChars" }] }
+    },
+    {
+      "name": "a call with a malformed skill id",
+      "callPatch": { "skill": "Audio" },
+      "expect": { "decision": "blocked", "reasons": [{ "code": "call-invalid", "path": "/skill" }] }
+    },
+    {
+      "name": "a call without a time",
+      "callPatch": { "at": null },
+      "expect": { "decision": "blocked", "reasons": [{ "code": "call-invalid", "path": "/at" }] }
+    },
+    {
+      "name": "a missing clip length is refused while a clip limit applies",
+      "callPatch": { "input": { "clipSeconds": null } },
+      "expect": { "decision": "blocked", "reasons": [{ "code": "call-invalid", "path": "/input/clipSeconds" }] }
+    },
+    {
+      "name": "a misspelt measurement does not count",
+      "callPatch": { "input": { "clipSeconds": null, "clipSecs": 9 } },
+      "expect": { "decision": "blocked", "reasons": [{ "code": "call-invalid", "path": "/input/clipSeconds" }] }
+    },
+    {
+      "name": "a call without any input is refused while a clip limit applies",
+      "callPatch": { "input": null },
+      "expect": { "decision": "blocked", "reasons": [{ "code": "call-invalid", "path": "/input/clipSeconds" }] }
+    },
+    {
+      "name": "without any clip limit the clip length is not required",
+      "manifestPatch": { "purpose": { "limits": null } },
+      "callPatch": { "input": null },
+      "expect": { "decision": "allowed", "reasons": [] }
+    },
+    {
+      "name": "a missing character count is refused while a text limit applies",
+      "grantPatch": { "limits": { "maxTextChars": 500 } },
+      "callPatch": { "skill": "text.understand", "input": { "clipSeconds": 0 } },
+      "expect": { "decision": "blocked", "reasons": [{ "code": "call-invalid", "path": "/input/textChars" }] }
+    },
+    {
+      "name": "a missing character count is refused while the visitor asked to be warned about text",
+      "grantPatch": { "warnIf": { "sendsText": true } },
+      "expect": { "decision": "blocked", "reasons": [{ "code": "call-invalid", "path": "/input/textChars" }] }
+    },
+    {
+      "name": "both missing measurements are reported",
+      "grantPatch": { "warnIf": { "sendsText": true } },
+      "callPatch": { "input": null },
+      "expect": {
+        "decision": "blocked",
+        "reasons": [
+          { "code": "call-invalid", "path": "/input/clipSeconds" },
+          { "code": "call-invalid", "path": "/input/textChars" }
+        ]
+      }
+    },
+    {
+      "name": "missing measurements are checked only once the other inputs are valid",
+      "grantPatch": { "expiresAt": null },
+      "callPatch": { "input": null },
+      "expect": { "decision": "blocked", "reasons": [{ "code": "grant-invalid", "path": "/expiresAt" }] }
+    },
+    {
+      "name": "explicit zeros satisfy the required measurements",
+      "grantPatch": { "limits": { "maxTextChars": 100 }, "warnIf": { "sendsText": true } },
+      "callPatch": { "skill": "text.understand", "input": { "clipSeconds": 0, "textChars": 0 } },
+      "expect": { "decision": "allowed", "reasons": [] }
+    },
+    {
+      "name": "a character count above 2^53 - 1 is refused",
+      "callPatch": { "input": { "textChars": 9007199254740993 } },
+      "expect": { "decision": "blocked", "reasons": [{ "code": "call-invalid", "path": "/input/textChars" }] }
+    },
+    {
+      "name": "a limit and a count beyond 2^53 - 1 are both refused, in every language",
+      "grantPatch": { "limits": { "maxTextChars": 9007199254740992 } },
+      "callPatch": { "skill": "text.understand", "input": { "clipSeconds": 0, "textChars": 9007199254740993 } },
+      "expect": {
+        "decision": "blocked",
+        "reasons": [
+          { "code": "grant-invalid", "path": "/limits/maxTextChars" },
+          { "code": "call-invalid", "path": "/input/textChars" }
+        ]
+      }
+    },
+    {
+      "name": "the largest allowed count, 2^53 - 1, is accepted",
+      "grantPatch": { "limits": { "maxTextChars": 9007199254740991 } },
+      "callPatch": { "skill": "text.understand", "input": { "clipSeconds": 0, "textChars": 9007199254740991 } },
+      "expect": { "decision": "allowed", "reasons": [] }
+    },
+    {
+      "name": "a clip length too large for a double (1e400) is refused",
+      "callPatch": { "input": { "clipSeconds": 1e400 } },
+      "expect": { "decision": "blocked", "reasons": [{ "code": "call-invalid", "path": "/input/clipSeconds" }] }
+    },
+    {
+      "name": "a state with a misspelt field is refused",
+      "state": { "spend": "0.10 USD" },
+      "expect": { "decision": "blocked", "reasons": [{ "code": "state-invalid", "path": "/spend" }] }
+    },
+    {
+      "name": "a state with a malformed call time is refused",
+      "statePatch": { "callTimes": ["yesterday"] },
+      "expect": { "decision": "blocked", "reasons": [{ "code": "state-invalid", "path": "/callTimes/0" }] }
+    },
+    {
+      "name": "every invalid input is reported",
+      "manifestPatch": { "privacy": "secret" },
+      "grantPatch": { "expiresAt": null },
+      "callPatch": { "provider": null },
+      "statePatch": { "spent": 5 },
+      "expect": {
+        "decision": "blocked",
+        "reasons": [
+          { "code": "manifest-invalid", "path": "/privacy" },
+          { "code": "grant-invalid", "path": "/expiresAt" },
+          { "code": "call-invalid", "path": "/provider" },
+          { "code": "state-invalid", "path": "/spent" }
+        ]
+      }
+    }
+  ]
+}

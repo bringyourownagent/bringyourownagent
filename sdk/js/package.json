@@ -1,0 +1,52 @@
+{
+  "name": "bringyourownagent",
+  "version": "0.0.1",
+  "description": "Early draft reference implementation of BYOA (Bring Your Own Agent): manifest validation and the call gate.",
+  "keywords": [
+    "byoa",
+    "bring-your-own-agent",
+    "ai",
+    "agents",
+    "agent-wallet",
+    "protocol",
+    "manifest",
+    "grant",
+    "local-models"
+  ],
+  "homepage": "https://bringyourownagent.org",
+  "bugs": {
+    "url": "https://github.com/bringyourownagent/bringyourownagent/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bringyourownagent/bringyourownagent.git",
+    "directory": "sdk/js"
+  },
+  "license": "Apache-2.0",
+  "author": "ultrathinker <universeissilent42@gmail.com> (https://github.com/ultrathinker)",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./src/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "main": "./src/index.js",
+  "types": "./index.d.ts",
+  "bin": {
+    "bringyourownagent": "bin/bringyourownagent.js"
+  },
+  "files": [
+    "bin/bringyourownagent.js",
+    "src/",
+    "index.d.ts"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node --test"
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "skill": "text.understand",
+  "at": "2026-10-10T12:00:05Z",
+  "provider": "subscription",
+  "estimatedCost": "0.001 USD",
+  "input": { "clipSeconds": 0, "textChars": 24 }
+}

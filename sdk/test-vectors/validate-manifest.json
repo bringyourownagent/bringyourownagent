@@ -1,0 +1,439 @@
+{
+  "description": "Shared test vectors for validateManifest / validate_manifest. Rules: spec/rules-0.1-draft.md, Section 3.",
+  "byoa": "0.1-draft",
+  "defaults": {
+    "manifest": {
+      "byoa": "0.1-draft",
+      "purpose": {
+        "summary": "Family geography game: recognise country names",
+        "limits": { "maxClipSeconds": 15, "maxCallsPerMinute": 20 }
+      },
+      "skills": {
+        "audio.transcribe": { "languages": ["ru", "sk"], "required": true },
+        "text.understand": { "size": "small", "required": false }
+      },
+      "privacy": "personal-voice",
+      "expectedCost": { "perSession": "0.06 USD" }
+    }
+  },
+  "cases": [
+    {
+      "name": "the manifest shown on the site is valid with no warnings",
+      "expect": { "ok": true, "errors": [], "warnings": [] }
+    },
+    {
+      "name": "an array is not a manifest",
+      "manifest": [],
+      "expect": { "ok": false, "errors": [{ "code": "manifest-not-object", "path": "" }], "warnings": [] }
+    },
+    {
+      "name": "a string is not a manifest",
+      "manifest": "audio.transcribe please",
+      "expect": { "ok": false, "errors": [{ "code": "manifest-not-object", "path": "" }], "warnings": [] }
+    },
+    {
+      "name": "null is not a manifest",
+      "manifest": null,
+      "expect": { "ok": false, "errors": [{ "code": "manifest-not-object", "path": "" }], "warnings": [] }
+    },
+    {
+      "name": "protocol version missing",
+      "manifestPatch": { "byoa": null },
+      "expect": { "ok": false, "errors": [{ "code": "version-missing", "path": "/byoa" }], "warnings": [] }
+    },
+    {
+      "name": "protocol version not supported",
+      "manifestPatch": { "byoa": "9.9" },
+      "expect": { "ok": false, "errors": [{ "code": "version-unsupported", "path": "/byoa" }], "warnings": [] }
+    },
+    {
+      "name": "protocol version as a number is not supported",
+      "manifestPatch": { "byoa": 0.1 },
+      "expect": { "ok": false, "errors": [{ "code": "version-unsupported", "path": "/byoa" }], "warnings": [] }
+    },
+    {
+      "name": "purpose missing",
+      "manifestPatch": { "purpose": null },
+      "expect": { "ok": false, "errors": [{ "code": "purpose-missing", "path": "/purpose" }], "warnings": [] }
+    },
+    {
+      "name": "purpose given as a plain string",
+      "manifestPatch": { "purpose": "a game" },
+      "expect": { "ok": false, "errors": [{ "code": "purpose-missing", "path": "/purpose" }], "warnings": [] }
+    },
+    {
+      "name": "summary missing",
+      "manifestPatch": { "purpose": { "summary": null } },
+      "expect": { "ok": false, "errors": [{ "code": "summary-missing", "path": "/purpose/summary" }], "warnings": [] }
+    },
+    {
+      "name": "summary of only whitespace",
+      "manifestPatch": { "purpose": { "summary": " \t\n\u00a0\u3000 " } },
+      "expect": { "ok": false, "errors": [{ "code": "summary-missing", "path": "/purpose/summary" }], "warnings": [] }
+    },
+    {
+      "name": "summary that is not a string",
+      "manifestPatch": { "purpose": { "summary": 42 } },
+      "expect": { "ok": false, "errors": [{ "code": "summary-missing", "path": "/purpose/summary" }], "warnings": [] }
+    },
+    {
+      "name": "summary of exactly 200 code points is accepted (199 letters and one emoji: 201 UTF-16 units)",
+      "manifestPatch": { "purpose": { "summary": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\ud83c\udf0d" } },
+      "expect": { "ok": true, "errors": [], "warnings": [] }
+    },
+    {
+      "name": "summary of 201 code points is too long",
+      "manifestPatch": { "purpose": { "summary": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\ud83c\udf0d" } },
+      "expect": { "ok": false, "errors": [{ "code": "summary-too-long", "path": "/purpose/summary" }], "warnings": [] }
+    },
+    {
+      "name": "no limits at all is fine",
+      "manifestPatch": { "purpose": { "limits": null } },
+      "expect": { "ok": true, "errors": [], "warnings": [] }
+    },
+    {
+      "name": "limits that are not an object",
+      "manifestPatch": { "purpose": { "limits": 15 } },
+      "expect": { "ok": false, "errors": [{ "code": "limit-invalid", "path": "/purpose/limits" }], "warnings": [] }
+    },
+    {
+      "name": "negative limit",
+      "manifestPatch": { "purpose": { "limits": { "maxClipSeconds": -1 } } },
+      "expect": { "ok": false, "errors": [{ "code": "limit-invalid", "path": "/purpose/limits/maxClipSeconds" }], "warnings": [] }
+    },
+    {
+      "name": "limit given as a string",
+      "manifestPatch": { "purpose": { "limits": { "maxCallsPerMinute": "20" } } },
+      "expect": { "ok": false, "errors": [{ "code": "limit-invalid", "path": "/purpose/limits/maxCallsPerMinute" }], "warnings": [] }
+    },
+    {
+      "name": "limit given as a boolean",
+      "manifestPatch": { "purpose": { "limits": { "maxClipSeconds": true } } },
+      "expect": { "ok": false, "errors": [{ "code": "limit-invalid", "path": "/purpose/limits/maxClipSeconds" }], "warnings": [] }
+    },
+    {
+      "name": "count limits must be whole numbers",
+      "manifestPatch": { "purpose": { "limits": { "maxCallsPerMinute": 2.5, "maxTextChars": 0.5 } } },
+      "expect": {
+        "ok": false,
+        "errors": [
+          { "code": "limit-invalid", "path": "/purpose/limits/maxCallsPerMinute" },
+          { "code": "limit-invalid", "path": "/purpose/limits/maxTextChars" }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "a whole number written as 20.0 counts as whole",
+      "manifestPatch": { "purpose": { "limits": { "maxCallsPerMinute": 20.0 } } },
+      "expect": { "ok": true, "errors": [], "warnings": [] }
+    },
+    {
+      "name": "fractional clip limit and zero limits are fine",
+      "manifestPatch": { "purpose": { "limits": { "maxClipSeconds": 7.5, "maxTextChars": 0 } } },
+      "expect": { "ok": true, "errors": [], "warnings": [] }
+    },
+    {
+      "name": "the largest allowed count, 2^53 - 1, is accepted",
+      "manifestPatch": { "purpose": { "limits": { "maxCallsPerMinute": 9007199254740991 } } },
+      "expect": { "ok": true, "errors": [], "warnings": [] }
+    },
+    {
+      "name": "a count of 2^53 is invalid",
+      "manifestPatch": { "purpose": { "limits": { "maxTextChars": 9007199254740992 } } },
+      "expect": { "ok": false, "errors": [{ "code": "limit-invalid", "path": "/purpose/limits/maxTextChars" }], "warnings": [] }
+    },
+    {
+      "name": "a huge integer (10^400) is invalid in every language",
+      "manifestPatch": { "purpose": { "limits": { "maxCallsPerMinute": 10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 } } },
+      "expect": { "ok": false, "errors": [{ "code": "limit-invalid", "path": "/purpose/limits/maxCallsPerMinute" }], "warnings": [] }
+    },
+    {
+      "name": "a duration above 2^53 - 1 is invalid",
+      "manifestPatch": { "purpose": { "limits": { "maxClipSeconds": 1e300 } } },
+      "expect": { "ok": false, "errors": [{ "code": "limit-invalid", "path": "/purpose/limits/maxClipSeconds" }], "warnings": [] }
+    },
+    {
+      "name": "a number too large for a double (1e400) is invalid",
+      "manifestPatch": { "purpose": { "limits": { "maxClipSeconds": 1e400 } } },
+      "expect": { "ok": false, "errors": [{ "code": "limit-invalid", "path": "/purpose/limits/maxClipSeconds" }], "warnings": [] }
+    },
+    {
+      "name": "unknown limit is a warning, not an error",
+      "manifestPatch": { "purpose": { "limits": { "maxTokens": 100 } } },
+      "expect": { "ok": true, "errors": [], "warnings": [{ "code": "limit-unknown", "path": "/purpose/limits/maxTokens" }] }
+    },
+    {
+      "name": "unknown field inside purpose is a warning",
+      "manifestPatch": { "purpose": { "details": "https://example.org/about" } },
+      "expect": { "ok": true, "errors": [], "warnings": [{ "code": "field-unknown", "path": "/purpose/details" }] }
+    },
+    {
+      "name": "skills missing",
+      "manifestPatch": { "skills": null },
+      "expect": { "ok": false, "errors": [{ "code": "skills-missing", "path": "/skills" }], "warnings": [] }
+    },
+    {
+      "name": "skills empty",
+      "manifest": {
+        "byoa": "0.1-draft",
+        "purpose": { "summary": "Family geography game: recognise country names" },
+        "skills": {},
+        "privacy": "personal-voice",
+        "expectedCost": { "perSession": "0.06 USD" }
+      },
+      "expect": { "ok": false, "errors": [{ "code": "skills-missing", "path": "/skills" }], "warnings": [] }
+    },
+    {
+      "name": "skills given as an array",
+      "manifestPatch": { "skills": ["audio.transcribe"] },
+      "expect": { "ok": false, "errors": [{ "code": "skills-missing", "path": "/skills" }], "warnings": [] }
+    },
+    {
+      "name": "skill ids must be domain.action in lowercase",
+      "manifestPatch": {
+        "skills": {
+          "Audio.Transcribe": { "required": false },
+          "embed": { "required": false },
+          "audio.transcribe.fast": { "required": false },
+          "audio..transcribe": { "required": false },
+          "audio.-transcribe": { "required": false }
+        }
+      },
+      "expect": {
+        "ok": false,
+        "errors": [
+          { "code": "skill-id-invalid", "path": "/skills/Audio.Transcribe" },
+          { "code": "skill-id-invalid", "path": "/skills/audio.-transcribe" },
+          { "code": "skill-id-invalid", "path": "/skills/audio..transcribe" },
+          { "code": "skill-id-invalid", "path": "/skills/audio.transcribe.fast" },
+          { "code": "skill-id-invalid", "path": "/skills/embed" }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "well-formed skill ids outside the vocabulary are warnings",
+      "manifestPatch": {
+        "skills": {
+          "audio.transcibe": { "required": false },
+          "music.compose-2": { "required": false },
+          "text.embed": { "required": false }
+        }
+      },
+      "expect": {
+        "ok": true,
+        "errors": [],
+        "warnings": [
+          { "code": "skill-unknown", "path": "/skills/audio.transcibe" },
+          { "code": "skill-unknown", "path": "/skills/music.compose-2" }
+        ]
+      }
+    },
+    {
+      "name": "skill id longer than 64 characters",
+      "manifestPatch": { "skills": { "audio.transcribeaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": { "required": false } } },
+      "expect": {
+        "ok": false,
+        "errors": [{ "code": "skill-id-invalid", "path": "/skills/audio.transcribeaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }],
+        "warnings": []
+      }
+    },
+    {
+      "name": "skill id of exactly 64 characters is well formed",
+      "manifestPatch": { "skills": { "audio.transcribeaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": { "required": false } } },
+      "expect": {
+        "ok": true,
+        "errors": [],
+        "warnings": [{ "code": "skill-unknown", "path": "/skills/audio.transcribeaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }]
+      }
+    },
+    {
+      "name": "skill value that is not an object",
+      "manifestPatch": { "skills": { "text.understand": true } },
+      "expect": { "ok": false, "errors": [{ "code": "skill-invalid", "path": "/skills/text.understand" }], "warnings": [] }
+    },
+    {
+      "name": "skill without required",
+      "manifestPatch": { "skills": { "text.understand": { "required": null } } },
+      "expect": { "ok": false, "errors": [{ "code": "skill-required-invalid", "path": "/skills/text.understand/required" }], "warnings": [] }
+    },
+    {
+      "name": "required that is not a boolean",
+      "manifestPatch": { "skills": { "text.understand": { "required": "yes" } } },
+      "expect": { "ok": false, "errors": [{ "code": "skill-required-invalid", "path": "/skills/text.understand/required" }], "warnings": [] }
+    },
+    {
+      "name": "no required skill is a warning",
+      "manifestPatch": { "skills": { "audio.transcribe": { "required": false } } },
+      "expect": { "ok": true, "errors": [], "warnings": [{ "code": "no-required-skill", "path": "/skills" }] }
+    },
+    {
+      "name": "privacy missing",
+      "manifestPatch": { "privacy": null },
+      "expect": { "ok": false, "errors": [{ "code": "privacy-missing", "path": "/privacy" }], "warnings": [] }
+    },
+    {
+      "name": "privacy class unknown",
+      "manifestPatch": { "privacy": "secret" },
+      "expect": { "ok": false, "errors": [{ "code": "privacy-unknown", "path": "/privacy" }], "warnings": [] }
+    },
+    {
+      "name": "privacy class is case-sensitive",
+      "manifestPatch": { "privacy": "Personal-Voice" },
+      "expect": { "ok": false, "errors": [{ "code": "privacy-unknown", "path": "/privacy" }], "warnings": [] }
+    },
+    {
+      "name": "privacy class local-only is valid",
+      "manifestPatch": { "privacy": "local-only" },
+      "expect": { "ok": true, "errors": [], "warnings": [] }
+    },
+    {
+      "name": "expected cost missing is a warning",
+      "manifestPatch": { "expectedCost": null },
+      "expect": { "ok": true, "errors": [], "warnings": [{ "code": "cost-missing", "path": "/expectedCost" }] }
+    },
+    {
+      "name": "expected cost with no known period is a warning",
+      "manifest": {
+        "byoa": "0.1-draft",
+        "purpose": { "summary": "Family geography game: recognise country names" },
+        "skills": { "audio.transcribe": { "required": true } },
+        "privacy": "personal-voice",
+        "expectedCost": {}
+      },
+      "expect": { "ok": true, "errors": [], "warnings": [{ "code": "cost-missing", "path": "/expectedCost" }] }
+    },
+    {
+      "name": "expected cost given as a plain string",
+      "manifestPatch": { "expectedCost": "0.06 USD" },
+      "expect": { "ok": false, "errors": [{ "code": "cost-invalid", "path": "/expectedCost" }], "warnings": [] }
+    },
+    {
+      "name": "valid money strings",
+      "manifestPatch": { "expectedCost": { "perCall": "0.000001 USD", "perSession": "0 EUR", "perHour": "999999999999.999999 JPY" } },
+      "expect": { "ok": true, "errors": [], "warnings": [] }
+    },
+    {
+      "name": "money without a space",
+      "manifestPatch": { "expectedCost": { "perSession": "0.06USD" } },
+      "expect": { "ok": false, "errors": [{ "code": "cost-invalid", "path": "/expectedCost/perSession" }], "warnings": [] }
+    },
+    {
+      "name": "money with a currency sign",
+      "manifestPatch": { "expectedCost": { "perSession": "$0.06" } },
+      "expect": { "ok": false, "errors": [{ "code": "cost-invalid", "path": "/expectedCost/perSession" }], "warnings": [] }
+    },
+    {
+      "name": "money with a lowercase currency code",
+      "manifestPatch": { "expectedCost": { "perSession": "0.06 usd" } },
+      "expect": { "ok": false, "errors": [{ "code": "cost-invalid", "path": "/expectedCost/perSession" }], "warnings": [] }
+    },
+    {
+      "name": "negative money",
+      "manifestPatch": { "expectedCost": { "perSession": "-1 USD" } },
+      "expect": { "ok": false, "errors": [{ "code": "cost-invalid", "path": "/expectedCost/perSession" }], "warnings": [] }
+    },
+    {
+      "name": "money with more than 6 digits after the point",
+      "manifestPatch": { "expectedCost": { "perSession": "0.1234567 USD" } },
+      "expect": { "ok": false, "errors": [{ "code": "cost-invalid", "path": "/expectedCost/perSession" }], "warnings": [] }
+    },
+    {
+      "name": "money with more than 12 digits before the point",
+      "manifestPatch": { "expectedCost": { "perSession": "1000000000000 USD" } },
+      "expect": { "ok": false, "errors": [{ "code": "cost-invalid", "path": "/expectedCost/perSession" }], "warnings": [] }
+    },
+    {
+      "name": "money with a leading zero, a bare point, or a two-letter code",
+      "manifestPatch": { "expectedCost": { "perCall": "01 USD", "perHour": ".5 USD", "perSession": "0.06 US" } },
+      "expect": {
+        "ok": false,
+        "errors": [
+          { "code": "cost-invalid", "path": "/expectedCost/perCall" },
+          { "code": "cost-invalid", "path": "/expectedCost/perHour" },
+          { "code": "cost-invalid", "path": "/expectedCost/perSession" }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "money given as a number",
+      "manifestPatch": { "expectedCost": { "perSession": 0.06 } },
+      "expect": { "ok": false, "errors": [{ "code": "cost-invalid", "path": "/expectedCost/perSession" }], "warnings": [] }
+    },
+    {
+      "name": "money with a trailing newline",
+      "manifestPatch": { "expectedCost": { "perSession": "0.06 USD\n" } },
+      "expect": { "ok": false, "errors": [{ "code": "cost-invalid", "path": "/expectedCost/perSession" }], "warnings": [] }
+    },
+    {
+      "name": "unknown expected cost period is a warning",
+      "manifestPatch": { "expectedCost": { "perDay": "1 USD" } },
+      "expect": { "ok": true, "errors": [], "warnings": [{ "code": "field-unknown", "path": "/expectedCost/perDay" }] }
+    },
+    {
+      "name": "unknown top-level field is a warning",
+      "manifestPatch": { "homepage": "https://example.org" },
+      "expect": { "ok": true, "errors": [], "warnings": [{ "code": "field-unknown", "path": "/homepage" }] }
+    },
+    {
+      "name": "paths escape slash and tilde as JSON Pointer requires",
+      "manifestPatch": { "a/b~c": 1 },
+      "expect": { "ok": true, "errors": [], "warnings": [{ "code": "field-unknown", "path": "/a~1b~0c" }] }
+    },
+    {
+      "name": "keys are visited in code point order, including number-like keys",
+      "manifestPatch": { "zeta": 1, "Alpha": 2, "10": 3, "9": 4 },
+      "expect": {
+        "ok": true,
+        "errors": [],
+        "warnings": [
+          { "code": "field-unknown", "path": "/10" },
+          { "code": "field-unknown", "path": "/9" },
+          { "code": "field-unknown", "path": "/Alpha" },
+          { "code": "field-unknown", "path": "/zeta" }
+        ]
+      }
+    },
+    {
+      "name": "a field set to null counts as absent",
+      "manifest": {
+        "byoa": "0.1-draft",
+        "purpose": { "summary": "Family geography game: recognise country names", "limits": null },
+        "skills": { "audio.transcribe": { "required": true }, "text.understand": null },
+        "privacy": null,
+        "expectedCost": null,
+        "homepage": null
+      },
+      "expect": {
+        "ok": false,
+        "errors": [{ "code": "privacy-missing", "path": "/privacy" }],
+        "warnings": [{ "code": "cost-missing", "path": "/expectedCost" }]
+      }
+    },
+    {
+      "name": "several problems are reported in rule order",
+      "manifest": {
+        "skills": { "audio.transcribe": { "required": "no" } },
+        "privacy": "secret",
+        "expectedCost": { "perSession": "lots" },
+        "extra": true
+      },
+      "expect": {
+        "ok": false,
+        "errors": [
+          { "code": "version-missing", "path": "/byoa" },
+          { "code": "purpose-missing", "path": "/purpose" },
+          { "code": "skill-required-invalid", "path": "/skills/audio.transcribe/required" },
+          { "code": "privacy-unknown", "path": "/privacy" },
+          { "code": "cost-invalid", "path": "/expectedCost/perSession" }
+        ],
+        "warnings": [
+          { "code": "no-required-skill", "path": "/skills" },
+          { "code": "field-unknown", "path": "/extra" }
+        ]
+      }
+    }
+  ]
+}

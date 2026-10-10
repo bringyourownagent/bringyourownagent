@@ -12,3 +12,5 @@ Version 0.1 is in progress. Planned contents:
 8. Security considerations.
 
 The concept is described in [../docs/vision.md](../docs/vision.md).
+
+A first draft of the machine-checkable rules (manifest checks and the call gate) is in [rules-0.1-draft.md](rules-0.1-draft.md). It is implemented by the early draft libraries in [../sdk/](../sdk/).

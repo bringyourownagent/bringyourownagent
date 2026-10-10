@@ -1,0 +1,145 @@
+{
+  "description": "Shared test vectors for the purpose judge hook of checkCall / check_call. Rules: spec/rules-0.1-draft.md, Section 6. Each case says which judge to pass: absent or null = no judge; {\"returns\": v} = a judge that returns v; {\"throws\": message} = a judge that throws; {\"notCallable\": v} = v itself is passed as the judge.",
+  "byoa": "0.1-draft",
+  "defaults": {
+    "manifest": {
+      "byoa": "0.1-draft",
+      "purpose": {
+        "summary": "Family geography game: recognise country names",
+        "limits": { "maxClipSeconds": 15, "maxCallsPerMinute": 20 }
+      },
+      "skills": {
+        "audio.transcribe": { "languages": ["ru", "sk"], "required": true },
+        "text.understand": { "size": "small", "required": false }
+      },
+      "privacy": "personal-voice",
+      "expectedCost": { "perSession": "0.06 USD" }
+    },
+    "grant": {
+      "byoa": "0.1-draft",
+      "skills": ["audio.transcribe", "text.understand"],
+      "budget": { "perSession": "0.20 USD" },
+      "expiresAt": "2026-10-10T13:00:00Z"
+    },
+    "call": {
+      "skill": "audio.transcribe",
+      "at": "2026-10-10T12:00:00Z",
+      "provider": "api-key",
+      "estimatedCost": "0.003 USD",
+      "input": { "clipSeconds": 9 },
+      "params": { "language": "ru" }
+    },
+    "state": {
+      "spent": "0.04 USD",
+      "callTimes": ["2026-10-10T11:59:30Z", "2026-10-10T11:59:45Z"]
+    }
+  },
+  "cases": [
+    {
+      "name": "no judge: the hard-limit result stands",
+      "judge": null,
+      "expect": { "decision": "allowed", "reasons": [] }
+    },
+    {
+      "name": "a judge with no opinion changes nothing",
+      "judge": { "returns": null },
+      "expect": { "decision": "allowed", "reasons": [] }
+    },
+    {
+      "name": "a warn opinion turns allowed into warn, with the judge's code",
+      "judge": { "returns": { "decision": "warn", "code": "purpose-unclear", "message": "this does not sound like a country name" } },
+      "expect": { "decision": "warn", "reasons": [{ "code": "purpose-unclear" }] }
+    },
+    {
+      "name": "an opinion without a code is reported as purpose-doubt",
+      "judge": { "returns": { "decision": "ask" } },
+      "expect": { "decision": "ask", "reasons": [{ "code": "purpose-doubt" }] }
+    },
+    {
+      "name": "an opinion with a null code is reported as purpose-doubt",
+      "judge": { "returns": { "decision": "warn", "code": null } },
+      "expect": { "decision": "warn", "reasons": [{ "code": "purpose-doubt" }] }
+    },
+    {
+      "name": "an allowed opinion changes nothing",
+      "judge": { "returns": { "decision": "allowed", "code": "looks-fine" } },
+      "expect": { "decision": "allowed", "reasons": [] }
+    },
+    {
+      "name": "a judge can block",
+      "judge": { "returns": { "decision": "blocked", "code": "not-a-game" } },
+      "expect": { "decision": "blocked", "reasons": [{ "code": "not-a-game" }] }
+    },
+    {
+      "name": "a judge cannot relax a decision",
+      "judge": { "returns": { "decision": "warn", "code": "odd" } },
+      "statePatch": { "spent": "0.199 USD" },
+      "expect": { "decision": "ask", "reasons": [{ "code": "budget-exceeded" }, { "code": "odd" }] }
+    },
+    {
+      "name": "the judge is not consulted when the call is already blocked",
+      "judge": { "returns": { "decision": "warn", "code": "odd" } },
+      "callPatch": { "input": { "clipSeconds": 42 } },
+      "expect": { "decision": "blocked", "reasons": [{ "code": "clip-too-long" }] }
+    },
+    {
+      "name": "the judge is not consulted when an input is invalid",
+      "judge": { "returns": { "decision": "warn", "code": "odd" } },
+      "grantPatch": { "expiresAt": null },
+      "expect": { "decision": "blocked", "reasons": [{ "code": "grant-invalid", "path": "/expiresAt" }] }
+    },
+    {
+      "name": "a judge that fails means ask",
+      "judge": { "throws": "model offline" },
+      "expect": { "decision": "ask", "reasons": [{ "code": "purpose-judge-error" }] }
+    },
+    {
+      "name": "a judge failure is added to the other reasons",
+      "judge": { "throws": "model offline" },
+      "grantPatch": { "warnIf": { "sendsText": true } },
+      "callPatch": { "skill": "text.understand", "input": { "clipSeconds": 0, "textChars": 24 } },
+      "expect": { "decision": "ask", "reasons": [{ "code": "text-sent" }, { "code": "purpose-judge-error" }] }
+    },
+    {
+      "name": "an unknown decision is not an opinion",
+      "judge": { "returns": { "decision": "maybe" } },
+      "expect": { "decision": "ask", "reasons": [{ "code": "purpose-judge-error" }] }
+    },
+    {
+      "name": "a plain string is not an opinion",
+      "judge": { "returns": "blocked" },
+      "expect": { "decision": "ask", "reasons": [{ "code": "purpose-judge-error" }] }
+    },
+    {
+      "name": "an empty code is not allowed",
+      "judge": { "returns": { "decision": "warn", "code": "" } },
+      "expect": { "decision": "ask", "reasons": [{ "code": "purpose-judge-error" }] }
+    },
+    {
+      "name": "a message that is not a string is not allowed",
+      "judge": { "returns": { "decision": "warn", "message": 3 } },
+      "expect": { "decision": "ask", "reasons": [{ "code": "purpose-judge-error" }] }
+    },
+    {
+      "name": "a judge that is an object, not a function, means ask",
+      "judge": { "notCallable": {} },
+      "expect": { "decision": "ask", "reasons": [{ "code": "purpose-judge-error" }] }
+    },
+    {
+      "name": "a judge that is a string means ask",
+      "judge": { "notCallable": "judge" },
+      "expect": { "decision": "ask", "reasons": [{ "code": "purpose-judge-error" }] }
+    },
+    {
+      "name": "a judge that is false means ask",
+      "judge": { "notCallable": false },
+      "expect": { "decision": "ask", "reasons": [{ "code": "purpose-judge-error" }] }
+    },
+    {
+      "name": "a judge that is not callable is ignored when the call is already blocked",
+      "judge": { "notCallable": {} },
+      "callPatch": { "input": { "clipSeconds": 42 } },
+      "expect": { "decision": "blocked", "reasons": [{ "code": "clip-too-long" }] }
+    }
+  ]
+}
