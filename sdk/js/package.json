@@ -1,6 +1,6 @@
 {
   "name": "bringyourownagent",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Early draft reference implementation of BYOA (Bring Your Own Agent): manifest validation and the call gate.",
   "keywords": [
     "byoa",

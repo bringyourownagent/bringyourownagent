@@ -1,6 +1,6 @@
 # bringyourownagent (Python)
 
-This is an early draft implementation of **BYOA (Bring Your Own Agent)**, an open protocol that lets websites and apps use the visitor's own AI agents (their subscriptions, API keys, connected accounts, local models or home servers) within limits the visitor sets. Version 0.0.1 implements only the first rules: it checks a requester's **manifest**, and it decides whether one **call** may go ahead under the visitor's **grant**. The rules are a [draft for discussion](https://github.com/bringyourownagent/bringyourownagent/blob/main/spec/rules-0.1-draft.md) and will change. Python 3.9 or newer, standard library only, no dependencies.
+This is an early draft implementation of **BYOA (Bring Your Own Agent)**, an open protocol that lets websites and apps use the visitor's own AI agents (their subscriptions, API keys, connected accounts, local models or home servers) within limits the visitor sets. Versions 0.0.x implement only the first rules: it checks a requester's **manifest**, and it decides whether one **call** may go ahead under the visitor's **grant**. The rules are a [draft for discussion](https://github.com/bringyourownagent/bringyourownagent/blob/main/spec/rules-0.1-draft.md) and will change. Python 3.9 or newer, standard library only, no dependencies.
 
 ## Install
 
@@ -84,6 +84,7 @@ python -m unittest discover -s tests -t tests
 - Repository: <https://github.com/bringyourownagent/bringyourownagent>
 - Rules implemented here (draft): [spec/rules-0.1-draft.md](https://github.com/bringyourownagent/bringyourownagent/blob/main/spec/rules-0.1-draft.md)
 - Node.js package with the same rules: [`bringyourownagent` on npm](https://www.npmjs.com/package/bringyourownagent)
+- Changes between versions: [CHANGELOG](https://github.com/bringyourownagent/bringyourownagent/blob/main/sdk/CHANGELOG.md). Releases are published only from GitHub Actions through trusted publishing.
 
 ## License
 

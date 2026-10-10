@@ -34,6 +34,7 @@ Repository = "https://github.com/bringyourownagent/bringyourownagent"
 Source = "https://github.com/bringyourownagent/bringyourownagent/tree/main/sdk/python"
 Rules = "https://github.com/bringyourownagent/bringyourownagent/blob/main/spec/rules-0.1-draft.md"
 Issues = "https://github.com/bringyourownagent/bringyourownagent/issues"
+Changelog = "https://github.com/bringyourownagent/bringyourownagent/blob/main/sdk/CHANGELOG.md"
 
 [project.scripts]
 bringyourownagent = "bringyourownagent.cli:main"
