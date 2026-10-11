@@ -43,10 +43,21 @@ The core is four messages. They do not depend on how they are carried.
 ```
 Requester ── Manifest: "speech-to-text (ru, streaming), small text model; purpose: family game" ──▶ Agent wallet
                                                                                                      │ matches providers
-Requester ◀── Grant: skills, 20¢ per session, 1 hour, "local only" ────────────────────────────────┤ asks the visitor (budget slider)
+Requester ◀── Grant: skills, 20¢ per session, 1 hour, "local only" ────────────────────────────────┤ asks the visitor (short consent)
 Requester ── Call ──▶ Agent wallet ──▶ local model / API key / subscription / home server
           ◀── result + Receipt ──┘ meters, enforces limits, checks purpose, logs
 ```
+
+### 3.1 The consent flow (Proposed)
+
+How a wallet asks the visitor before a Grant. None of this is in the draft rules yet.
+
+1. **A request only after a click.** A requester may ask the wallet only after the visitor clicks something on it (a user gesture). A request without one shows no prompt; the wallet keeps it quietly, for example as a dot on its icon.
+2. **A short notice first.** "geo-game.example wants to use your AI": Show, Decline, or Block this site.
+3. **A short consent window.** The site (verified domain), one line on what it does, its declared purpose quoted as the site's own words, one row per skill with the model the wallet's manager chose for it (and why, on request), one limit ("up to $0.20 per session"), and Allow or Decline. A skill no model of the visitor's can serve says so and names the fix; an optional skill can be left off. Tests, fallback chains and the other limits live in the wallet's detailed settings, not on this window.
+4. **The same answer for every no.** Declined, blocked and "no wallet installed" look identical to the requester: AI is unavailable, and it falls back to its own mode. It cannot tell them apart, so asking again gains it nothing. A blocked site's later requests show no notice at all.
+5. **Automatic decisions within limits.** The visitor may tick "next time, decide on my own within these limits". The same request is then allowed without a prompt, and the wallet speaks up only when a person is needed: a limit is reached, a paid fallback is needed, or the site warns about weak answers.
+6. **Only the difference.** If the requester later asks for more (a new skill or a higher budget), the wallet asks again and shows only what changed.
 
 ## 4. Skills, requirements and tests
 
