@@ -65,6 +65,9 @@ public sealed record ConsentAnswer(bool Allow, decimal Budget, bool AutoDecide, 
 /// <summary>"Your local models could not answer: use a paid source?"</summary>
 public sealed record PaidModel(string Origin, string Host, string SourceName, decimal Estimate, string Why);
 
+/// <summary>"Preparing your model…": the routed models are loading before the page gets its grant.</summary>
+public sealed record PreparingModel(string Origin, string Host, IReadOnlyList<string> Sources);
+
 /// <summary>A short message that needs no answer, with an optional button that opens a settings page.</summary>
 public sealed record InfoModel(string Title, string Text, string? ActionText = null, string? OpenPage = null);
 
@@ -82,6 +85,9 @@ public interface IWalletUi
 
     void ShowInfo(InfoModel model);
 
+    /// <summary>Shows "Preparing your model…" until the returned handle is disposed.</summary>
+    IDisposable ShowPreparing(PreparingModel model);
+
     /// <summary>A request without a click was held back: the tray icon gets a quiet badge.</summary>
     void QuietRequest(string origin);
 
@@ -92,6 +98,16 @@ public interface IWalletUi
     void OpenSettings(string? page = null);
 }
 
+/// <summary>A handle that does nothing when disposed.</summary>
+public sealed class Nothing : IDisposable
+{
+    public static readonly Nothing Instance = new();
+
+    public void Dispose()
+    {
+    }
+}
+
 /// <summary>A UI that answers nothing (tests, or a wallet without a desktop): every question is a no.</summary>
 public sealed class NoUi : IWalletUi
 {
@@ -99,6 +115,7 @@ public sealed class NoUi : IWalletUi
     public Task<ConsentAnswer> ShowConsentAsync(ConsentModel model, CancellationToken ct) => Task.FromResult(ConsentAnswer.Declined);
     public Task<PaidAnswer> AskPaidAsync(PaidModel model, CancellationToken ct) => Task.FromResult(PaidAnswer.No);
     public void ShowInfo(InfoModel model) { }
+    public IDisposable ShowPreparing(PreparingModel model) => Nothing.Instance;
     public void QuietRequest(string origin) { }
     public void DownloadStarted(ISpeechSource source) { }
     public void OpenSettings(string? page = null) { }

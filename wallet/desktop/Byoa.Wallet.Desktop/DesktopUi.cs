@@ -99,6 +99,31 @@ sealed class DesktopUi : IWalletUi
 
     public void ShowInfo(InfoModel model) => Dispatcher.UIThread.Post(() => ToastWindow.Info(model, page => OpenSettings(page)).Show());
 
+    public IDisposable ShowPreparing(PreparingModel model)
+    {
+        var handle = new PreparingHandle();
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (handle.Done) return;
+            handle.Toast = ToastWindow.Preparing(model);
+            handle.Toast.Show();
+        });
+        return handle;
+    }
+
+    /// <summary>Closes the "Preparing your model…" toast, also when it is disposed before it was shown.</summary>
+    sealed class PreparingHandle : IDisposable
+    {
+        public volatile bool Done;
+        public ToastWindow? Toast;
+
+        public void Dispose()
+        {
+            Done = true;
+            Dispatcher.UIThread.Post(() => Toast?.Dismiss());
+        }
+    }
+
     public void QuietRequest(string origin) => Dispatcher.UIThread.Post(UpdateBadge);
 
     public void DownloadStarted(ISpeechSource source) => Dispatcher.UIThread.Post(() =>

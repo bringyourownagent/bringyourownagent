@@ -13,7 +13,7 @@ try
     await relay.RunAsync();
     return 0;
 }
-catch (Exception e) when (e is IOException or InvalidDataException or EndOfStreamException)
+catch (Exception e) when (e is IOException or InvalidDataException or EndOfStreamException or ObjectDisposedException)
 {
     Console.Error.WriteLine("byoa-host: " + e.GetType().Name);
     return 1;

@@ -14,7 +14,7 @@ sealed class ManualTime : TimeProvider
 }
 
 /// <summary>A source with fixed properties that answers a fixed text, or fails.</summary>
-sealed class FakeSource : ISpeechSource
+class FakeSource : ISpeechSource
 {
     public FakeSource(string id, string runs = Sources.Runs.ThisDevice, IReadOnlyList<string>? languages = null, decimal pricePerSecond = 0)
     {
@@ -37,17 +37,40 @@ sealed class FakeSource : ISpeechSource
     public string StateText => State.ToString();
     public string Answer { get; set; } = "francia";
     public bool Fail { get; set; }
-    public int Calls { get; private set; }
+    int _calls;
+    public int Calls => Volatile.Read(ref _calls);
     public string? LastLanguage { get; private set; }
+
+    /// <summary>When set, calls wait for it before they answer: calls held in flight.</summary>
+    public TaskCompletionSource? Hold { get; set; }
 
     public decimal EstimateCost(double clipSeconds) => (decimal)Math.Ceiling(clipSeconds) * PricePerSecond;
 
-    public Task<Transcript> TranscribeAsync(float[] samples, string? language, CancellationToken ct)
+    public async Task<Transcript> TranscribeAsync(float[] samples, string? language, CancellationToken ct)
     {
-        Calls++;
+        Interlocked.Increment(ref _calls);
         LastLanguage = language;
+        if (Hold is { } hold) await hold.Task.WaitAsync(ct);
         if (Fail) throw new InvalidOperationException("fake failure");
-        return Task.FromResult(new Transcript(Answer, EstimateCost(samples.Length / 16000.0)));
+        return new Transcript(Answer, EstimateCost(samples.Length / 16000.0));
+    }
+}
+
+/// <summary>A fake source with a model to load: warming a language takes <see cref="WarmTime"/> the first time.</summary>
+sealed class WarmingSource(string id, IReadOnlyList<string>? languages = null) : FakeSource(id, languages: languages), IWarmable
+{
+    public TimeSpan WarmTime { get; set; } = TimeSpan.FromMilliseconds(500);
+    public List<string?> Warmed { get; } = [];
+
+    public async Task WarmAsync(string? language)
+    {
+        lock (Warmed)
+        {
+            if (Warmed.Contains(language)) return;
+        }
+
+        await Task.Delay(WarmTime);
+        lock (Warmed) Warmed.Add(language);
     }
 }
 
@@ -69,10 +92,29 @@ sealed class ScriptedUi : IWalletUi
         return Task.FromResult(Notice);
     }
 
-    public Task<ConsentAnswer> ShowConsentAsync(ConsentModel model, CancellationToken ct)
+    /// <summary>When set, the consent window stays open until it is completed or the wallet closes it.</summary>
+    public TaskCompletionSource<ConsentAnswer>? ConsentGate { get; set; }
+
+    /// <summary>The token the wallet gave the last consent window: cancelled means the wallet closed it.</summary>
+    public CancellationToken ConsentToken { get; private set; }
+
+    public async Task<ConsentAnswer> ShowConsentAsync(ConsentModel model, CancellationToken ct)
     {
-        Consents.Add(model);
-        return Task.FromResult(Consent ?? new ConsentAnswer(true, model.Budget, false, []));
+        lock (Consents) Consents.Add(model);
+        ConsentToken = ct;
+        if (ConsentGate is { } gate)
+        {
+            try
+            {
+                return await gate.Task.WaitAsync(ct);
+            }
+            catch (OperationCanceledException)
+            {
+                return ConsentAnswer.Declined;                  // the window was closed by the wallet
+            }
+        }
+
+        return Consent ?? new ConsentAnswer(true, model.Budget, false, []);
     }
 
     public Task<PaidAnswer> AskPaidAsync(PaidModel model, CancellationToken ct)
@@ -82,6 +124,22 @@ sealed class ScriptedUi : IWalletUi
     }
 
     public void ShowInfo(InfoModel model) => Infos.Add(model);
+
+    /// <summary>Every "Preparing your model…" shown, and whether it was closed again.</summary>
+    public List<PreparingModel> Preparing { get; } = [];
+    public int PreparingClosed;
+
+    public IDisposable ShowPreparing(PreparingModel model)
+    {
+        lock (Preparing) Preparing.Add(model);
+        return new Closer(this);
+    }
+
+    sealed class Closer(ScriptedUi ui) : IDisposable
+    {
+        public void Dispose() => Interlocked.Increment(ref ui.PreparingClosed);
+    }
+
     public void QuietRequest(string origin) => Quiet++;
     public void DownloadStarted(ISpeechSource source) { }
     public void OpenSettings(string? page = null) { }
@@ -110,12 +168,12 @@ static class Clips
     public static WireMessage Request(string origin, bool click, string manifest = GeoManifest) =>
         new(1, Wire.Request, origin, click, new JsonObject { ["manifest"] = JsonNode.Parse(manifest) });
 
-    public static WireMessage Call(string origin, string grantId, double seconds = 2, string? language = "ru") =>
+    public static WireMessage Call(string origin, string grantId, double seconds = 2, string? language = "ru", string? base64 = null) =>
         new(2, Wire.Call, origin, false, new JsonObject
         {
             ["grantId"] = grantId,
             ["skill"] = "audio.transcribe",
-            ["input"] = new JsonObject { ["audio"] = new JsonObject { ["mime"] = "audio/wav", ["base64"] = Base64(seconds) } },
+            ["input"] = new JsonObject { ["audio"] = new JsonObject { ["mime"] = "audio/wav", ["base64"] = base64 ?? Base64(seconds) } },
             ["params"] = language is null ? new JsonObject() : new JsonObject { ["language"] = language },
         });
 }

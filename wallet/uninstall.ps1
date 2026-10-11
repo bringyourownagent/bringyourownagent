@@ -3,13 +3,14 @@
     Unregisters the BYOA agent wallet 0.1 for the current Windows user.
 
 .DESCRIPTION
-    Removes exactly the two registry keys install.ps1 created:
-      HKCU\Software\Google\Chrome\NativeMessagingHosts\org.bringyourownagent.wallet
-      HKCU\Software\Chromium\NativeMessagingHosts\org.bringyourownagent.wallet
-    and the Startup shortcut if install.ps1 -StartWithWindows made one. Nothing else.
+    Removes exactly what install.ps1 created outside the app folder:
+      HKCU\Software\Google\Chrome\NativeMessagingHosts\org.bringyourownagent.wallet   (registry key)
+      HKCU\Software\Chromium\NativeMessagingHosts\org.bringyourownagent.wallet         (registry key)
+      the Startup shortcut "BYOA agent wallet.lnk", only if install.ps1 -StartWithWindows made one (one file)
+    Nothing else.
 
-    It does not delete files: it prints the folders the wallet used (the app, its data with your settings and
-    DPAPI-protected keys, downloaded models), so that you can remove them yourself if you want to.
+    Apart from that one shortcut it deletes no files: it prints the folders the wallet used (the app, its data with
+    your settings and DPAPI-protected keys, downloaded models), so that you can remove them yourself if you want to.
     Remove the unpacked extension in chrome://extensions.
 
 .EXAMPLE

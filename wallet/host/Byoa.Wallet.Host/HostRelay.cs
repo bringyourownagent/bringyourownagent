@@ -75,8 +75,9 @@ public sealed class HostRelay
                 _writeWallet.Release();
             }
         }
-        catch (IOException)
+        catch (Exception e) when (e is IOException or ObjectDisposedException)
         {
+            // The wallet's pipe broke or was already closed by the reader: the page hears the same as with no wallet.
             if (_pending.TryRemove(key, out _)) await AnswerAsync(id, type == Wire.Status ? NotRunning() : Wire.Fallback(type), ct).ConfigureAwait(false);
             Drop(wallet);
         }
@@ -153,7 +154,7 @@ public sealed class HostRelay
         {
             await Framing.WriteAsync(_browserOut, frame, ct).ConfigureAwait(false);
         }
-        catch (IOException)
+        catch (Exception e) when (e is IOException or ObjectDisposedException)
         {
             // the browser closed the port
         }

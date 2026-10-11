@@ -2,7 +2,7 @@
 buttons, tick boxes) and screenshots of a window's rectangle. Windows only. Needs: uiautomation, pillow.
 
 The wallet's windows are titled "Agent wallet notice", "Agent wallet consent", "Agent wallet paid fallback",
-"Agent wallet message", "Agent wallet download" and "Agent wallet" (the settings); its controls carry
+"Agent wallet message", "Agent wallet download", "Agent wallet preparing" and "Agent wallet" (the settings); its controls carry
 AutomationIds such as NoticeShow, NoticeDecline, NoticeBlock, ConsentAllow, ConsentDecline, ConsentAuto,
 PaidOnce, PaidNo, Tab-sites, SourceEnabled-gigaam-v3.
 """

@@ -54,8 +54,10 @@ public static class Wav
                 return new WavClip(Decode(bytes.Slice(body, length), format, channels, rate, bits), rate, channels, bits);
             }
 
-            if (size > int.MaxValue) break;
-            at = body + (int)size + (int)(size & 1);
+            // 64-bit arithmetic: a chunk that claims to run past the end of the file is an error, not an overflow.
+            var next = (long)body + size + (size & 1);
+            if (next > bytes.Length) throw new InvalidDataException($"the {id.Trim()} chunk runs past the end of the file");
+            at = (int)next;
         }
 
         throw new InvalidDataException("no data chunk");

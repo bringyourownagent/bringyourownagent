@@ -22,8 +22,8 @@ web page ── window.byoa ──▶ page.js (MAIN world)
 ```
 
 - **Extension** (Chrome MV3, `wallet/extension`). Its ID is fixed by a `key` in the manifest (`niobopdoiopjilmlonjcgllpmgjemhpk`). It injects `window.byoa` into every `https://` page and into `http://localhost` and `http://127.0.0.1` pages, at `document_start`, and dispatches `byoa:ready`. It shows nothing of its own except the toolbar popup: wallet connected or not running, the versions, and a button that opens the wallet.
-- **Native host** (`byoa-host.exe`, .NET 10). A relay with no decisions: it forwards frames as they are, answers the fallback when the wallet is not there, and starts the wallet only for a `request` (or the popup's `open`). It is registered for the current user only.
-- **Wallet** (`Byoa.Wallet.exe`, .NET 10 and Avalonia 11). A tray app with one instance per user (a mutex) that serves the pipe. Its engine is a UI-free library (`Byoa.Wallet.Core`) with unit tests.
+- **Native host** (`byoa-host.exe`, .NET 10). A relay with no decisions: it forwards frames as they are, answers the fallback when the wallet is not there (also when its pipe breaks or was already closed under it: the host keeps running and connects again on the next message), and starts the wallet only for a `request` (or the popup's `open`). It is registered for the current user only.
+- **Wallet** (`Byoa.Wallet.exe`, .NET 10 and Avalonia 11). A tray app with one instance per user (a mutex) that serves the pipe. Its engine is a UI-free library (`Byoa.Wallet.Core`) with unit tests. Each connection's messages run concurrently (a request can wait for the visitor while calls go on), at most 16 at once; with 16 running the wallet reads no further frame until one ends, so a flood is held back by the pipe itself.
 
 ## 2. Messages
 
@@ -58,17 +58,17 @@ One JSON message per frame: `{ "id": n, "type", "origin", "userActivation", "pay
 
 1. The origin must be `https://host[:port]`, or `http://localhost` / `http://127.0.0.1` for tests. The manifest must be valid under the draft rules (`Manifest.Validate`).
 2. A **blocked** site gets `null` at once; no notice, ever.
-3. If the site is **allowed with "decide on my own"** and the manifest asks for nothing new (no new skill the wallet can serve, the expected cost per session not above the one allowed), the wallet grants at once and silently, click or no click.
+3. If the site is **allowed with "decide on my own"** and the manifest asks for nothing new (no new skill the wallet can serve, no required skill it cannot serve, the expected cost per session not above the visitor's budget for the site), the wallet grants silently, click or no click, once the models are loaded (item 6).
 4. **Without a click** anything else gets `null`; the tray icon gets a quiet dot and the site's count of held-back requests goes up.
-5. **With a click**: the notice, then the consent window. A second request from the same origin while the first is asking shares its answer. One prompt is shown at a time. With no answer in 120 s the page gets `null`.
-6. **Allow** stores the site's decision (skills, budget per session, "decide on my own", the expected cost and the languages) and opens a session grant: a random 144-bit id, valid 12 hours, held in memory only (a restarted wallet ends all sessions; the page then asks again). The models the site's languages will need are loaded in the background at once, and again when the wallet starts while some site is allowed, so the first call is fast.
-7. **Asking for more** (a new skill, or a higher expected cost) shows only the difference: an "updated" chip, "Only what is new", and "Budget $0.05 → $0.10 per session".
+5. **With a click**: the notice, then the consent window. A second request from the same origin while the first is asking shares its answer; the question stays open while any page that asked still waits for it (closing the first tab does not close it for the second). One prompt is shown at a time. With no answer in 120 s the page gets `null`.
+6. **Allow** stores the site's decision (skills, budget per session, "decide on my own", the expected cost and the languages) and opens a session grant: a random 144-bit id, valid 12 hours, held in memory only (a restarted wallet ends all sessions; the page then asks again). **The page gets its grant only when the models are ready**: the wallet loads the first local source of the route for each language the manifest declares and waits for it, at most 30 s, with "Preparing your model…" in a small toast meanwhile (shown only when it takes more than 150 ms). The silent grant of item 3 waits the same way, without a toast. A model the route prefers but that is not downloaded yet starts downloading (calls fall back until it is there). The wallet also loads the models of the allowed sites when it starts. So the first call is as fast as the others, and a page's call timeout does not meet a cold model.
+7. **Asking for more** (a new skill the wallet can serve, a required skill it cannot serve, or an expected cost per session above the visitor's budget) shows only the difference: an "updated" chip, "Only what is new", and "Budget $0.05 → $0.10 per session" (from the visitor's budget to the site's new expected cost). A required skill no source can serve is shown as missing and Allow is not offered, so the page gets `null`; it is never granted silently. A higher expected cost that is still within the visitor's budget asks nothing.
 
 ## 4. What happens on a call
 
 1. The grant must exist and belong to the calling origin, and the site must still be allowed.
 2. The clip is decoded and measured by the wallet (`clipSeconds` from the WAV data, never from the page). PCM 8/16/24/32-bit and float WAVs at any common rate, mono or stereo, are accepted and converted to 16 kHz mono.
-3. The wallet's own per-day limits: calls per site per day; money per site per day and for the whole wallet (paid sources only).
+3. The wallet's own per-day limits: calls per site per day; money per site per day and for the whole wallet (paid sources only). Calls still running count too: a call holds its slot, and a paid source its estimate, from its start to its end, so many calls at once cannot pass a daily limit before the first one is logged.
 4. The **route**: the skill's chain in the visitor's order, keeping sources that are switched on, available and know the call's language (`params.language`, or the only language the manifest declares). For each source in turn:
    - the **gate**: `Gate.CheckCall(manifest, grant, call, state)` with the provider kind (`local-model` or `api-key`), the estimated cost and the measured clip; the slot and the estimated cost are reserved in the session state under a per-grant lock;
    - `blocked` (expired, clip too long, rate over the manifest's limit, skill not granted, …) ends the call with `{ ok: false }`; `not-local` moves on to the next source; `ask` (over the budget per session) moves on and, if nothing else can answer, ends with `{ ok: false }` and one notice that the site reached a limit;
@@ -90,7 +90,15 @@ Receipts give the cost with at least three decimals and `provider` as `local` or
 | Whisper large-v3 q5_0, GPU (Vulkan) | 400-700 ms per clip | Slovak single words spoken by a person: 12 of 20 exact, 15 of 20 counting numbers written as digits; large-v3-turbo got 9 of 20, so large-v3 is the default |
 | Scribe v2 through OpenRouter | 0.6-1.7 s | about $0.00006 for a 2 s word |
 
-The first call after a grant: about 1.1 s (Russian) and 1.7 s (Slovak) while the models finish loading; the first Whisper load ever takes 8-15 s (it prepares its GPU shaders), which is why the wallet warms the models when it grants.
+From Allow to `request()` resolved, on a freshly started wallet (the models are loaded before the grant, section 3):
+
+| Manifest languages | Allow → grant | Model ready after | First call after the grant |
+|---|---|---|---|
+| ru | 1.1 s | GigaAM 0.9 s | 80 ms (GigaAM) |
+| sk | 1.95-2.1 s | Whisper 1.7-1.9 s | 470-480 ms (Whisper) |
+| ru + sk (the e2e test; Geo-1) | 2.4 s | both 1.9-2.0 s | 80 ms (ru), 476 ms (sk) |
+
+A silent grant ("decide on my own") on a wallet that the request itself starts: 2.1 s (ru) and 2.5 s (sk), wallet start included. The first Whisper load ever on a machine takes 8-15 s (it prepares its GPU shaders); the wait for it is bounded at 30 s, after which the page gets its grant and calls fall back until the model is there.
 
 ## 7. What 0.1 does not do
 
@@ -109,9 +117,10 @@ The first call after a grant: about 1.1 s (Russian) and 1.7 s (Slovak) while the
 - **Who can talk to the wallet.** The native host accepts only this extension's ID. The pipe is per user and opened with `CurrentUserOnly` on both ends. Any program running as the same Windows user could still talk to the pipe; the same program could also read the user's DPAPI secrets, so the wallet does not try to defend against it.
 - **Keys.** Stored with DPAPI for the current user and an extra entropy string; decrypted only for the moment a request needs one; never shown, logged or sent anywhere except to their own provider. Error messages from the provider carry only the HTTP status.
 - **Answers are user input.** The wallet trims and length-limits the text (4,000 characters) but does not sanitise it; pages must treat it like anything a visitor types.
-- **Input limits.** Frames up to 8 MB, audio up to 6 MB, manifests up to 64 KB; the WAV reader refuses anything it does not understand.
+- **Input limits.** Frames up to 8 MB, audio up to 6 MB, manifests up to 64 KB; the WAV reader refuses anything it does not understand, and checks chunk sizes in 64-bit arithmetic (a chunk that claims to run past the end of the clip is bad audio, not an overflow). At most 16 messages of one connection run at once.
 - **Local models are read only.** The scanner only reads the visitor's model folders; downloads go only to `%LOCALAPPDATA%\BYOA\models`, checked against the size and SHA-256 Hugging Face publishes.
-- **Registry.** Only the two native host keys under HKCU, written by `install.ps1` and removed by `uninstall.ps1`.
+- **Registry.** Only the two native host keys under HKCU, written by `install.ps1` and removed by `uninstall.ps1` (which also removes the one Startup shortcut `install.ps1 -StartWithWindows` made, and no other file).
+- **A model that fails to load** (a broken folder, a missing runtime) is marked broken on the Sources page and skipped by the route until its folder changes; calls fall back to the next source.
 - **Logs.** The activity log keeps no audio and no text. Crashes go to `errors.log` with exception types and stacks only.
 
 ## 9. What the libraries and the spec need next
@@ -123,5 +132,6 @@ Found while building 0.1:
 3. **Typed documents in the .NET library**: builders for grant, call and state, so a wallet does not write their JSON by hand, and the effective limits exposed for display.
 4. **Reservations**: the execution contract asks wallets to reserve the slot and the estimate before a call and settle afterwards; a small helper in the libraries would make every wallet do it the same way.
 5. **Skill parameters** (`languages` for `audio.transcribe`) are not checked by the rules, but the wallet routes on them; the first skill parameters deserve rules of their own.
-6. **"Asking for more"** needs a definition in the spec (which changes count: new skills, higher expected cost, new languages?). 0.1 counts new skills it can serve and a higher expected cost per session.
+6. **"Asking for more"** needs a definition in the spec (which changes count: new skills, higher expected cost, new languages?). 0.1 counts new skills it can serve, required skills it cannot serve, and an expected cost per session above the visitor's budget.
 7. The contract's extension-host messages say nothing about the payload shapes or about a status message; section 2 above documents what 0.1 uses.
+8. **Readiness**: the contract has no "preparing" state, so the wallet holds `request()` until its models are loaded (at most 30 s). A progress hint in the page API would let sites show their own "preparing" instead of waiting without knowing why.

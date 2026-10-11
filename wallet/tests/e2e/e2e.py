@@ -8,8 +8,9 @@ Before: run install.ps1 (it registers the host for Chrome and Chromium). The tes
 (BYOA_WALLET_HOME=<work>\\home), so the visitor's real wallet settings are not touched. Several local ports act as
 different sites (each origin is a different site to the wallet).
 
-Checks: window.byoa in the page; toast -> consent -> Allow (real clicks), the grant's shape; transcripts in Russian
-and Slovak with latency per source; the first call after a grant; a fallback when the first source is turned off;
+Checks: window.byoa in the page; toast -> consent -> Allow (real clicks), the grant's shape; Allow resolves only
+when the models are loaded ("Preparing your model..." meanwhile), measured from the click to the page's grant;
+transcripts in Russian and Slovak with latency per source; the first call after a grant; a fallback when the first source is turned off;
 the paid fallback asks first (Allow once / No), with real money kept to a few hundredths of a cent; a no-click
 request gives null and a quiet badge; decline (and Esc) gives null; block gives null and no notice next time;
 "decide on my own" gives a silent grant without a click; the rate limit, an over-long clip and a tiny budget give
@@ -218,11 +219,23 @@ with sync_playwright() as p:
     ui.shot(consent, os.path.join(a.shots, "03-consent-why.png"))
     has_focus = consent.HasKeyboardFocus or ui.auto.GetFocusedControl().GetTopLevelControl().Name == "Agent wallet consent"
     check("the consent window has the keyboard focus", has_focus)
+    allowed_at = time.time() * 1000
     ui.click(consent, "ConsentAllow")              # real input
+    # A fresh wallet has no model loaded yet: the grant waits for them, with "Preparing your model..." meanwhile.
+    preparing = ui.find_window("Agent wallet preparing", 5)
+    if preparing is not None:
+        time.sleep(0.4)
+        ui.shot(preparing, os.path.join(a.shots, "15-preparing.png"))
     grant = wait_grant(main)
     check("Allow gives a grant {grantId, skills, expiresAt}",
           isinstance(grant, dict) and isinstance(grant.get("grantId"), str) and grant.get("skills") == ["audio.transcribe"] and "expiresAt" in grant, grant)
     granted_at = time.time()
+    allow_to_grant = round((ev(main, "window.grantAt") - allowed_at) / 1000, 2)
+    allowed_entry = [e for e in activity() if e.get("kind") == "request" and e.get("outcome") == "allowed"][-1:]
+    results["allow_to_grant_seconds"] = {"ru+sk": allow_to_grant}
+    check("while the models load, the toast says \"Preparing your model…\"", preparing is not None and ui.window_gone("Agent wallet preparing", 35))
+    check("Allow resolves once the routed models are ready (at most ~30 s)", 0 < allow_to_grant <= 32 and "models ready after" in (allowed_entry[0].get("note") or "" if allowed_entry else ""),
+          f"{allow_to_grant} s from the click; {allowed_entry[0].get('note') if allowed_entry else ''}")
 
     # ------------------------------------------------------------------ transcripts, first-call latency
     def run_clip(pg, item, grant_id=None):
@@ -253,6 +266,8 @@ with sync_playwright() as p:
     first_sk = run_clip(main, words["sk"][0])
     results["first_calls"]["sk"] = {"seconds_after_grant": round(time.time() - granted_at, 2), "page_ms": first_sk["page_ms"], "source": first_sk["source"]}
     print("first calls:", json.dumps(results["first_calls"], ensure_ascii=False))
+    check("the first calls after Allow are already warm (no cold load in them)", first_ru["page_ms"] < 1000 and first_sk["page_ms"] < 2500,
+          f"ru {first_ru['page_ms']} ms by {first_ru['source']}, sk {first_sk['page_ms']} ms by {first_sk['source']}")
     for item in words["ru"][1:] + words["sk"][1:] + sentences:
         run_clip(main, item)
     for lang in ("ru", "sk"):

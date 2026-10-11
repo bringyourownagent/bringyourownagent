@@ -33,6 +33,7 @@
       document.getElementById("result").textContent = "asking…";
       const started = performance.now();
       window.grant = await window.byoa.request(window.MANIFEST);
+      window.grantAt = Date.now();
       window.requestMs = Math.round(performance.now() - started);
       document.getElementById("result").textContent = JSON.stringify(window.grant, null, 1);
     });
@@ -42,6 +43,7 @@
       window.activeAtRequest = navigator.userActivation.isActive;
       const started = performance.now();
       window.grant = await window.byoa.request(window.MANIFEST);
+      window.grantAt = Date.now();
       window.requestMs = Math.round(performance.now() - started);
     }, ms);
 

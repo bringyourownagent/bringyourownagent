@@ -6,8 +6,9 @@ namespace Byoa.Wallet.Desktop;
 
 /// <summary>
 /// Serves the native host over the per-user named pipe (only the current user can open it). Each connection is
-/// one browser's extension port; messages on it are handled concurrently (a request can wait for the visitor
-/// while calls continue). When the connection closes, everything still waiting on it is cancelled.
+/// one browser's extension port, served by a <see cref="FrameServer"/>: messages run concurrently (a request can
+/// wait for the visitor while calls continue), with a bound and backpressure. When the connection closes,
+/// everything still waiting on it is cancelled.
 /// </summary>
 sealed class PipeServer : IDisposable
 {
@@ -47,63 +48,13 @@ sealed class PipeServer : IDisposable
 
     async Task ServeAsync(NamedPipeServerStream pipe)
     {
-        using var connection = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token);
-        var write = new SemaphoreSlim(1, 1);
-        var running = new List<Task>();
         try
         {
-            while (true)
-            {
-                var frame = await Framing.ReadAsync(pipe, Framing.MaxIncoming, connection.Token).ConfigureAwait(false);
-                if (frame is null) break;
-                running.RemoveAll(t => t.IsCompleted);
-                running.Add(Task.Run(async () =>
-                {
-                    byte[] response;
-                    var message = WireMessage.Parse(frame);
-                    if (message is null)
-                    {
-                        if (!Wire.TryPeek(frame, out var id, out var type)) return;
-                        response = Wire.Response(id, Wire.Fallback(type));
-                    }
-                    else
-                    {
-                        var result = await _engine.HandleAsync(message, connection.Token).ConfigureAwait(false);
-                        response = Wire.Response(message.Id, result);
-                    }
-
-                    await write.WaitAsync(CancellationToken.None).ConfigureAwait(false);
-                    try
-                    {
-                        await Framing.WriteAsync(pipe, response, CancellationToken.None).ConfigureAwait(false);
-                    }
-                    catch (IOException)
-                    {
-                        // the host went away
-                    }
-                    finally
-                    {
-                        write.Release();
-                    }
-                }));
-            }
-        }
-        catch (Exception e) when (e is IOException or InvalidDataException or OperationCanceledException or ObjectDisposedException)
-        {
-            // the host closed the pipe or broke the framing
+            // At most FrameServer.DefaultParallel messages of one connection run at once; then the pipe waits.
+            await new FrameServer(_engine.HandleAsync).ServeAsync(pipe, _stop.Token).ConfigureAwait(false);
         }
         finally
         {
-            connection.Cancel();
-            try
-            {
-                await Task.WhenAll(running).ConfigureAwait(false);
-            }
-            catch (Exception e) when (e is OperationCanceledException or IOException)
-            {
-                // cancelled with the connection
-            }
-
             await pipe.DisposeAsync().ConfigureAwait(false);
         }
     }

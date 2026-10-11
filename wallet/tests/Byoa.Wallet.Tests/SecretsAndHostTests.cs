@@ -102,7 +102,7 @@ public class HostRelayTests
         }
     }
 
-    static (Stream A, Stream B) Pair()
+    internal static (Stream A, Stream B) Pair()
     {
         var aToB = new AnonymousPipeServerStream(PipeDirection.Out);
         var bFromA = new AnonymousPipeClientStream(PipeDirection.In, aToB.ClientSafePipeHandle);
@@ -111,7 +111,7 @@ public class HostRelayTests
         return (new Duplex(aFromB, aToB), new Duplex(bFromA, bToA));
     }
 
-    sealed class Connector(Func<bool, Stream?> connect) : IWalletConnector
+    internal sealed class Connector(Func<bool, Stream?> connect) : IWalletConnector
     {
         public List<bool> Starts { get; } = [];
 
@@ -122,10 +122,10 @@ public class HostRelayTests
         }
     }
 
-    static byte[] Message(int id, string type) =>
+    internal static byte[] Message(int id, string type) =>
         Encoding.UTF8.GetBytes(new JsonObject { ["id"] = id, ["type"] = type, ["origin"] = "https://a.example", ["userActivation"] = false, ["payload"] = new JsonObject() }.ToJsonString());
 
-    static async Task<JsonObject> ReadAsync(Stream s) =>
+    internal static async Task<JsonObject> ReadAsync(Stream s) =>
         (JsonObject)JsonNode.Parse((await Framing.ReadAsync(s).WaitAsync(TimeSpan.FromSeconds(10)))!)!;
 
     [Fact]

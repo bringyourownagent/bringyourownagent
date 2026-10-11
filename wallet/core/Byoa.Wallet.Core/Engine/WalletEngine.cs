@@ -29,6 +29,12 @@ public sealed class WalletEngine
     /// <summary>How long one source may take for one clip before the next one is tried.</summary>
     public static TimeSpan SourceTimeout { get; set; } = TimeSpan.FromSeconds(45);
 
+    /// <summary>
+    /// After Allow (or a silent grant), how long the wallet may wait for the routed models to load before it answers
+    /// the page, so that the page's first call is not a cold start.
+    /// </summary>
+    public static TimeSpan WarmWait { get; set; } = TimeSpan.FromSeconds(30);
+
     const int MaxAudioBytes = 6 * 1024 * 1024;
     const int MaxManifestChars = 64 * 1024;
     const int MaxTextChars = 4000;
@@ -39,7 +45,12 @@ public sealed class WalletEngine
     readonly IWalletUi _ui;
     readonly TimeProvider _time;
     readonly ConcurrentDictionary<string, GrantSession> _sessions = new(StringComparer.Ordinal);
-    readonly ConcurrentDictionary<string, Lazy<Task<JsonNode?>>> _asking = new(StringComparer.Ordinal);
+    readonly Dictionary<string, SharedAsk> _asking = new(StringComparer.Ordinal);
+    readonly object _askGate = new();
+
+    // Daily limits count calls and money that are still running, not only the ones already in the log.
+    readonly Dictionary<string, (int Calls, decimal Money)> _inflight = new(StringComparer.Ordinal);
+    readonly object _dailyGate = new();
     readonly SemaphoreSlim _prompt = new(1, 1);
 
     public WalletEngine(SettingsStore store, IReadOnlyList<ISpeechSource> sources, ActivityLog activity, IWalletUi ui, TimeProvider? time = null)
@@ -125,13 +136,15 @@ public sealed class WalletEngine
 
         if (site.Status == SiteStatus.Blocked) return Done(entry, "blocked", "blocked site: no notice");
 
-        var (newSkills, costRaised) = Difference(site, manifest);
-        var covered = site.Status == SiteStatus.Allowed && newSkills.Count == 0 && !costRaised;
+        var diff = Difference(site, manifest);
+        var covered = site.Status == SiteStatus.Allowed && diff.NewSkills.Count == 0 && diff.MissingRequired.Count == 0 && !diff.CostRaised;
         if (covered && site.AutoDecide)
         {
             var auto = Grant(origin, manifest, site.Skills, Money.Parse(site.Budget, 0.20m));
             if (auto is null) return Done(entry, "invalid", "nothing to grant");
-            entry.Note = (userActivation ? "after a click" : "without a click") + "; decided on its own";
+            // Silent, but not cold: the routed models load before the page gets its grant (bounded by WarmWait).
+            var waited = await WarmBeforeResolveAsync(auto, host, showPreparing: false, ct).ConfigureAwait(false);
+            entry.Note = (userActivation ? "after a click" : "without a click") + "; decided on its own" + Ready(waited);
             return Done(entry, "auto", null, auto.ToResult());
         }
 
@@ -144,15 +157,56 @@ public sealed class WalletEngine
             return Done(entry, "held", "without a click: quiet badge only");
         }
 
-        // A second request from the same origin while the first is still asking gets the same answer.
-        var asking = _asking.GetOrAdd(origin, _ => new Lazy<Task<JsonNode?>>(() => AskVisitorAsync(origin, host, secure, manifest, ct)));
+        // A second request from the same origin while the first is still asking gets the same answer. The question
+        // has its own token: it is cancelled only when every page waiting for it has gone, not when the first one has.
+        SharedAsk ask;
+        lock (_askGate)
+        {
+            if (!_asking.TryGetValue(origin, out ask!))
+            {
+                ask = new SharedAsk();
+                _asking[origin] = ask;
+                var shared = ask;
+                ask.Answer = AskVisitorAsync(origin, host, secure, manifest, ask.Cancel.Token);
+                ask.Answer.ContinueWith(_ =>
+                {
+                    lock (_askGate)
+                    {
+                        if (_asking.TryGetValue(origin, out var current) && ReferenceEquals(current, shared)) _asking.Remove(origin);
+                    }
+                }, TaskScheduler.Default);
+            }
+
+            ask.Waiters++;
+        }
+
+        var left = 0;
+        using var registration = ct.Register(() => Leave(ask, ref left));
         try
         {
-            return await asking.Value.ConfigureAwait(false);
+            return await ask.Answer.WaitAsync(ct).ConfigureAwait(false);
         }
         finally
         {
-            _asking.TryRemove(new KeyValuePair<string, Lazy<Task<JsonNode?>>>(origin, asking));
+            Leave(ask, ref left);
+        }
+    }
+
+    /// <summary>One question to the visitor, shared by every request of an origin that arrives while it is open.</summary>
+    sealed class SharedAsk
+    {
+        public CancellationTokenSource Cancel { get; } = new();
+        public Task<JsonNode?> Answer { get; set; } = Task.FromResult<JsonNode?>(null);
+        public int Waiters { get; set; }
+    }
+
+    void Leave(SharedAsk ask, ref int left)
+    {
+        if (Interlocked.Exchange(ref left, 1) == 1) return;
+        lock (_askGate)
+        {
+            ask.Waiters--;
+            if (ask.Waiters == 0 && !ask.Answer.IsCompleted) ask.Cancel.Cancel();
         }
     }
 
@@ -171,6 +225,7 @@ public sealed class WalletEngine
             return Done(entry, "closed", "no answer in time");
         }
 
+        var released = false;
         try
         {
             var notice = await _ui.ShowNoticeAsync(new NoticeModel(origin, host), timeout.Token).ConfigureAwait(false);
@@ -220,7 +275,11 @@ public sealed class WalletEngine
             SitesChanged?.Invoke();
             var session = Grant(origin, manifest, skills, answer.Budget);
             if (session is null) return Done(entry, "declined", "no skill left to grant");
-            entry.Note = "after a click" + (model.IsDifference ? "; only the difference was shown" : "") + (answer.AutoDecide ? "; decide on my own from now on" : "");
+            _prompt.Release();
+            released = true;
+            // The page gets its grant once the routed models are loaded (at most WarmWait), with "Preparing your model…" meanwhile.
+            var waited = await WarmBeforeResolveAsync(session, host, showPreparing: true, ct).ConfigureAwait(false);
+            entry.Note = "after a click" + (model.IsDifference ? "; only the difference was shown" : "") + (answer.AutoDecide ? "; decide on my own from now on" : "") + Ready(waited);
             return Done(entry, "allowed", null, session.ToResult());
         }
         catch (OperationCanceledException)
@@ -229,28 +288,35 @@ public sealed class WalletEngine
         }
         finally
         {
-            _prompt.Release();
+            if (!released) _prompt.Release();
         }
     }
 
-    static (List<string> NewSkills, bool CostRaised) Difference(SiteRecord site, RequestedManifest manifest)
+    static string Ready(double? waited) =>
+        waited is { } w && w >= 0.05 ? "; models ready after " + w.ToString("0.0", CultureInfo.InvariantCulture) + " s" : "";
+
+    /// <summary>
+    /// What a request asks beyond the site's grant: new skills the wallet can serve, required skills it cannot serve
+    /// (never covered, so never granted silently), and an expected cost per session above the visitor's budget.
+    /// </summary>
+    static (List<string> NewSkills, List<string> MissingRequired, bool CostRaised) Difference(SiteRecord site, RequestedManifest manifest)
     {
-        if (site.Status != SiteStatus.Allowed) return (manifest.Skills.Select(s => s.Id).ToList(), false);
+        var missing = manifest.Skills.Where(s => s.Required && !Vocabulary.Served.Contains(s.Id)).Select(s => s.Id).ToList();
+        if (site.Status != SiteStatus.Allowed) return (manifest.Skills.Select(s => s.Id).ToList(), missing, false);
         var newSkills = manifest.Skills.Where(s => !site.Skills.Contains(s.Id) && Vocabulary.Served.Contains(s.Id)).Select(s => s.Id).ToList();
-        var before = Money.TryParse(site.ExpectedCost, out var b) ? b : (decimal?)null;
-        var costRaised = manifest.ExpectedPerSession is { } now && now > (before ?? Money.Parse(site.Budget, 0));
-        return (newSkills, costRaised);
+        var costRaised = manifest.ExpectedPerSession is { } expected && expected > Money.Parse(site.Budget, 0);
+        return (newSkills, missing, costRaised);
     }
 
     ConsentModel BuildConsent(string origin, string host, bool secure, RequestedManifest manifest, SiteRecord site)
     {
-        var (newSkills, costRaised) = Difference(site, manifest);
-        var isDifference = site.Status == SiteStatus.Allowed && (newSkills.Count > 0 || costRaised);
+        var (newSkills, missingRequired, costRaised) = Difference(site, manifest);
+        var isDifference = site.Status == SiteStatus.Allowed && (newSkills.Count > 0 || missingRequired.Count > 0 || costRaised);
         var settings = _store.Snapshot();
         var rows = new List<ConsentRow>();
         foreach (var skill in manifest.Skills)
         {
-            if (isDifference && !newSkills.Contains(skill.Id)) continue;
+            if (isDifference && !newSkills.Contains(skill.Id) && !missingRequired.Contains(skill.Id)) continue;
             rows.Add(Row(skill, settings, isNew: isDifference));
         }
 
@@ -260,8 +326,9 @@ public sealed class WalletEngine
         decimal? before = null;
         if (site.Status == SiteStatus.Allowed)
         {
-            budget = costRaised && manifest.ExpectedPerSession is { } raised ? Math.Max(current, raised) : current;
-            if (isDifference && costRaised) before = current;
+            // "Budget $0.05 -> $0.10": from the visitor's budget to the site's new expected cost, which is above it.
+            budget = costRaised && manifest.ExpectedPerSession is { } raised ? raised : current;
+            if (costRaised) before = current;
         }
         else
         {
@@ -310,30 +377,62 @@ public sealed class WalletEngine
         if (skills.Count == 0) return null;
         var session = new GrantSession(origin, manifest, skills, budget, Now);
         _sessions[session.Id] = session;
-        Warm(manifest.Skills.Where(k => skills.Contains(k.Id)).SelectMany(k => k.Languages.Count > 0 ? k.Languages.Cast<string?>() : [null]));
         return session;
+    }
+
+    static IEnumerable<string?> LanguagesOf(GrantSession session) =>
+        session.Manifest.Skills.Where(k => session.Skills.Contains(k.Id)).SelectMany(k => k.Languages.Count > 0 ? k.Languages.Cast<string?>() : [null]);
+
+    /// <summary>
+    /// Loads the first local source of each of the grant's languages and waits for it, at most <see cref="WarmWait"/>,
+    /// showing "Preparing your model…" when it takes more than a moment. Returns the seconds waited, or null when
+    /// everything was already loaded.
+    /// </summary>
+    async Task<double?> WarmBeforeResolveAsync(GrantSession session, string host, bool showPreparing, CancellationToken ct)
+    {
+        var (warming, names) = WarmCore(LanguagesOf(session), startDownloads: true);
+        if (warming.IsCompleted) return null;
+        var watch = Stopwatch.StartNew();
+        if (await Task.WhenAny(warming, Task.Delay(150, ct)).ConfigureAwait(false) != warming && !ct.IsCancellationRequested)
+        {
+            using var preparing = showPreparing ? _ui.ShowPreparing(new PreparingModel(session.Origin, host, names)) : null;
+            var remaining = WarmWait - watch.Elapsed;
+            if (remaining > TimeSpan.Zero) await Task.WhenAny(warming, Task.Delay(remaining, ct)).ConfigureAwait(false);
+        }
+
+        return watch.Elapsed.TotalSeconds;
     }
 
     /// <summary>
     /// Loads the first local source of each language's route in the background, so that a page's first call is fast.
     /// Called when a grant is given, and at start for the sites already allowed.
     /// </summary>
-    public void Warm(IEnumerable<string?> languages)
+    public Task Warm(IEnumerable<string?> languages) => WarmCore(languages, startDownloads: false).Task;
+
+    (Task Task, IReadOnlyList<string> Names) WarmCore(IEnumerable<string?> languages, bool startDownloads)
     {
         var settings = _store.Snapshot();
         var chain = settings.Chain(Vocabulary.Transcribe);
         var jobs = new List<(IWarmable Source, string? Language)>();
         foreach (var language in languages.Distinct())
         {
-            var first = Router.Plan(chain, _sources, id => settings.Source(id).Enabled, language).Steps
-                .FirstOrDefault(s => !s.Source.Paid && s.Source.State == SourceState.Ready);
+            var steps = Router.Plan(chain, _sources, id => settings.Source(id).Enabled, language).Steps.Where(s => !s.Source.Paid).ToList();
+            var first = steps.FirstOrDefault(s => s.Source.State == SourceState.Ready);
             if (first?.Source is IWarmable w && !jobs.Contains((w, language))) jobs.Add((w, language));
+
+            // A model the route prefers but that is not on disk yet starts downloading now rather than on the first call.
+            if (startDownloads && steps.FirstOrDefault() is { Source: IDownloadableSource download } missing && missing.Source.State == SourceState.NeedsDownload)
+            {
+                _ui.DownloadStarted(missing.Source);
+                _ = download.EnsureDownloadedAsync(CancellationToken.None);
+            }
         }
 
         // Different sources warm in parallel (GigaAM on the CPU, Whisper on the GPU); one source's languages in turn.
+        var tasks = new List<Task>();
         foreach (var group in jobs.GroupBy(j => j.Source))
         {
-            _ = Task.Run(async () =>
+            tasks.Add(Task.Run(async () =>
             {
                 foreach (var (source, language) in group)
                 {
@@ -346,8 +445,11 @@ public sealed class WalletEngine
                         // a source that cannot load shows it in its state; calls fall back
                     }
                 }
-            });
+            }));
         }
+
+        var names = jobs.Select(j => ((ISpeechSource)j.Source).Name).Distinct().ToList();
+        return (Task.WhenAll(tasks), names);
     }
 
     /// <summary>At start: warm the models the already allowed sites will need.</summary>
@@ -355,7 +457,7 @@ public sealed class WalletEngine
     {
         var languages = _store.Read(s => s.Sites.Where(x => x.Status == SiteStatus.Allowed)
             .SelectMany(x => x.Languages.Count > 0 ? x.Languages.Cast<string?>() : [null]).Distinct().ToList());
-        if (languages.Count > 0) Warm(languages);
+        if (languages.Count > 0) _ = Warm(languages);
     }
 
     void MarkDeclined(string origin)
@@ -433,13 +535,28 @@ public sealed class WalletEngine
             SitePerDay: Money.Parse(site.PerDay ?? s.Limits.SitePerDay, 0.20m),
             CallsPerDay: site.CallsPerDay ?? s.Limits.SiteCallsPerDay,
             WalletPerDay: Money.Parse(s.Limits.WalletPerDay, 1.00m)));
-        var (siteSpent, siteCalls) = _activity.Today(Now, origin);
-        var (walletSpent, _) = _activity.Today(Now);
-        if (siteCalls >= limits.CallsPerDay)
+        var hold = new DailyHold(origin);
+        if (!HoldCall(hold, limits.CallsPerDay))
         {
             TellLimit(session, site, "calls per day", $"{limits.CallsPerDay} calls a day for this site");
             return Failed(entry, "limit", "calls per day for this site");
         }
+
+        try
+        {
+            return await RouteAsync(entry, session, site, skill, clip, seconds, language, limits.SitePerDay, limits.WalletPerDay, hold, started, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            ReleaseDaily(hold);
+        }
+    }
+
+    async Task<JsonNode?> RouteAsync(
+        ActivityEntry entry, GrantSession session, SiteRecord site, string skill, WavClip clip, double seconds, string? language,
+        decimal sitePerDay, decimal walletPerDay, DailyHold hold, long started, CancellationToken ct)
+    {
+        var origin = session.Origin;
 
         var settings = _store.Snapshot();
         var chain = settings.Chain(skill);
@@ -469,7 +586,7 @@ public sealed class WalletEngine
             }
 
             var estimate = source.EstimateCost(clip.Seconds);
-            if (estimate > 0 && (siteSpent + estimate > limits.SitePerDay || walletSpent + estimate > limits.WalletPerDay))
+            if (estimate > 0 && !HoldMoney(hold, estimate, sitePerDay, walletPerDay))
             {
                 route.Add(Index(source), source.Name + ": over the daily limit");
                 stopReason ??= "money per day";
@@ -601,6 +718,57 @@ public sealed class WalletEngine
         return stopReason is not null
             ? Failed(entry, "limit", stopReason, route.All())
             : Failed(entry, "failed", plan.Steps.Count == 0 ? "no source for this language" : "no source answered", route.All());
+    }
+
+    /// <summary>The calls and money one call holds against the daily limits while it runs.</summary>
+    sealed class DailyHold(string origin)
+    {
+        public string Origin { get; } = origin;
+        public bool Call { get; set; }
+        public decimal Money { get; set; }
+    }
+
+    /// <summary>Takes a call slot for today if the site's calls per day (done and running) allow it.</summary>
+    bool HoldCall(DailyHold hold, int callsPerDay)
+    {
+        lock (_dailyGate)
+        {
+            var (_, done) = _activity.Today(Now, hold.Origin);
+            var running = _inflight.GetValueOrDefault(hold.Origin);
+            if (done + running.Calls >= callsPerDay) return false;
+            _inflight[hold.Origin] = (running.Calls + 1, running.Money);
+            hold.Call = true;
+            return true;
+        }
+    }
+
+    /// <summary>Reserves a paid call's estimate if the site's and the wallet's money per day (spent and reserved) allow it.</summary>
+    bool HoldMoney(DailyHold hold, decimal estimate, decimal sitePerDay, decimal walletPerDay)
+    {
+        lock (_dailyGate)
+        {
+            var (siteSpent, _) = _activity.Today(Now, hold.Origin);
+            var (walletSpent, _) = _activity.Today(Now);
+            var running = _inflight.GetValueOrDefault(hold.Origin);
+            var allRunning = _inflight.Values.Sum(v => v.Money);
+            if (siteSpent + running.Money + estimate > sitePerDay || walletSpent + allRunning + estimate > walletPerDay) return false;
+            _inflight[hold.Origin] = (running.Calls, running.Money + estimate);
+            hold.Money += estimate;
+            return true;
+        }
+    }
+
+    void ReleaseDaily(DailyHold hold)
+    {
+        lock (_dailyGate)
+        {
+            if (!_inflight.TryGetValue(hold.Origin, out var running)) return;
+            var next = (Calls: running.Calls - (hold.Call ? 1 : 0), Money: running.Money - hold.Money);
+            if (next.Calls <= 0 && next.Money <= 0) _inflight.Remove(hold.Origin);
+            else _inflight[hold.Origin] = next;
+            hold.Call = false;
+            hold.Money = 0;
+        }
     }
 
     async Task<PaidAnswer> AskPaidAsync(GrantSession session, SiteRecord site, ISpeechSource source, decimal estimate, IReadOnlyList<string> route, CancellationToken ct)

@@ -122,6 +122,30 @@ sealed class ToastWindow : CornerWindow
         return t;
     }
 
+    /// <summary>
+    /// "Preparing your model…": shown after Allow while the routed models load, so the page gets its grant only
+    /// when its first call will be quick. It closes itself when the wallet disposes it; Close only hides it.
+    /// </summary>
+    public static ToastWindow Preparing(PreparingModel model)
+    {
+        var t = new ToastWindow("Agent wallet preparing");
+        var bar = new ProgressBar { IsIndeterminate = true };
+        bar.Classes.Add("meter");
+        var title = Ui.Runs(("Preparing your model…", true));
+        AutomationProperties.SetAutomationId(title, "NoticePreparing");
+        AutomationProperties.SetName(title, "Preparing your model");
+        var lines = Ui.Column(4,
+            title,
+            Ui.Wrap("Loading " + string.Join(" and ", model.Sources) + " for " + model.Host + ", so its first answer is quick.", "muted"),
+            bar,
+            Ui.Text("Agent wallet", "muted", "small"));
+        t._body.Children.Add(t.Header(Ui.Tile(Ui.Screen, 24), lines));
+        return t;
+    }
+
+    /// <summary>Closes the toast from code (no answer).</summary>
+    public void Dismiss() => Answer(null);
+
     /// <summary>A model downloading on first use, with its progress.</summary>
     public static ToastWindow Download(ISpeechSource source, IDownloadableSource download)
     {

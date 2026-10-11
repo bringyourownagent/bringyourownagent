@@ -17,6 +17,7 @@ public sealed class GigaAmSource : ISpeechSource, IWarmable, IDisposable
     OfflineRecognizer? _recognizer;
     string? _loadedFrom;
     string? _error;
+    string? _errorFolder;
     double _seconds = 0.2;
 
     /// <param name="findFolder">Returns the GigaAM folder from the visitor's model folders, or null.</param>
@@ -33,7 +34,19 @@ public sealed class GigaAmSource : ISpeechSource, IWarmable, IDisposable
 
     public string? Folder => _loadedFrom ?? _findFolder();
 
-    public SourceState State => _error is not null ? SourceState.Broken : Folder is null ? SourceState.Missing : SourceState.Ready;
+    /// <summary>
+    /// Broken after a failed load of the same folder (the route then skips it and falls back); a different folder
+    /// (after a rescan or a new model folder) is tried again.
+    /// </summary>
+    public SourceState State
+    {
+        get
+        {
+            var folder = Folder;
+            if (folder is null) return SourceState.Missing;
+            return _error is not null && _errorFolder == folder ? SourceState.Broken : SourceState.Ready;
+        }
+    }
 
     public string StateText => State switch
     {
@@ -58,9 +71,9 @@ public sealed class GigaAmSource : ISpeechSource, IWarmable, IDisposable
                 recognizer.Decode(stream);
             }
         }
-        catch (Exception e) when (e is InvalidOperationException or IOException)
+        catch (Exception e) when (e is not OutOfMemoryException)
         {
-            // State shows it; a call will fall back.
+            // Load() recorded the failure: State is Broken and calls fall back.
         }
     }
 
@@ -73,6 +86,21 @@ public sealed class GigaAmSource : ISpeechSource, IWarmable, IDisposable
     {
         if (_recognizer is not null) return _recognizer;
         var folder = _findFolder() ?? throw new InvalidOperationException("GigaAM model folder not found");
+        if (_error is not null && _errorFolder == folder) throw new InvalidOperationException("GigaAM failed to load: " + _error);
+        try
+        {
+            return Create(folder);
+        }
+        catch (Exception e) when (e is not OutOfMemoryException)
+        {
+            _error = e.Message;
+            _errorFolder = folder;
+            throw new InvalidOperationException("GigaAM failed to load: " + e.Message, e);
+        }
+    }
+
+    OfflineRecognizer Create(string folder)
+    {
         var files = GigaAmFiles.Find(folder) ?? throw new InvalidOperationException("GigaAM model files missing");
         var config = new OfflineRecognizerConfig();
         config.ModelConfig.Transducer.Encoder = files.Encoder;
@@ -86,6 +114,7 @@ public sealed class GigaAmSource : ISpeechSource, IWarmable, IDisposable
         _recognizer = new OfflineRecognizer(config);
         _loadedFrom = folder;
         _error = null;
+        _errorFolder = null;
         return _recognizer;
     }
 
