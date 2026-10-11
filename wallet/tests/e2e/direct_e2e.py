@@ -8,11 +8,13 @@ sites (fake_site.py) on ws://localhost under the developer switch.
 Before: run install.ps1 (it registers the scheme). The test uses its own wallet data folder (BYOA_WALLET_HOME) and
 BYOA_WALLET_DEV_LOCAL=1, both inherited by the wallet that the link starts.
 
-Checks: the scheme is registered; a link starts the wallet; the manifest is fetched before the consent (no cookies,
-no code) and nothing connects before Allow; the notice and consent (real clicks); hello after Allow, with the models
-loaded first; calls with real Russian and Slovak speech over the connection; activity marked "via link"; a restart
-of the wallet reconnects with the stored pairing and no notice; decline gives no connection; block gives no
-connection and later links do nothing; a bad session gets an error and no retry; Revoke in the settings closes the
+Checks: the scheme is registered; a link (with its manifest inside, CONTRACT-DIRECT.md §7) starts the wallet and no
+request of any kind reaches the site before Allow; the notice and consent (real clicks); hello after Allow, with the
+models loaded first, and the site's welcome echoing the manifest; calls with real Russian and Slovak speech over the
+connection; activity marked "via link"; a restart of the wallet reconnects with the stored pairing and no notice; a
+site that asks for more on a reconnect gets bye, and a new link shows only the difference; a site whose welcome does
+not echo its link's manifest gets bye and is revoked; decline and block: the site never hears from the wallet, and
+after a block later links do nothing; a bad session gets an error and no retry; Revoke in the settings closes the
 connection; once, a real click in a headed Chromium (its own prompt, then the wallet, which gets the link from the
 second process over the pipe).
 Needs: aiohttp, uiautomation, pillow, patchright (for the browser step). Windows only.
@@ -95,7 +97,7 @@ words = {lang: [s for s in samples if s["lang"] == lang and s["kind"] == "word"]
 sentences = [s for s in samples if s["kind"] == "sentence"]
 before = wallet_pids()
 started_pids = set()
-main, dec, blk, web_site = (FakeSite(n).start() for n in ("main", "decline", "block", "browser"))
+main, dec, blk, web_site, liar = (FakeSite(n).start() for n in ("main", "decline", "block", "browser", "liar"))
 
 # ---------------------------------------------------------------------------------------------- the registration
 reg = subprocess.run(["reg", "query", r"HKCU\Software\Classes\bringyourownagent\shell\open\command", "/ve"], capture_output=True, text=True).stdout
@@ -108,8 +110,7 @@ t0 = time.time()
 open_link(main.new_link())
 notice = ui.find_window("Agent wallet notice", 40)
 check("a link starts the wallet, which shows the same notice", notice is not None, f"{time.time() - t0:.1f} s from the link")
-check("the manifest was fetched before the consent, with no cookie and no session code",
-      main.manifest_gets == 1 and not any("Cookie" in h for h in main.manifest_headers), f"{main.manifest_gets} GET")
+check("the notice is up and the site has had no request at all (the manifest came in the link)", main.requests == 0, f"{main.requests} requests")
 check("the wallet that the link started uses this test's data folder (it inherited the environment)",
       wait(lambda: os.path.exists(os.path.join(HOME, "settings.json")), 5))
 time.sleep(0.8)
@@ -118,7 +119,7 @@ ui.click(notice, "NoticeShow")
 consent = ui.find_window("Agent wallet consent", 10)
 time.sleep(0.8)
 ui.shot(consent, os.path.join(a.shots, "21-link-consent.png"))
-check("nothing connects before Allow", main.upgrades == 0)
+check("nothing reaches the site before Allow", main.requests == 0 and main.upgrades == 0)
 ui.toggle(consent, "ConsentAuto", True)
 allowed_at = time.time()
 ui.click(consent, "ConsentAllow")
@@ -175,25 +176,61 @@ check("after a wallet restart it reconnects with the stored pairing: no link, no
 r = main.call(open(os.path.join(a.samples, words["ru"][4]["file"]), "rb").read(), "ru")
 check("... and answers calls again", r.get("ok") is True, (r.get("output") or {}).get("text"))
 
+# ---------------------------------------------------------------------------------------------- a reconnect where the site asks for more
+byes = main.byes
+main.manifest = dict(main.manifest, expectedCost={"perSession": "0.60 USD"})        # above the visitor's $0.05
+kill_mine()
+wait(lambda: main.live is None, 10)
+subprocess.Popen([wallet_exe, "--background"], env=env)
+got_bye = wait(lambda: main.byes == byes + 1 and len(main.hellos) >= 3, 45)
+time.sleep(3)
+asked_more = [e for e in activity() if e.get("kind") == "link" and "asks for more" in (e.get("note") or "")]
+check("after a restart the site's welcome asks for more: the wallet says bye and does not stay or retry",
+      got_bye and main.live is None and len(main.hellos) == 3 and asked_more and ui.find_window("Agent wallet notice", 0.5) is None,
+      asked_more[-1].get("note") if asked_more else "")
+open_link(main.new_link())
+w = ui.find_window("Agent wallet notice", 20)
+ui.invoke(w, "NoticeShow")
+c = ui.find_window("Agent wallet consent", 10)
+time.sleep(0.8)
+only_new = c.TextControl(Name="Only what is new", searchDepth=30).Exists(2, 0.2)
+ui.shot(c, os.path.join(a.shots, "26-link-difference.png"))
+ui.toggle(c, "ConsentAuto", True)
+ui.invoke(c, "ConsentAllow")
+check("a new link then shows only the difference, and Allow connects again", only_new and main.wait_hello(45) and main.live is not None)
+
+# ---------------------------------------------------------------------------------------------- a site whose welcome does not echo its link's manifest
+open_link(liar.new_link())
+liar.echo = liar.manifest64[:-4] + "AAAA"                     # its server says another manifest than the link showed
+w = ui.find_window("Agent wallet notice", 20)
+ui.invoke(w, "NoticeShow")
+c = ui.find_window("Agent wallet consent", 10)
+ui.invoke(c, "ConsentAllow")
+got_bye = wait(lambda: liar.byes == 1, 45)
+time.sleep(1)
+lies = [e for e in activity() if e.get("origin") == liar.origin]
+check("a welcome whose manifest differs from the link's: bye, and the site's grant is revoked",
+      got_bye and any(e.get("kind") == "link" and e.get("note") == "the site's manifest differs from its link" for e in lies)
+      and any(e.get("outcome") == "revoked" for e in lies), f"{len(lies)} entries")
+
 # ---------------------------------------------------------------------------------------------- decline (the link goes to the running wallet)
 open_link(dec.new_link())
 w = ui.find_window("Agent wallet notice", 20)
 check("a second link reaches the running wallet (handed over the pipe): its notice", w is not None)
 ui.invoke(w, "NoticeDecline")
 time.sleep(4)
-check("decline: the site never sees a connection", dec.upgrades == 0 and dec.manifest_gets == 1)
+check("decline: the site never hears from the wallet (no request of any kind)", dec.requests == 0)
 
 # ---------------------------------------------------------------------------------------------- block
 open_link(blk.new_link())
 w = ui.find_window("Agent wallet notice", 20)
 ui.invoke(w, "NoticeBlock")
 time.sleep(2)
-gets = blk.manifest_gets
 open_link(blk.new_link())
 seen = ui.find_window("Agent wallet notice", 5) is not None
 time.sleep(1)
 check("block: no connection, and a later link does nothing (no notice, no request to the site)",
-      blk.upgrades == 0 and not seen and blk.manifest_gets == gets
+      blk.requests == 0 and not seen
       and any(e.get("kind") == "link" and e.get("outcome") == "blocked" for e in activity()))
 
 # ---------------------------------------------------------------------------------------------- a bad session

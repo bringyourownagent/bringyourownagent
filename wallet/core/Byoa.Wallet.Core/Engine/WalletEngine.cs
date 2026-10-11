@@ -124,6 +124,20 @@ public sealed class WalletEngine
     /// <summary>A copy of what the wallet knows about a site, or null.</summary>
     public SiteRecord? FindSite(string origin) => _store.Read(s => s.Site(origin) is { } r ? Copy(r) : null);
 
+    /// <summary>
+    /// True when a manifest asks for nothing beyond what the site is allowed: a valid manifest, the site allowed, no new
+    /// skill, no required skill the wallet cannot serve, and an expected cost within the visitor's budget.
+    /// </summary>
+    public bool CoveredByGrant(string origin, JsonObject manifestNode)
+    {
+        var text = manifestNode.ToJsonString();
+        if (text.Length > MaxManifestChars || !Manifest.Validate(text).Ok) return false;
+        var site = FindSite(origin);
+        if (site is not { Status: SiteStatus.Allowed }) return false;
+        var diff = Difference(site, RequestedManifest.From(manifestNode));
+        return diff.NewSkills.Count == 0 && diff.MissingRequired.Count == 0 && !diff.CostRaised;
+    }
+
     /// <summary>Adds an entry to the activity log (the direct transport's own events).</summary>
     public void Record(ActivityEntry entry) => Log(entry);
 
@@ -871,8 +885,8 @@ public sealed class WalletEngine
         return null;
     }
 
-    /// <summary>Ends every grant of a site and forgets what it was allowed (Sites → Revoke).</summary>
-    public void Revoke(string origin)
+    /// <summary>Ends every grant of a site and forgets what it was allowed (Sites → Revoke, or the wallet itself when a site broke the rules).</summary>
+    public void Revoke(string origin, string note = "revoked in the settings")
     {
         DropSessions(origin);
         _store.Update(s =>
@@ -883,7 +897,7 @@ public sealed class WalletEngine
             r.AutoDecide = false;
             r.PaidAllowed = false;
         });
-        Log(new ActivityEntry { Origin = origin, Kind = Wire.Request, Outcome = "revoked", Note = "revoked in the settings" });
+        Log(new ActivityEntry { Origin = origin, Kind = Wire.Request, Outcome = "revoked", Note = note });
         SitesChanged?.Invoke();
         SiteClosed?.Invoke(origin);
     }

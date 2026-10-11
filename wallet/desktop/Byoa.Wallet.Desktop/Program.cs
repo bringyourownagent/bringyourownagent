@@ -1,6 +1,5 @@
 using System.IO.Pipes;
 using System.Text;
-using System.Text.Json.Nodes;
 using Avalonia;
 using Byoa.Wallet.Direct;
 using Byoa.Wallet.Protocol;
@@ -72,30 +71,11 @@ static class Program
         }
     }
 
-    /// <summary>Hands a link to the running wallet over its pipe (it may still be starting: a few tries for 10 s).</summary>
+    /// <summary>Hands a link to the running wallet over its pipe; every step is time-limited (LinkHandOff).</summary>
     static void HandOffLink(string link)
     {
         if (link.Length > DirectLink.MaxLength) link = link[..(DirectLink.MaxLength + 1)];   // the wallet refuses it as too long
-        var frame = Encoding.UTF8.GetBytes(new JsonObject
-        {
-            ["id"] = 1, ["type"] = Wire.Link, ["origin"] = "", ["userActivation"] = false, ["payload"] = new JsonObject { ["url"] = link },
-        }.ToJsonString());
-        var until = DateTime.UtcNow.AddSeconds(10);
-        while (DateTime.UtcNow < until)
-        {
-            try
-            {
-                using var pipe = new NamedPipeClientStream(".", WalletPaths.PipeName(), PipeDirection.InOut, PipeOptions.CurrentUserOnly);
-                pipe.Connect(2000);
-                Framing.WriteAsync(pipe, frame).GetAwaiter().GetResult();
-                Framing.ReadAsync(pipe).GetAwaiter().GetResult();
-                return;
-            }
-            catch (Exception e) when (e is IOException or TimeoutException or UnauthorizedAccessException)
-            {
-                Thread.Sleep(300);
-            }
-        }
+        LinkHandOff.Send(WalletPaths.PipeName(), link);
     }
 
     /// <summary>Crashes go to errors.log in the data folder (types and stack only; no content, no secrets).</summary>

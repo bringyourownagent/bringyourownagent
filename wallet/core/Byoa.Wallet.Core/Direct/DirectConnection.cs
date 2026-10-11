@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.WebSockets;
 using System.Runtime.Versioning;
@@ -25,6 +26,12 @@ public sealed class DirectOptions
     public int MaxFrameBytes { get; init; } = 4 * 1024 * 1024;
     public int MaxConnectionsPerOrigin { get; init; } = 4;
 
+    /// <summary>How long a first connection keeps trying with its session code (the site keeps a code 120 s).</summary>
+    public TimeSpan SessionRetryWindow { get; init; } = TimeSpan.FromSeconds(60);
+
+    /// <summary>Links acted on at once; more are ignored (a program flooding the wallet with links).</summary>
+    public int MaxPendingLinks { get; init; } = 4;
+
     /// <summary>Name resolution for the address check (tests replace it); DNS by default.</summary>
     public Func<string, CancellationToken, Task<IPAddress[]>>? Resolve { get; init; }
 }
@@ -40,9 +47,13 @@ public enum DirectState
 /// <summary>
 /// The wallet's own connection to one site's server after Allow: <c>hello</c> → <c>welcome</c> (or <c>error</c>),
 /// then the site's <c>call</c> frames answered with <c>result</c> frames through exactly the engine's gate, limits,
-/// routing, fallbacks and "ask before paid". A ping every 30 s; <c>bye</c> from either side ends it. When the
-/// connection drops, it reconnects with backoff only while the site keeps "decide on my own" and its pairing is
-/// stored; a grant that ended is renewed by the same silent rule as a page's request.
+/// routing, fallbacks and "ask before paid". A ping every 30 s; <c>bye</c> from either side ends it.
+/// The welcome echoes the manifest: after a link it must be the link's, byte for byte (otherwise bye, and the site's
+/// grant is revoked); after a reconnect with the pairing it is the site's current one, and if that asks for more than
+/// the site is allowed, the wallet says bye and the site needs a new link and the visitor's consent.
+/// A first connection that cannot reach the site tries again with backoff while its session code may still be valid
+/// (60 s), until the site says the code is bad. Later, when the connection drops, it reconnects with backoff only
+/// while the site keeps "decide on my own" and its pairing is stored.
 /// </summary>
 [SupportedOSPlatform("windows")]
 public sealed class DirectConnection
@@ -67,6 +78,7 @@ public sealed class DirectConnection
     readonly CancellationTokenSource _stop = new();
     readonly SemaphoreSlim _send = new(1, 1);
     readonly TaskCompletionSource<bool> _welcomed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    readonly Stopwatch _sinceLink = Stopwatch.StartNew();
     string? _session;
     string? _token;
     GrantSession? _grant;
@@ -74,7 +86,8 @@ public sealed class DirectConnection
     bool _toldFailure;
     int _inFlight;
 
-    internal DirectConnection(DirectTransport owner, string origin, Uri endpoint, Uri manifest, string? session, string? token, GrantSession? grant)
+    /// <param name="manifest">The manifest as base64url: the link's, or the one stored with the pairing.</param>
+    internal DirectConnection(DirectTransport owner, string origin, Uri endpoint, string manifest, string? session, string? token, GrantSession? grant)
     {
         _owner = owner;
         Origin = origin;
@@ -87,7 +100,9 @@ public sealed class DirectConnection
 
     public string Origin { get; }
     public Uri Endpoint { get; }
-    public Uri Manifest { get; }
+
+    /// <summary>The manifest this connection works under (base64url), as the link or the stored pairing carries it.</summary>
+    public string Manifest { get; private set; }
     public DirectState State { get; private set; } = DirectState.Connecting;
 
     /// <summary>The pairing token from the site's welcome, or the stored one this connection resumes with.</summary>
@@ -137,7 +152,22 @@ public sealed class DirectConnection
 
                 var (outcome, welcomed) = await SessionAsync(ct).ConfigureAwait(false);
                 if (welcomed) attempt = 0;
-                if (outcome == Outcome.Stop || !CanResume()) break;
+                if (outcome == Outcome.Stop) break;
+                if (_session is not null)
+                {
+                    // The first connection with the link's code: try again while the code may still be valid.
+                    if (_sinceLink.Elapsed >= Options.SessionRetryWindow)
+                    {
+                        Record("failed", "the site could not be reached within " + (int)Options.SessionRetryWindow.TotalSeconds + " s of the link");
+                        break;
+                    }
+
+                    SetState(DirectState.Waiting);
+                    await DelayAsync(attempt++, ct).ConfigureAwait(false);
+                    continue;
+                }
+
+                if (!CanResume()) break;
                 SetState(DirectState.Waiting);
                 await DelayAsync(attempt++, ct).ConfigureAwait(false);
             }
@@ -191,14 +221,19 @@ public sealed class DirectConnection
         }
         catch (Exception e) when (!ct.IsCancellationRequested)
         {
-            if (!_toldFailure) Record("failed", "could not connect: " + DirectException.Reason(e));
+            if (DirectException.IsPermanent(e))
+            {
+                // The wallet's own refusal (a private address): no point in trying again.
+                Record("failed", DirectException.Reason(e));
+                return (Outcome.Stop, false);
+            }
+
+            if (!_toldFailure) Record("failed", "could not connect: " + DirectException.Reason(e) + (resumed ? "" : "; trying again"));
             _toldFailure = true;
-            _session = null;
             return (Outcome.Dropped, false);
         }
 
         var hello = Hello();
-        _session = null;                                         // a session code is sent once; later hellos use the pairing
         using var calls = new CancellationTokenSource();
         try
         {
@@ -215,6 +250,7 @@ public sealed class DirectConnection
             if (type == "error")
             {
                 var code = Code(first["code"]);
+                _session = null;                                 // an explicit answer: the code is spent or bad
                 Record("error", "the site refused the connection: " + code);
                 if (resumed && _token is not null) _owner.Pairings.Forget(Origin, _token);
                 await CloseAsync(ws, WebSocketCloseStatus.NormalClosure).ConfigureAwait(false);
@@ -228,6 +264,39 @@ public sealed class DirectConnection
                 return (Outcome.Stop, false);
             }
 
+            _session = null;                                     // a session code is used once; later hellos use the pairing
+            var echoed = Str(first["manifest"]);
+            if (!resumed && echoed != Manifest)
+            {
+                // The site's server works under another manifest than the one the visitor saw: end it and revoke.
+                Record("error", "the site's manifest differs from its link");
+                await ByeAsync(ws).ConfigureAwait(false);
+                if (_token is not null) _owner.Pairings.Forget(Origin, _token);
+                _owner.Engine.Revoke(Origin, "the site's manifest differs from its link");
+                return (Outcome.Stop, false);
+            }
+
+            if (resumed && echoed != Manifest)
+            {
+                // After a reconnect the welcome carries the site's current manifest: within the grant it is taken
+                // silently; asking for more needs a new link and the visitor's consent (showing only the difference).
+                var current = DirectLink.TryManifest(echoed, out var json, out _) && _owner.Engine.CoveredByGrant(Origin, json!)
+                    ? await _owner.GrantSilentlyAsync(Origin, json!, ct).ConfigureAwait(false)
+                    : null;
+                if (current is null)
+                {
+                    Record("closed", echoed is null
+                        ? "the site's welcome carries no manifest"
+                        : "the site now asks for more than it was allowed: a new link and your consent are needed");
+                    await ByeAsync(ws).ConfigureAwait(false);
+                    if (_token is not null) _owner.Pairings.Forget(Origin, _token);
+                    return (Outcome.Stop, false);
+                }
+
+                _grant = current;
+                Manifest = echoed!;
+            }
+
             var token = Str(first["pairing"]);
             if (token is not null && IsToken(token))
             {
@@ -235,7 +304,7 @@ public sealed class DirectConnection
                 // The pairing is kept only for a site with "decide on my own": only then may the wallet come back on its own.
                 if (_owner.Engine.FindSite(Origin) is { Status: SiteStatus.Allowed, AutoDecide: true })
                 {
-                    _owner.Pairings.Set(new Pairing(Origin, Endpoint.ToString(), Manifest.ToString(), token, Now));
+                    _owner.Pairings.Set(new Pairing(Origin, Endpoint.ToString(), Manifest, token, Now));
                 }
             }
 

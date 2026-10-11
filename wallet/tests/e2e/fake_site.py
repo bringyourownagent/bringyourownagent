@@ -1,6 +1,8 @@
-"""A small fake site for the direct transport's end-to-end test (CONTRACT-DIRECT.md): it serves the manifest, a page
-with a bringyourownagent:// link, single-use session codes and the WebSocket endpoint at /byoa/ws. It runs on
-http://localhost:<port> (the wallet allows plain localhost only under BYOA_WALLET_DEV_LOCAL=1).
+"""A small fake site for the direct transport's end-to-end test (CONTRACT-DIRECT.md with its §7): a page with a
+bringyourownagent:// link that carries the manifest (base64url), single-use session codes, and the WebSocket endpoint
+at /byoa/ws whose welcome echoes the manifest. It counts every HTTP request, so a test can prove that the wallet
+contacted nothing before Allow. It runs on http://localhost:<port> (the wallet allows plain localhost only under
+BYOA_WALLET_DEV_LOCAL=1).
 
     site = FakeSite("a"); site.start()
     link = site.new_link()            # a fresh session code, valid 120 s, single use
@@ -33,7 +35,9 @@ class FakeSite:
         self.name = name
         self.manifest = manifest or MANIFEST
         self.port = None
-        self.codes = {}              # code -> expiry
+        self.codes = {}              # code -> (expiry, the manifest the link carried)
+        self.requests = 0            # every HTTP request, the WebSocket upgrade included
+        self.echo = None             # a manifest to echo instead of the link's (a lying site)
         self.pairings = set()
         self.manifest_gets = 0
         self.manifest_headers = []
@@ -58,7 +62,7 @@ class FakeSite:
     def _run(self):
         self._loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self._loop)
-        app = web.Application(client_max_size=1024 * 1024)
+        app = web.Application(client_max_size=1024 * 1024, middlewares=[self._count])
         app.router.add_get("/", self._page)
         app.router.add_get("/byoa/manifest.json", self._manifest)
         app.router.add_get("/byoa/ws", self._ws)
@@ -70,18 +74,29 @@ class FakeSite:
         self._ready.set()
         self._loop.run_forever()
 
+    @web.middleware
+    async def _count(self, request, handler):
+        self.requests += 1
+        return await handler(request)
+
+    @property
+    def manifest64(self):
+        """The manifest as the link carries it: base64url of the JSON bytes, no padding."""
+        return base64.urlsafe_b64encode(json.dumps(self.manifest, separators=(",", ":")).encode()).rstrip(b"=").decode()
+
     @property
     def origin(self):
         return f"http://localhost:{self.port}"
 
     def new_link(self, code=None):
         """A link with a fresh single-use code (or the given one, which may be unknown to the site)."""
+        manifest = self.manifest64
         if code is None:
             code = secrets.token_urlsafe(24)
-            self.codes[code] = time.time() + 120
+            self.codes[code] = (time.time() + 120, manifest)
         q = urllib.parse.quote
         return ("bringyourownagent://connect?v=0.1&endpoint=" + q(f"ws://localhost:{self.port}/byoa/ws", safe="")
-                + "&manifest=" + q(f"http://localhost:{self.port}/byoa/manifest.json", safe="") + "&session=" + code)
+                + "&manifest=" + manifest + "&session=" + code)
 
     async def _page(self, request):
         link = self.new_link()
@@ -110,18 +125,19 @@ class FakeSite:
             if hello.get("type") != "hello":
                 await ws.close()
                 return ws
-            if code and self.codes.get(code, 0) > time.time():
-                del self.codes[code]                                  # single use
+            if code and self.codes.get(code, (0, None))[0] > time.time():
+                _, echo = self.codes.pop(code)                        # single use; the welcome echoes the link's manifest
                 token = secrets.token_urlsafe(24)
                 self.pairings.add(token)
             elif pairing and pairing in self.pairings:
                 token = pairing
+                echo = self.manifest64                                # a reconnect: the site's current manifest
             else:
                 self.errors_sent += 1
                 await ws.send_str(json.dumps({"type": "error", "code": "bad-session"}))
                 await ws.close()
                 return ws
-            await ws.send_str(json.dumps({"type": "welcome", "pairing": token}))
+            await ws.send_str(json.dumps({"type": "welcome", "pairing": token, "manifest": self.echo or echo}))
             self.live = ws
             self._hello_event.set()
             async for msg in ws:

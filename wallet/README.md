@@ -14,7 +14,7 @@ The default route for a call: GigaAM when the page says the language is `ru`, Wh
 
 The design and the security notes are in [docs/wallet-0.1.md](../docs/wallet-0.1.md). The page API is the BYOA 0.1 contract: `window.byoa.request(manifest)`, `call(grantId, skill, input, params)`, `release(grantId)`.
 
-**Without the extension.** A site can also show a `bringyourownagent://connect?...` link. A click on it starts the wallet (or hands the link to the running one); the wallet fetches the site's manifest, shows the same notice and consent, and after Allow opens its own WebSocket to the site's server, which then sends its calls straight to the wallet. Same grants, limits and routing; the activity marks these "via link". Details: [docs/wallet-0.1.md, section 10](../docs/wallet-0.1.md#10-transports).
+**Without the extension.** A site can also show a `bringyourownagent://connect?...` link. A click on it starts the wallet (or hands the link to the running one); the wallet reads the site's manifest from the link itself, shows the same notice and consent, and only after Allow contacts the site at all: it opens its own WebSocket to the site's server, which then sends its calls straight to the wallet. Same grants, limits and routing; the activity marks these "via link". Details: [docs/wallet-0.1.md, section 10](../docs/wallet-0.1.md#10-transports).
 
 ## Install for your own Chrome
 

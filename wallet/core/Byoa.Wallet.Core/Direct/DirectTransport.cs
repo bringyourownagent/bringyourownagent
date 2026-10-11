@@ -7,9 +7,10 @@ using Byoa.Wallet.Settings;
 namespace Byoa.Wallet.Direct;
 
 /// <summary>
-/// The direct transport (CONTRACT-DIRECT.md): a <c>bringyourownagent://connect</c> link launches the wallet; it
-/// fetches the site's manifest, asks the visitor with the same notice and consent as for a page's request, and only
-/// after Allow opens its own WebSocket to the site's server. Grants, limits, blocks and "decide on my own" are the
+/// The direct transport (CONTRACT-DIRECT.md with its §7): a <c>bringyourownagent://connect</c> link launches the
+/// wallet; it reads the site's manifest from the link itself, asks the visitor with the same notice and consent as
+/// for a page's request, and only after Allow opens its own WebSocket to the site's server. Before Allow the wallet
+/// makes no network request of any kind, so a site cannot tell a declined link from a visitor without a wallet. Grants, limits, blocks and "decide on my own" are the
 /// engine's, shared with the extension transport for the same origin. A link of a blocked site, a bad link and a
 /// repeated link do nothing but leave an activity entry.
 /// </summary>
@@ -22,6 +23,7 @@ public sealed class DirectTransport : IDisposable
     readonly List<DirectConnection> _connections = [];
     readonly Dictionary<string, DateTimeOffset> _seenSessions = new(StringComparer.Ordinal);
     readonly TimeProvider _time;
+    int _pendingLinks;
     bool _disposed;
 
     public DirectTransport(WalletEngine engine, PairingStore pairings, DirectOptions? options = null, TimeProvider? time = null)
@@ -54,10 +56,29 @@ public sealed class DirectTransport : IDisposable
     public bool IsConnected(string origin) => Connections.Any(c => c.Origin == origin && c.State == DirectState.Connected);
 
     /// <summary>
-    /// Acts on a link: checks it, fetches the manifest, asks the visitor (or grants silently under "decide on my
-    /// own"), and after a grant starts the connection. Returns the connection, or null when nothing was opened.
+    /// Acts on a link: checks it and its manifest, asks the visitor (or grants silently under "decide on my own"),
+    /// and after a grant starts the connection. Returns the connection, or null when nothing was opened.
     /// </summary>
     public async Task<DirectConnection?> HandleLinkAsync(string? url, CancellationToken ct = default)
+    {
+        if (Interlocked.Increment(ref _pendingLinks) > Options.MaxPendingLinks)
+        {
+            Interlocked.Decrement(ref _pendingLinks);
+            Record("", "ignored", "too many links at once");
+            return null;
+        }
+
+        try
+        {
+            return await ActOnLinkAsync(url, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            Interlocked.Decrement(ref _pendingLinks);
+        }
+    }
+
+    async Task<DirectConnection?> ActOnLinkAsync(string? url, CancellationToken ct)
     {
         if (!DirectLink.TryParse(url, Options.DevLocal, out var link, out var why))
         {
@@ -77,26 +98,16 @@ public sealed class DirectTransport : IDisposable
             }
         }
 
-        // A blocked site's link does nothing at all: no manifest request, no notice, no connection.
+        // A blocked site's link does nothing at all: no notice, no connection.
         if (Engine.FindSite(origin) is { Status: SiteStatus.Blocked })
         {
             Record(origin, "blocked", "blocked site: the link was ignored");
             return null;
         }
 
-        JsonObject manifest;
-        try
-        {
-            manifest = await Net.FetchManifestAsync(link.Manifest, ct).ConfigureAwait(false);
-        }
-        catch (DirectException e)
-        {
-            Record(origin, "failed", e.Message);
-            return null;
-        }
-
-        // The browser launches a protocol link only after a click on the page, so this request counts as one with a click.
-        var answer = await Engine.RequestViaLinkAsync(origin, manifest, userActivation: true, ct).ConfigureAwait(false);
+        // The browser launches a protocol link only after a click on the page, so this request counts as one with a
+        // click. The manifest is the link's own: nothing has been sent to the site so far.
+        var answer = await Engine.RequestViaLinkAsync(origin, link.ManifestJson, userActivation: true, ct).ConfigureAwait(false);
         if (GrantOf(answer) is not { } grant) return null;
         var connection = new DirectConnection(this, origin, link.Endpoint, link.Manifest, link.Session, token: null, grant);
         Add(connection);
@@ -109,33 +120,31 @@ public sealed class DirectTransport : IDisposable
         foreach (var pairing in Pairings.All())
         {
             if (Engine.FindSite(pairing.Origin) is not { Status: SiteStatus.Allowed, AutoDecide: true }
-                || !DirectLink.TryTarget(pairing.Endpoint, pairing.Manifest, Options.DevLocal, out var endpoint, out var manifest, out var origin, out _, out _)
-                || origin != pairing.Origin)
+                || !DirectLink.TryTarget(pairing.Endpoint, Options.DevLocal, out var endpoint, out var origin, out _, out _)
+                || origin != pairing.Origin
+                || !DirectLink.TryManifest(pairing.Manifest, out _, out _))
             {
                 Pairings.Forget(pairing.Origin, pairing.Token);
                 continue;
             }
 
             if (Connections.Any(c => c.Origin == pairing.Origin && c.Token == pairing.Token)) continue;
-            Add(new DirectConnection(this, pairing.Origin, endpoint!, manifest!, session: null, pairing.Token, grant: null));
+            Add(new DirectConnection(this, pairing.Origin, endpoint!, pairing.Manifest, session: null, pairing.Token, grant: null));
         }
     }
 
-    /// <summary>A new grant for a stored pairing: the manifest again, then the silent rule. Retry when the site could not be reached.</summary>
+    /// <summary>A new grant for a stored pairing, from the manifest stored with it, by the silent rule (no network).</summary>
     internal async Task<(GrantSession? Grant, bool Retry)> RenewGrantAsync(DirectConnection connection, CancellationToken ct)
     {
-        JsonObject manifest;
-        try
-        {
-            manifest = await Net.FetchManifestAsync(connection.Manifest, ct).ConfigureAwait(false);
-        }
-        catch (DirectException)
-        {
-            return (null, true);
-        }
+        if (!DirectLink.TryManifest(connection.Manifest, out var manifest, out _)) return (null, false);
+        return (await GrantSilentlyAsync(connection.Origin, manifest!, ct).ConfigureAwait(false), false);
+    }
 
-        var answer = await Engine.RequestViaLinkAsync(connection.Origin, manifest, userActivation: false, ct).ConfigureAwait(false);
-        return (GrantOf(answer), false);
+    /// <summary>A grant by "decide on my own" alone (no notice): null when the site is not covered or not on its own.</summary>
+    internal async Task<GrantSession?> GrantSilentlyAsync(string origin, JsonObject manifest, CancellationToken ct)
+    {
+        var answer = await Engine.RequestViaLinkAsync(origin, manifest, userActivation: false, ct).ConfigureAwait(false);
+        return GrantOf(answer);
     }
 
     GrantSession? GrantOf(JsonNode? answer) =>

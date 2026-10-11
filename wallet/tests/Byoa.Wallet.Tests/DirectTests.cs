@@ -1,4 +1,6 @@
+using System.Buffers.Text;
 using System.Diagnostics;
+using System.IO.Pipes;
 using System.Net;
 using System.Net.Sockets;
 using System.Net.WebSockets;
@@ -17,41 +19,54 @@ using Byoa.Wallet.Sources;
 
 namespace Byoa.Wallet.Tests;
 
-/// <summary>bringyourownagent://connect links: parsing, and refusing hostile ones (CONTRACT-DIRECT.md §1).</summary>
+/// <summary>bringyourownagent://connect links: parsing, the manifest inside the link (§7), and refusing hostile links.</summary>
 public class DirectLinkTests
 {
     const string Code = "s3ss10n-c0de_with-enough-bits-0123456789";
+    static readonly string GeoManifest64 = Base64Url.EncodeToString(Encoding.UTF8.GetBytes(Clips.GeoManifest));
 
-    static string Link(string endpoint, string manifest, string session = Code, string extra = "") =>
-        "bringyourownagent://connect?v=0.1&endpoint=" + Uri.EscapeDataString(endpoint) + "&manifest=" + Uri.EscapeDataString(manifest) + "&session=" + session + extra;
+    static string Link(string endpoint, string? manifest = null, string session = Code, string extra = "") =>
+        "bringyourownagent://connect?v=0.1&endpoint=" + Uri.EscapeDataString(endpoint) + "&manifest=" + (manifest ?? GeoManifest64) + "&session=" + session + extra;
 
-    static string Good(string extra = "") => Link("wss://geo.example.org/byoa/ws", "https://geo.example.org/byoa/manifest.json", extra: extra);
+    static string Good(string extra = "") => Link("wss://geo.example.org/byoa/ws", extra: extra);
+
+    static string B64(string json) => Base64Url.EncodeToString(Encoding.UTF8.GetBytes(json));
 
     [Fact]
-    public void AGoodLinkGivesTheSitesOriginEndpointManifestAndCode()
+    public void AGoodLinkGivesTheSitesOriginEndpointCodeAndTheManifestItCarries()
     {
         Assert.True(DirectLink.TryParse(Good(), devLocal: false, out var link, out var why), why);
         Assert.Equal("https://geo.example.org", link!.Origin);
         Assert.Equal("geo.example.org", link.Host);
         Assert.Equal("wss://geo.example.org/byoa/ws", link.Endpoint.ToString());
-        Assert.Equal("https://geo.example.org/byoa/manifest.json", link.Manifest.ToString());
+        Assert.Equal(GeoManifest64, link.Manifest);                                   // kept as it came, for the welcome's echo
+        Assert.Equal("0.1-draft", link.ManifestJson["byoa"]!.GetValue<string>());
         Assert.Equal(Code, link.Session);
     }
 
     [Fact]
     public void APortIsPartOfTheOriginAndTrailingSlashesAndCaseAreTolerated()
     {
-        var text = Link("wss://Geo.Example.org:8443/byoa/ws", "https://geo.example.org:8443/byoa/manifest.json").Replace("bringyourownagent://connect?", "BringYourOwnAgent://connect/?");
+        var text = Link("wss://Geo.Example.org:8443/byoa/ws").Replace("bringyourownagent://connect?", "BringYourOwnAgent://connect/?");
         Assert.True(DirectLink.TryParse(text, false, out var link, out var why), why);
         Assert.Equal("https://geo.example.org:8443", link!.Origin);
         Assert.Equal("geo.example.org:8443", link.Host);
         Assert.True(DirectLink.TryParse(Good("&future=1"), false, out _, out why), why);   // unknown extra parameters are ignored
     }
 
+    [Fact]
+    public void TheManifestMayBe4096BytesNotMore()
+    {
+        var pad = new string('x', 4096 - "{\"x\":\"\"}".Length);
+        Assert.True(DirectLink.TryParse(Link("wss://geo.example.org/ws", B64("{\"x\":\"" + pad + "\"}")), false, out _, out var why), why);
+        Assert.False(DirectLink.TryParse(Link("wss://geo.example.org/ws", B64("{\"x\":\"" + pad + "x\"}")), false, out _, out why));
+        Assert.Equal("the manifest is larger than 4096 bytes", why);
+    }
+
     public static TheoryData<string> Hostile() => new()
     {
         "",
-        "byoa://connect?v=0.1&endpoint=wss%3A%2F%2Fgeo.example.org%2Fws&manifest=https%3A%2F%2Fgeo.example.org%2Fm&session=" + Code,
+        "byoa://connect?v=0.1&endpoint=wss%3A%2F%2Fgeo.example.org%2Fws&manifest=" + GeoManifest64 + "&session=" + Code,
         "javascript:alert(1)",
         "bringyourownagent://evil?v=0.1",
         Good().Replace("://connect?", "://connect/more?"),
@@ -67,29 +82,34 @@ public class DirectLinkTests
         Good("&endpoint=" + Uri.EscapeDataString("wss://evil.example.com/ws")),       // a second endpoint
         Good() + " ",
         Good().Replace("geo.example", "géo.example"),
-        Good() + new string('a', 5000),
-        Link("ws://geo.example.org/ws", "https://geo.example.org/m"),                   // not wss
-        Link("https://geo.example.org/ws", "https://geo.example.org/m"),
-        Link("wss://geo.example.org/ws", "http://geo.example.org/m"),                   // manifest not https
-        Link("wss://geo.example.org/ws", "https://other.example.org/m"),                // another host
-        Link("wss://geo.example.org/ws", "https://geo.example.org:8443/m"),             // another port
-        Link("wss://127.0.0.1/ws", "https://127.0.0.1/m"),
-        Link("wss://[::1]/ws", "https://[::1]/m"),
-        Link("wss://10.0.0.5/ws", "https://10.0.0.5/m"),
-        Link("wss://2130706433/ws", "https://2130706433/m"),                            // 127.0.0.1 as one number
-        Link("wss://0x7f.0.0.1/ws", "https://0x7f.0.0.1/m"),
-        Link("wss://localhost/ws", "https://localhost/m"),
-        Link("wss://app.localhost/ws", "https://app.localhost/m"),
-        Link("wss://printer.local/ws", "https://printer.local/m"),
-        Link("wss://nas.home.arpa/ws", "https://nas.home.arpa/m"),
-        Link("wss://intranet/ws", "https://intranet/m"),
-        Link("wss://geo.example.org./ws", "https://geo.example.org./m"),
-        Link("wss://user:pass@geo.example.org/ws", "https://geo.example.org/m"),
-        Link("wss://geo.example.org/ws#x", "https://geo.example.org/m"),
-        Link("wss://evil.example.com/@geo.example.org", "https://geo.example.org/m"),
-        Link("wss://geo.example.org\\@evil.example.com/ws", "https://geo.example.org/m"),
-        Link("wss://geo.example.org/ws\r\nX: 1", "https://geo.example.org/m"),          // header injection
-        Link("ws://localhost:5192/byoa/ws", "http://localhost:5192/byoa/manifest.json"), // localhost without the developer switch
+        Good() + new string('a', 13000),
+        // the manifest: the old form (a URL the wallet would have fetched), padding, plain base64, not JSON, not an object, missing
+        Link("wss://geo.example.org/ws", Uri.EscapeDataString("https://geo.example.org/byoa/manifest.json?track=1")),
+        Link("wss://geo.example.org/ws", GeoManifest64 + "=="),
+        Link("wss://geo.example.org/ws", Convert.ToBase64String(Encoding.UTF8.GetBytes("{\"a\":\"ÿÿÿþ\"}")).TrimEnd('=')),   // + and /
+        Link("wss://geo.example.org/ws", B64("not json")),
+        Link("wss://geo.example.org/ws", B64("[1,2,3]")),
+        Link("wss://geo.example.org/ws", "A"),
+        Good().Replace("&manifest=" + GeoManifest64, ""),
+        // the endpoint
+        Link("ws://geo.example.org/ws"),                                               // not wss
+        Link("https://geo.example.org/ws"),
+        Link("wss://127.0.0.1/ws"),
+        Link("wss://[::1]/ws"),
+        Link("wss://10.0.0.5/ws"),
+        Link("wss://2130706433/ws"),                                                   // 127.0.0.1 as one number
+        Link("wss://0x7f.0.0.1/ws"),
+        Link("wss://localhost/ws"),
+        Link("wss://app.localhost/ws"),
+        Link("wss://printer.local/ws"),
+        Link("wss://nas.home.arpa/ws"),
+        Link("wss://intranet/ws"),
+        Link("wss://geo.example.org./ws"),
+        Link("wss://user:pass@geo.example.org/ws"),
+        Link("wss://geo.example.org/ws#x"),
+        Link("wss://geo.example.org\\@evil.example.com/ws"),
+        Link("wss://geo.example.org/ws\r\nX: 1"),                                      // header injection
+        Link("ws://localhost:5192/byoa/ws"),                                           // localhost without the developer switch
     };
 
     [Theory]
@@ -104,13 +124,10 @@ public class DirectLinkTests
     [Fact]
     public void TheDeveloperSwitchAllowsOnlyPlainLocalhost()
     {
-        var local = Link("ws://localhost:5192/byoa/ws", "http://localhost:5192/byoa/manifest.json");
-        Assert.True(DirectLink.TryParse(local, devLocal: true, out var link, out var why), why);
-        Assert.Equal("http://localhost:5192", link!.Origin);                       // the same origin as an extension page there
-        Assert.False(DirectLink.TryParse(Link("ws://127.0.0.1:5192/ws", "http://127.0.0.1:5192/m"), true, out _, out _));
-        Assert.False(DirectLink.TryParse(Link("ws://geo.example.org/ws", "http://geo.example.org/m"), true, out _, out _));
-        Assert.False(DirectLink.TryParse(Link("ws://localhost:5192/ws", "https://localhost:5192/m"), true, out _, out why));
-        Assert.Contains("security", why);
+        Assert.True(DirectLink.TryParse(Link("ws://localhost:5192/byoa/ws"), devLocal: true, out var link, out var why), why);
+        Assert.Equal("http://localhost:5192", link!.Origin);                         // the same origin as an extension page there
+        Assert.False(DirectLink.TryParse(Link("ws://127.0.0.1:5192/ws"), true, out _, out _));
+        Assert.False(DirectLink.TryParse(Link("ws://geo.example.org/ws"), true, out _, out _));
     }
 
     [Theory]
@@ -154,7 +171,7 @@ public class DirectLinkTests
 /// <summary>The stored pairings: DPAPI on disk, one per origin, forgotten on demand.</summary>
 public class PairingStoreTests
 {
-    static Pairing P(string origin, string token) => new(origin, "wss://x.example.org/ws", "https://x.example.org/m", token, DateTimeOffset.UnixEpoch);
+    static Pairing P(string origin, string token) => new(origin, "wss://x.example.org/ws", "eyJieW9hIjoiMC4xLWRyYWZ0In0", token, DateTimeOffset.UnixEpoch);
 
     [Fact]
     public void PairingsRoundTripThroughDpapiAndAreNeverPlainOnDisk()
@@ -186,43 +203,111 @@ public class PairingStoreTests
     }
 }
 
+/// <summary>Review 2 #7: handing a link to the running wallet never hangs on a wallet that does not answer.</summary>
+public class LinkHandOffTests
+{
+    static string PipeName() => "byoa-test-handoff-" + Guid.NewGuid().ToString("N");
+
+    [Fact]
+    public async Task AWalletThatTakesTheLinkButNeverAnswersDoesNotHoldTheSecondProcess()
+    {
+        var name = PipeName();
+        await using var server = new NamedPipeServerStream(name, PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
+        var accepted = Task.Run(async () =>
+        {
+            await server.WaitForConnectionAsync();
+            return await Framing.ReadAsync(server);                                 // reads the link, never answers
+        });
+        var watch = Stopwatch.StartNew();
+        var ok = await Task.Run(() => LinkHandOff.Send(name, "bringyourownagent://connect?v=0.1", TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(1)))
+            .WaitAsync(TimeSpan.FromSeconds(10));                                   // a hang fails the test instead of stopping it
+        Assert.False(ok);
+        Assert.InRange(watch.Elapsed.TotalSeconds, 0.9, 4);
+        var frame = JsonNode.Parse((await accepted.WaitAsync(TimeSpan.FromSeconds(5)))!)!;
+        Assert.Equal("link", frame["type"]!.GetValue<string>());
+        Assert.Equal("bringyourownagent://connect?v=0.1", frame["payload"]!["url"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task AnAnsweringWalletConfirmsTheLink()
+    {
+        var name = PipeName();
+        await using var server = new NamedPipeServerStream(name, PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
+        _ = Task.Run(async () =>
+        {
+            await server.WaitForConnectionAsync();
+            await Framing.ReadAsync(server);
+            await Framing.WriteAsync(server, Encoding.UTF8.GetBytes("{\"id\":1,\"result\":{\"accepted\":true}}"));
+        });
+        Assert.True(await Task.Run(() => LinkHandOff.Send(name, "bringyourownagent://connect", TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(3))));
+    }
+
+    [Fact]
+    public void NoRunningWalletGivesUpAfterTheTryTime()
+    {
+        var watch = Stopwatch.StartNew();
+        Assert.False(LinkHandOff.Send(PipeName(), "bringyourownagent://connect", TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1)));
+        Assert.InRange(watch.Elapsed.TotalSeconds, 0.9, 6);
+    }
+}
+
 /// <summary>
-/// A small site for the tests: an HTTP server on 127.0.0.1 that serves the manifest and accepts WebSocket upgrades
-/// (the test drives each accepted socket itself).
+/// A small site for the tests: a TCP server on 127.0.0.1 that accepts WebSocket upgrades (the test drives each socket
+/// itself) and counts every connection, so a test can prove that nothing reached the site before Allow.
 /// </summary>
 sealed class TestSite : IDisposable
 {
-    readonly TcpListener _listener = new(IPAddress.Loopback, 0);
+    readonly TcpListener _listener;
     readonly CancellationTokenSource _stop = new();
     readonly Channel<WebSocket> _sockets = Channel.CreateUnbounded<WebSocket>();
-    int _manifestRequests;
+    int _accepts;
     int _upgrades;
 
-    public TestSite()
+    /// <param name="port">A fixed port (0: any free one).</param>
+    /// <param name="listen">False: the site is down until <see cref="Listen"/>.</param>
+    public TestSite(int port = 0, bool listen = true)
+    {
+        if (port == 0)
+        {
+            // A free port, fixed from now on (a listener made for port 0 would take a new one when started again).
+            var probe = new TcpListener(IPAddress.Loopback, 0);
+            probe.Start();
+            port = ((IPEndPoint)probe.LocalEndpoint).Port;
+            probe.Stop();
+        }
+
+        Port = port;
+        _listener = new TcpListener(IPAddress.Loopback, port);
+        if (listen) Listen();
+    }
+
+    public void Listen()
     {
         _listener.Start();
-        Port = ((IPEndPoint)_listener.LocalEndpoint).Port;
         _ = AcceptAsync();
     }
 
     public int Port { get; }
     public string Origin => "http://localhost:" + Port;
     public string Manifest { get; set; } = Clips.GeoManifest;
-    public string ManifestType { get; set; } = "application/json";
-    public string? ManifestStatus { get; set; }
-    public int ManifestRequests => Volatile.Read(ref _manifestRequests);
+
+    /// <summary>The manifest as the link carries it and the welcome echoes it.</summary>
+    public string Manifest64 => Base64Url.EncodeToString(Encoding.UTF8.GetBytes(Manifest));
+
+    /// <summary>Every connection the site saw (WebSocket or anything else).</summary>
+    public int Accepts => Volatile.Read(ref _accepts);
     public int Upgrades => Volatile.Read(ref _upgrades);
-    public List<string> Heads { get; } = [];
 
     public string Link(string? session = null) =>
         "bringyourownagent://connect?v=0.1&endpoint=" + Uri.EscapeDataString($"ws://localhost:{Port}/byoa/ws")
-        + "&manifest=" + Uri.EscapeDataString($"http://localhost:{Port}/byoa/manifest.json") + "&session=" + (session ?? NewCode());
+        + "&manifest=" + Manifest64 + "&session=" + (session ?? NewCode());
 
     public static string NewCode() => Convert.ToBase64String(RandomNumberGenerator.GetBytes(18)).Replace('+', '-').Replace('/', '_');
 
     public async Task<WebSocket> NextSocketAsync(int seconds = 10) => await _sockets.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(seconds));
 
-    public bool HasSocket => _sockets.Reader.TryPeek(out _);
+    public JsonObject Welcome(string token = "pairing-token-0123456789abcdef", string? manifest = null) =>
+        new() { ["type"] = "welcome", ["pairing"] = token, ["manifest"] = manifest ?? Manifest64 };
 
     async Task AcceptAsync()
     {
@@ -233,11 +318,12 @@ sealed class TestSite : IDisposable
             {
                 client = await _listener.AcceptTcpClientAsync(_stop.Token);
             }
-            catch (Exception e) when (e is OperationCanceledException or SocketException or ObjectDisposedException)
+            catch (Exception e) when (e is OperationCanceledException or SocketException or ObjectDisposedException or InvalidOperationException)
             {
                 return;
             }
 
+            Interlocked.Increment(ref _accepts);
             _ = ServeAsync(client);
         }
     }
@@ -254,24 +340,18 @@ sealed class TestSite : IDisposable
         }
 
         var text = head.ToString();
-        lock (Heads) Heads.Add(text);
-        if (text.Contains("Upgrade: websocket", StringComparison.OrdinalIgnoreCase))
+        if (!text.Contains("Upgrade: websocket", StringComparison.OrdinalIgnoreCase))
         {
-            var key = text.Split("\r\n").First(l => l.StartsWith("Sec-WebSocket-Key:", StringComparison.OrdinalIgnoreCase))[18..].Trim();
-            var accept = Convert.ToBase64String(SHA1.HashData(Encoding.ASCII.GetBytes(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")));
-            await stream.WriteAsync(Encoding.ASCII.GetBytes("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: " + accept + "\r\n\r\n"));
-            Interlocked.Increment(ref _upgrades);
-            await _sockets.Writer.WriteAsync(WebSocket.CreateFromStream(stream, new WebSocketCreationOptions { IsServer = true, KeepAliveInterval = TimeSpan.Zero }));
+            await stream.WriteAsync(Encoding.ASCII.GetBytes("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"));
+            client.Dispose();
             return;
         }
 
-        Interlocked.Increment(ref _manifestRequests);
-        var body = Encoding.UTF8.GetBytes(Manifest);
-        var status = ManifestStatus ?? "200 OK";
-        await stream.WriteAsync(Encoding.ASCII.GetBytes($"HTTP/1.1 {status}\r\nContent-Type: {ManifestType}\r\nContent-Length: {body.Length}\r\nLocation: http://localhost:{Port}/elsewhere\r\nConnection: close\r\n\r\n"));
-        await stream.WriteAsync(body);
-        await stream.FlushAsync();
-        client.Dispose();
+        var key = text.Split("\r\n").First(l => l.StartsWith("Sec-WebSocket-Key:", StringComparison.OrdinalIgnoreCase))[18..].Trim();
+        var accept = Convert.ToBase64String(SHA1.HashData(Encoding.ASCII.GetBytes(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")));
+        await stream.WriteAsync(Encoding.ASCII.GetBytes("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: " + accept + "\r\n\r\n"));
+        Interlocked.Increment(ref _upgrades);
+        await _sockets.Writer.WriteAsync(WebSocket.CreateFromStream(stream, new WebSocketCreationOptions { IsServer = true, KeepAliveInterval = TimeSpan.Zero }));
     }
 
     public static async Task SendAsync(WebSocket ws, JsonObject frame) =>
@@ -324,9 +404,10 @@ sealed class TestSite : IDisposable
 }
 
 /// <summary>
-/// The direct transport end to end inside the process: a link, the manifest, the consent, the wallet's own
-/// connection (hello, welcome, calls and results, ping, bye), pairing, reconnect with backoff, revoke, and the
-/// same gate, limits, routing and "ask before paid" as for the extension's calls.
+/// The direct transport end to end inside the process: a link with its manifest, the consent (nothing reaches the
+/// site before Allow), the wallet's own connection (hello, welcome with the manifest's echo, calls and results, ping,
+/// bye), pairing, reconnect with backoff, a site that asks for more on a reconnect, revoke, and the same gate,
+/// limits, routing and "ask before paid" as for the extension's calls.
 /// </summary>
 public class DirectTransportTests : IDisposable
 {
@@ -348,7 +429,8 @@ public class DirectTransportTests : IDisposable
         _engine = new WalletEngine(_store, [_giga, _whisper, _paid], _log, _ui, _time);
     }
 
-    DirectTransport Transport(WalletEngine? engine = null, int maxFrame = 4 * 1024 * 1024, double pingSeconds = 30, Func<string, CancellationToken, Task<IPAddress[]>>? resolve = null)
+    DirectTransport Transport(WalletEngine? engine = null, int maxFrame = 4 * 1024 * 1024, double pingSeconds = 30,
+        Func<string, CancellationToken, Task<IPAddress[]>>? resolve = null, double sessionWindowSeconds = 60)
     {
         var t = new DirectTransport(engine ?? _engine, _pairings, new DirectOptions
         {
@@ -358,6 +440,7 @@ public class DirectTransportTests : IDisposable
             WelcomeTimeout = TimeSpan.FromSeconds(5),
             MaxFrameBytes = maxFrame,
             Resolve = resolve,
+            SessionRetryWindow = TimeSpan.FromSeconds(sessionWindowSeconds),
         }, _time);
         _transports.Add(t);
         return t;
@@ -388,6 +471,8 @@ public class DirectTransportTests : IDisposable
         ["params"] = new JsonObject { ["language"] = language },
     };
 
+    static string Manifest(string cost) => Clips.GeoManifest.Replace("0.05 USD", cost);
+
     /// <summary>A link, the visitor's Allow, the wallet's hello, the site's welcome: the open connection and its socket.</summary>
     async Task<(DirectTransport Transport, DirectConnection Connection, WebSocket Socket, JsonObject Hello)> PairAsync(bool auto, string token = "pairing-token-0123456789abcdef")
     {
@@ -399,7 +484,7 @@ public class DirectTransportTests : IDisposable
         var socket = await _site.NextSocketAsync();
         var hello = await TestSite.ReceiveAsync(socket);
         Assert.Equal(code, hello["session"]!.GetValue<string>());
-        await TestSite.SendAsync(socket, new JsonObject { ["type"] = "welcome", ["pairing"] = token });
+        await TestSite.SendAsync(socket, _site.Welcome(token));
         Assert.True(await connection!.Welcomed.WaitAsync(TimeSpan.FromSeconds(10)));
         return (transport, connection, socket, hello);
     }
@@ -409,8 +494,8 @@ public class DirectTransportTests : IDisposable
     {
         var (_, connection, socket, hello) = await PairAsync(auto: false);
         Assert.Equal(1, _ui.Notices);                                              // the same notice and consent
-        Assert.Single(_ui.Consents);
-        Assert.Equal(1, _site.ManifestRequests);                                   // the manifest, fetched before the consent
+        Assert.Equal("Family geography game: recognise country names spoken aloud", Assert.Single(_ui.Consents).Summary);   // from the link's manifest
+        Assert.Equal(1, _site.Accepts);                                            // the one connection, after Allow
         Assert.Equal("hello", hello["type"]!.GetValue<string>());
         Assert.Equal("0.1", hello["v"]!.GetValue<string>());
         Assert.Null(hello["pairing"]);
@@ -430,9 +515,52 @@ public class DirectTransportTests : IDisposable
         Assert.All(_log.Recent().Where(e => e.Kind == "call"), e => Assert.Equal("link", e.Via));
         Assert.Contains(Links, e => e.Outcome == "connected");
         Assert.Null(_pairings.Get(_site.Origin));                                  // no "decide on my own": no pairing kept
-        var head = _site.Heads.First(h => h.StartsWith("GET /byoa/manifest.json", StringComparison.Ordinal));
-        Assert.DoesNotContain("Cookie", head, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain(hello["session"]!.GetValue<string>(), head);         // no session code in the manifest request
+    }
+
+    [Fact]
+    public async Task NothingReachesTheSiteBeforeAllow()
+    {
+        _ui.ConsentGate = new TaskCompletionSource<ConsentAnswer>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var link = Transport().HandleLinkAsync(_site.Link());
+        await WaitUntil(() => _ui.Consents.Count == 1);
+        await Task.Delay(300);
+        Assert.Equal(0, _site.Accepts);                                            // the consent is up, the site knows nothing
+        _ui.ConsentGate.SetResult(new ConsentAnswer(true, 0.05m, false, []));
+        Assert.NotNull(await link.WaitAsync(TimeSpan.FromSeconds(10)));
+        await _site.NextSocketAsync();
+        Assert.Equal(1, _site.Accepts);
+    }
+
+    [Fact]
+    public async Task AManifestThatIsNotAValidByoaManifestAsksNothingAndConnectsNowhere()
+    {
+        _site.Manifest = "{\"hello\":\"world\"}";
+        Assert.Null(await Transport().HandleLinkAsync(_site.Link()));
+        Assert.Equal(0, _ui.Notices);
+        Assert.Equal(("invalid", "link"), (_log.Recent()[0].Outcome, _log.Recent()[0].Via));
+        await Task.Delay(200);
+        Assert.Equal(0, _site.Accepts);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task AWelcomeWhoseManifestDiffersFromTheLinksEndsItAndRevokesTheSite(bool missing)
+    {
+        _ui.Consent = new ConsentAnswer(true, 0.05m, AutoDecide: true, []);
+        var connection = await Transport().HandleLinkAsync(_site.Link());
+        var socket = await _site.NextSocketAsync();
+        await TestSite.ReceiveAsync(socket);
+        var welcome = _site.Welcome(manifest: Base64Url.EncodeToString(Encoding.UTF8.GetBytes(Manifest("0.04 USD"))));
+        if (missing) welcome.Remove("manifest");
+        await TestSite.SendAsync(socket, welcome);
+        Assert.Equal("bye", (await TestSite.ReceiveAsync(socket))["type"]!.GetValue<string>());
+        await connection!.Completion.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal("the site's manifest differs from its link", Links.First(e => e.Outcome == "error").Note);
+        Assert.Equal(SiteStatus.None, _engine.FindSite(_site.Origin)!.Status);   // the grant is revoked
+        Assert.Contains(_log.Recent(), e => e.Outcome == "revoked" && e.Note == "the site's manifest differs from its link");
+        Assert.Null(_pairings.Get(_site.Origin));
+        Assert.Equal(0, _giga.Calls);
     }
 
     [Fact]
@@ -492,7 +620,7 @@ public class DirectTransportTests : IDisposable
         await transport.HandleLinkAsync(_site.Link());
         var socket = await _site.NextSocketAsync();
         await TestSite.ReceiveAsync(socket);
-        await TestSite.SendAsync(socket, new JsonObject { ["type"] = "welcome", ["pairing"] = "pairing-token-0123456789abcdef" });
+        await TestSite.SendAsync(socket, _site.Welcome());
         Assert.Equal("ping", (await TestSite.ReceiveAsync(socket, skipPings: false))["type"]!.GetValue<string>());
     }
 
@@ -500,18 +628,60 @@ public class DirectTransportTests : IDisposable
     public async Task WithDecideOnMyOwnThePairingIsKeptAndTheWalletReconnectsWithBackoff()
     {
         var (_, connection, socket, _) = await PairAsync(auto: true, token: "pairing-token-AAAA-0123456789");
-        Assert.Equal("pairing-token-AAAA-0123456789", _pairings.Get(_site.Origin)!.Token);
+        var stored = _pairings.Get(_site.Origin)!;
+        Assert.Equal("pairing-token-AAAA-0123456789", stored.Token);
+        Assert.Equal(_site.Manifest64, stored.Manifest);                          // kept with the link's manifest
 
         socket.Abort();                                                            // the site's server restarts
         var again = await _site.NextSocketAsync();
         var hello = await TestSite.ReceiveAsync(again);
         Assert.Null(hello["session"]);                                             // no new link: the stored pairing
         Assert.Equal("pairing-token-AAAA-0123456789", hello["pairing"]!.GetValue<string>());
-        await TestSite.SendAsync(again, new JsonObject { ["type"] = "welcome", ["pairing"] = "pairing-token-AAAA-0123456789" });
+        await TestSite.SendAsync(again, _site.Welcome("pairing-token-AAAA-0123456789"));
         await WaitUntil(() => connection.State == DirectState.Connected);
         await TestSite.SendAsync(again, Call(3));
         Assert.True((await TestSite.ReceiveAsync(again))["ok"]!.GetValue<bool>());
         Assert.Contains(Links, e => e.Note == "reconnected with the stored pairing");
+    }
+
+    [Fact]
+    public async Task OnAReconnectASiteThatNowAsksForMoreGetsByeAndNeedsANewLink()
+    {
+        var (_, connection, socket, _) = await PairAsync(auto: true);
+        socket.Abort();
+        var again = await _site.NextSocketAsync();
+        await TestSite.ReceiveAsync(again);
+        _site.Manifest = Manifest("0.60 USD");                                     // above the visitor's $0.05
+        await TestSite.SendAsync(again, _site.Welcome());
+        Assert.Equal("bye", (await TestSite.ReceiveAsync(again))["type"]!.GetValue<string>());
+        await connection.Completion.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Null(_pairings.Get(_site.Origin));
+        Assert.StartsWith("the site now asks for more", Links.First(e => e.Outcome == "closed").Note);
+        await Task.Delay(300);
+        Assert.Equal(2, _site.Upgrades);                                           // and no more reconnects
+
+        // A new link with that manifest shows only the difference.
+        _ui.Consent = null;
+        Assert.NotNull(await Transport().HandleLinkAsync(_site.Link()));
+        var diff = _ui.Consents[^1];
+        Assert.True(diff.IsDifference);
+        Assert.Equal(0.60m, diff.Budget);
+    }
+
+    [Fact]
+    public async Task OnAReconnectAChangedManifestWithinTheGrantIsTakenSilently()
+    {
+        var (_, connection, socket, _) = await PairAsync(auto: true);
+        socket.Abort();
+        var again = await _site.NextSocketAsync();
+        await TestSite.ReceiveAsync(again);
+        _site.Manifest = Manifest("0.03 USD");                                     // cheaper: still within the grant
+        await TestSite.SendAsync(again, _site.Welcome());
+        await WaitUntil(() => connection.State == DirectState.Connected);
+        await TestSite.SendAsync(again, Call(9));
+        Assert.True((await TestSite.ReceiveAsync(again))["ok"]!.GetValue<bool>());
+        Assert.Equal(_site.Manifest64, _pairings.Get(_site.Origin)!.Manifest);
+        Assert.Equal(1, _ui.Notices);
     }
 
     [Fact]
@@ -523,6 +693,34 @@ public class DirectTransportTests : IDisposable
         await Task.Delay(300);
         Assert.Equal(1, _site.Upgrades);
         Assert.Equal(DirectState.Closed, connection.State);
+    }
+
+    [Fact]
+    public async Task AFirstConnectThatFailsTriesAgainWhileTheCodeMayStillBeValid()
+    {
+        using var down = new TestSite(listen: false);                              // the site's server is not up yet
+        _ui.Consent = new ConsentAnswer(true, 0.05m, AutoDecide: false, []);
+        var code = TestSite.NewCode();
+        var connection = await Transport().HandleLinkAsync(down.Link(code));
+        Assert.NotNull(connection);
+        await WaitUntil(() => Links.Any(e => e.Outcome == "failed"), 15);
+        Assert.EndsWith("trying again", Links.First(e => e.Outcome == "failed").Note);
+        down.Listen();
+        var socket = await down.NextSocketAsync(20);
+        Assert.Equal(code, (await TestSite.ReceiveAsync(socket))["session"]!.GetValue<string>());   // the same code
+        await TestSite.SendAsync(socket, down.Welcome());
+        Assert.True(await connection!.Welcomed.WaitAsync(TimeSpan.FromSeconds(10)));
+    }
+
+    [Fact]
+    public async Task AFirstConnectGivesUpWhenTheCodeCanNoLongerBeValid()
+    {
+        using var down = new TestSite(listen: false);
+        _ui.Consent = new ConsentAnswer(true, 0.05m, AutoDecide: false, []);
+        var connection = await Transport(sessionWindowSeconds: 1).HandleLinkAsync(down.Link());
+        await connection!.Completion.WaitAsync(TimeSpan.FromSeconds(20));
+        Assert.Equal("the site could not be reached within 1 s of the link", Links[0].Note);
+        Assert.False(await connection.Welcomed);
     }
 
     [Fact]
@@ -542,8 +740,9 @@ public class DirectTransportTests : IDisposable
         var hello = await TestSite.ReceiveAsync(again);
         Assert.Equal("pairing-token-0123456789abcdef", hello["pairing"]!.GetValue<string>());
         Assert.Equal(notices, _ui.Notices);                                        // silent: "decide on my own"
-        Assert.Equal(2, _site.ManifestRequests);                                   // the manifest again, then the silent grant
-        Assert.Equal(("auto", "link"), (_log.Recent().First(e => e.Kind == "request").Outcome, _log.Recent().First(e => e.Kind == "request").Via));
+        Assert.Equal(2, _site.Accepts);                                            // only the two WebSocket connections
+        var request = _log.Recent().First(e => e.Kind == "request");
+        Assert.Equal(("auto", "link"), (request.Outcome, request.Via));
     }
 
     [Fact]
@@ -609,7 +808,7 @@ public class DirectTransportTests : IDisposable
         var connection = await transport.HandleLinkAsync(_site.Link());
         var socket = await _site.NextSocketAsync();
         await TestSite.ReceiveAsync(socket);
-        await TestSite.SendAsync(socket, new JsonObject { ["type"] = "welcome", ["pairing"] = "pairing-token-0123456789abcdef" });
+        await TestSite.SendAsync(socket, _site.Welcome());
         await TestSite.SendAsync(socket, new JsonObject { ["type"] = "call", ["id"] = 1, ["pad"] = new string('x', 2000) });
         var close = await TestSite.ReceiveAsync(socket);
         Assert.Equal("(close)", close["type"]!.GetValue<string>());
@@ -631,12 +830,12 @@ public class DirectTransportTests : IDisposable
     }
 
     [Fact]
-    public async Task DeclineMeansNoConnectionAtAll()
+    public async Task DeclineMeansNoContactWithTheSiteAtAll()
     {
         _ui.Notice = NoticeAnswer.Decline;
         Assert.Null(await Transport().HandleLinkAsync(_site.Link()));
         await Task.Delay(300);
-        Assert.Equal(0, _site.Upgrades);
+        Assert.Equal(0, _site.Accepts);
         Assert.Equal(("declined", "link"), (_log.Recent()[0].Outcome, _log.Recent()[0].Via));
     }
 
@@ -646,11 +845,10 @@ public class DirectTransportTests : IDisposable
         _ui.Notice = NoticeAnswer.Block;
         var transport = Transport();
         Assert.Null(await transport.HandleLinkAsync(_site.Link()));
-        var requests = _site.ManifestRequests;
         Assert.Null(await transport.HandleLinkAsync(_site.Link()));
-        Assert.Equal(requests, _site.ManifestRequests);                            // not even the manifest
         Assert.Equal(1, _ui.Notices);
-        Assert.Equal(0, _site.Upgrades);
+        await Task.Delay(300);
+        Assert.Equal(0, _site.Accepts);
         Assert.Equal("blocked site: the link was ignored", Links[0].Note);
     }
 
@@ -660,7 +858,6 @@ public class DirectTransportTests : IDisposable
         var transport = Transport();
         Assert.Null(await transport.HandleLinkAsync("bringyourownagent://connect?v=0.1&endpoint=wss%3A%2F%2F10.0.0.1%2Fws"));
         Assert.Equal("invalid", Links[0].Outcome);
-        Assert.Equal(0, _site.ManifestRequests);
 
         _ui.Notice = NoticeAnswer.Decline;
         var link = _site.Link();
@@ -668,39 +865,32 @@ public class DirectTransportTests : IDisposable
         Assert.Null(await transport.HandleLinkAsync(link));                        // the same session code again
         Assert.Equal("ignored", Links[0].Outcome);
         Assert.Equal(1, _ui.Notices);
-    }
-
-    [Theory]
-    [InlineData("text/html", null, "manifest: not application/json")]
-    [InlineData("application/json", "302 Found", "manifest: HTTP 302")]
-    [InlineData("application/json", "404 Not Found", "manifest: HTTP 404")]
-    public async Task TheManifestMustBeJsonAndIsNotFollowedElsewhere(string type, string? status, string why)
-    {
-        _site.ManifestType = type;
-        _site.ManifestStatus = status;
-        Assert.Null(await Transport().HandleLinkAsync(_site.Link()));
-        Assert.Equal(why, Links[0].Note);
-        Assert.Equal(0, _ui.Notices);
-        Assert.Equal(1, _site.ManifestRequests);                                   // the redirect was not followed
+        Assert.Equal(0, _site.Accepts);
     }
 
     [Fact]
-    public async Task AManifestOver64KbIsRefused()
+    public async Task AFloodOfLinksIsCut()
     {
-        _site.Manifest = "{\"x\":\"" + new string('a', 70 * 1024) + "\"}";
-        Assert.Null(await Transport().HandleLinkAsync(_site.Link()));
-        Assert.Equal("manifest: larger than 64 KB", Links[0].Note);
+        _ui.ConsentGate = new TaskCompletionSource<ConsentAnswer>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var transport = Transport();
+        var links = Enumerable.Range(0, 10).Select(_ => transport.HandleLinkAsync(_site.Link())).ToList();
+        await WaitUntil(() => links.Count(t => t.IsCompleted) == 6);
+        Assert.Equal(6, Links.Count(e => e.Note == "too many links at once"));
+        _ui.ConsentGate.SetResult(ConsentAnswer.Declined);
+        await Task.WhenAll(links).WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(1, _ui.Notices);                                              // the four that were let in shared one question
     }
 
     [Fact]
-    public async Task ANameThatResolvesToAPrivateAddressIsRefusedBeforeAnyRequest()
+    public async Task ANameThatResolvesToAPrivateAddressIsRefusedWhenTheWalletConnects()
     {
         var transport = Transport(resolve: (_, _) => Task.FromResult(new[] { IPAddress.Parse("93.184.215.14"), IPAddress.Parse("10.0.0.5") }));
         var link = "bringyourownagent://connect?v=0.1&endpoint=" + Uri.EscapeDataString("wss://geo.example.org/byoa/ws")
-            + "&manifest=" + Uri.EscapeDataString("https://geo.example.org/byoa/manifest.json") + "&session=" + TestSite.NewCode();
-        Assert.Null(await transport.HandleLinkAsync(link));
+            + "&manifest=" + _site.Manifest64 + "&session=" + TestSite.NewCode();
+        var connection = await transport.HandleLinkAsync(link);
+        Assert.Equal(1, _ui.Notices);                                              // asked first: no lookup before Allow
+        await connection!.Completion.WaitAsync(TimeSpan.FromSeconds(10));         // a refusal is not retried
         Assert.Equal("refused: the site's name resolves to a private, loopback or link-local address", Links[0].Note);
-        Assert.Equal(0, _ui.Notices);
     }
 
     [Fact]

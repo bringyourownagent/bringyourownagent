@@ -1,24 +1,38 @@
+using System.Buffers.Text;
 using System.Globalization;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using Byoa.Wallet.Engine;
 
 namespace Byoa.Wallet.Direct;
 
 /// <summary>
 /// A checked <c>bringyourownagent://connect?v=0.1&amp;endpoint=…&amp;manifest=…&amp;session=…</c> link (the direct
-/// transport, CONTRACT-DIRECT.md §1). The endpoint is a <c>wss://</c> URL, the manifest an <c>https://</c> URL on the
-/// same host and port; the site's identity is the origin <c>https://host[:port]</c>. Hosts that are IP literals,
-/// <c>localhost</c>, <c>.local</c> names and other local names are refused here; addresses are checked again when
-/// the wallet connects (<see cref="DirectNet"/>). With the developer switch <see cref="DevLocalVariable"/>=1 (tests
-/// only) <c>ws://localhost</c> and <c>http://localhost</c> are allowed as well.
+/// transport, CONTRACT-DIRECT.md §1 as amended by §7). The endpoint is a <c>wss://</c> URL; the manifest travels in
+/// the link itself, as base64url (no padding) of its JSON, at most 4096 bytes, so the wallet needs no network request
+/// before the visitor's Allow. The site's identity is the origin <c>https://host[:port]</c> of the endpoint. Hosts
+/// that are IP literals, <c>localhost</c>, <c>.local</c> names and other local names are refused here; addresses are
+/// checked again when the wallet connects (<see cref="DirectNet"/>). With the developer switch
+/// <see cref="DevLocalVariable"/>=1 (tests only) <c>ws://localhost</c> is allowed as well.
 /// </summary>
-public sealed record DirectLink(Uri Endpoint, Uri Manifest, string Session, string Origin, string Host)
+/// <param name="Manifest">The manifest exactly as the link carries it (base64url): the site's welcome must echo it.</param>
+/// <param name="ManifestJson">The decoded manifest, shown in the consent.</param>
+public sealed record DirectLink(Uri Endpoint, string Manifest, JsonObject ManifestJson, string Session, string Origin, string Host)
 {
     public const string Scheme = "bringyourownagent";
 
-    /// <summary>The developer switch for tests: <c>BYOA_WALLET_DEV_LOCAL=1</c> allows <c>ws://localhost</c> and <c>http://localhost</c>.</summary>
+    /// <summary>The developer switch for tests: <c>BYOA_WALLET_DEV_LOCAL=1</c> allows <c>ws://localhost</c>.</summary>
     public const string DevLocalVariable = "BYOA_WALLET_DEV_LOCAL";
 
-    public const int MaxLength = 4096;
+    /// <summary>The manifest's limit, decoded (CONTRACT-DIRECT.md §7).</summary>
+    public const int MaxManifestBytes = 4096;
+
+    /// <summary>Base64url without padding of <see cref="MaxManifestBytes"/> bytes.</summary>
+    const int MaxManifestChars = (MaxManifestBytes * 4 + 2) / 3;
+
+    /// <summary>The whole link: room for an escaped endpoint, the manifest and the code.</summary>
+    public const int MaxLength = 12288;
+
     const int MaxUrlLength = 2048;
     const int MaxParameters = 16;
 
@@ -72,31 +86,65 @@ public sealed record DirectLink(Uri Endpoint, Uri Manifest, string Session, stri
         if (!parameters.TryGetValue("session", out var session) || !IsSessionCode(session)) return Fail("the link has no valid session code", out why);
         if (!parameters.TryGetValue("endpoint", out var endpointText)) return Fail("the link has no endpoint", out why);
         if (!parameters.TryGetValue("manifest", out var manifestText)) return Fail("the link has no manifest", out why);
-        if (!TryTarget(endpointText, manifestText, devLocal, out var endpoint, out var manifest, out var origin, out var host, out why)) return false;
+        if (!TryManifest(manifestText, out var manifestJson, out why)) return false;
+        if (!TryTarget(endpointText, devLocal, out var endpoint, out var origin, out var host, out why)) return false;
 
-        link = new DirectLink(endpoint!, manifest!, session, origin!, host!);
+        link = new DirectLink(endpoint!, manifestText, manifestJson!, session, origin!, host!);
         why = "";
         return true;
     }
 
     /// <summary>
-    /// Checks an endpoint and a manifest URL (also for a stored pairing, before the wallet reconnects) and gives the
-    /// site's origin and the host shown to the visitor.
+    /// Decodes a manifest as the link carries it: base64url without padding, at most 4096 bytes, a JSON object.
+    /// (Whether it is a valid BYOA manifest is the engine's check, with the .NET library.)
     /// </summary>
-    public static bool TryTarget(string endpointText, string manifestText, bool devLocal,
-        out Uri? endpoint, out Uri? manifest, out string? origin, out string? host, out string why)
+    public static bool TryManifest(string? text, out JsonObject? manifest, out string why)
     {
-        endpoint = manifest = null;
-        origin = host = null;
-        if (!TryUrl(endpointText, websocket: true, devLocal, out endpoint, out why)) return false;
-        if (!TryUrl(manifestText, websocket: false, devLocal, out manifest, out why)) return false;
-        var secure = endpoint!.Scheme == "wss";
-        if (secure != (manifest!.Scheme == Uri.UriSchemeHttps)) return Fail("the endpoint and the manifest differ in security", out why);
-        if (!endpoint.IdnHost.Equals(manifest.IdnHost, StringComparison.OrdinalIgnoreCase) || endpoint.Port != manifest.Port)
+        manifest = null;
+        if (string.IsNullOrEmpty(text)) return Fail("the link has no manifest", out why);
+        if (text.Length > MaxManifestChars) return Fail("the manifest is larger than 4096 bytes", out why);
+        foreach (var c in text)
         {
-            return Fail("the manifest is not on the endpoint's host and port", out why);
+            if (!(char.IsAsciiLetterOrDigit(c) || c is '-' or '_')) return Fail("the manifest is not base64url without padding", out why);
         }
 
+        byte[] bytes;
+        try
+        {
+            bytes = Base64Url.DecodeFromChars(text);
+        }
+        catch (FormatException)
+        {
+            return Fail("the manifest is not base64url without padding", out why);
+        }
+
+        if (bytes.Length > MaxManifestBytes) return Fail("the manifest is larger than 4096 bytes", out why);
+        try
+        {
+            manifest = JsonNode.Parse(bytes) as JsonObject;
+        }
+        catch (JsonException)
+        {
+            return Fail("the manifest is not JSON", out why);
+        }
+
+        if (manifest is null) return Fail("the manifest is not a JSON object", out why);
+        why = "";
+        return true;
+    }
+
+    /// <summary>The form a site puts in the link (and echoes in its welcome): base64url of the JSON bytes, no padding.</summary>
+    public static string EncodeManifest(byte[] json) => Base64Url.EncodeToString(json);
+
+    /// <summary>
+    /// Checks an endpoint (also for a stored pairing, before the wallet reconnects) and gives the site's origin and the
+    /// host shown to the visitor.
+    /// </summary>
+    public static bool TryTarget(string endpointText, bool devLocal, out Uri? endpoint, out string? origin, out string? host, out string why)
+    {
+        origin = host = null;
+        if (!TryUrl(endpointText, devLocal, out endpoint, out why)) return false;
+        var secure = endpoint!.Scheme == "wss";
         var name = endpoint.IdnHost.ToLowerInvariant();
         var defaultPort = secure ? 443 : 80;
         host = endpoint.Port == defaultPort ? name : name + ":" + endpoint.Port.ToString(CultureInfo.InvariantCulture);
@@ -106,75 +154,72 @@ public sealed record DirectLink(Uri Endpoint, Uri Manifest, string Session, stri
         return true;
     }
 
-    static bool TryUrl(string text, bool websocket, bool devLocal, out Uri? uri, out string why)
+    static bool TryUrl(string text, bool devLocal, out Uri? uri, out string why)
     {
         uri = null;
-        var what = websocket ? "endpoint" : "manifest";
-        if (text.Length == 0 || text.Length > MaxUrlLength) return Fail("the " + what + " URL is empty or too long", out why);
+        if (text.Length == 0 || text.Length > MaxUrlLength) return Fail("the endpoint URL is empty or too long", out why);
         foreach (var c in text)
         {
-            if (c <= ' ' || c >= 0x7F || c == '\\') return Fail("the " + what + " URL has characters a URL cannot have", out why);
+            if (c <= ' ' || c >= 0x7F || c == '\\') return Fail("the endpoint URL has characters a URL cannot have", out why);
         }
 
-        if (!Uri.TryCreate(text, UriKind.Absolute, out uri)) return Fail("the " + what + " is not a URL", out why);
-        var secureScheme = websocket ? "wss" : Uri.UriSchemeHttps;
-        var plainScheme = websocket ? "ws" : Uri.UriSchemeHttp;
+        if (!Uri.TryCreate(text, UriKind.Absolute, out uri)) return Fail("the endpoint is not a URL", out why);
         var isLocalhost = uri.HostNameType == UriHostNameType.Dns && uri.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase);
-        if (uri.Scheme == plainScheme)
+        if (uri.Scheme == "ws")
         {
-            if (!(devLocal && isLocalhost)) return Fail("the " + what + " is not " + secureScheme + "://", out why);
+            if (!(devLocal && isLocalhost)) return Fail("the endpoint is not wss://", out why);
         }
-        else if (uri.Scheme != secureScheme)
+        else if (uri.Scheme != "wss")
         {
-            return Fail("the " + what + " is not " + secureScheme + "://", out why);
+            return Fail("the endpoint is not wss://", out why);
         }
 
-        if (!string.IsNullOrEmpty(uri.UserInfo)) return Fail("the " + what + " URL has a user name", out why);
-        if (uri.Fragment.Length > 0 || text.Contains('#')) return Fail("the " + what + " URL has a fragment", out why);
+        if (!string.IsNullOrEmpty(uri.UserInfo)) return Fail("the endpoint URL has a user name", out why);
+        if (uri.Fragment.Length > 0 || text.Contains('#')) return Fail("the endpoint URL has a fragment", out why);
         if (devLocal && isLocalhost)
         {
             why = "";
             return true;
         }
 
-        return CheckHost(uri, what, out why);
+        return CheckHost(uri, out why);
     }
 
     /// <summary>Only public DNS names: no IP literals, no localhost, no .local and other local-only names, no single labels.</summary>
-    static bool CheckHost(Uri uri, string what, out string why)
+    static bool CheckHost(Uri uri, out string why)
     {
         switch (uri.HostNameType)
         {
             case UriHostNameType.IPv4:
             case UriHostNameType.IPv6:
-                return Fail("the " + what + " host is an IP address", out why);
+                return Fail("the endpoint host is an IP address", out why);
             case UriHostNameType.Dns:
                 break;
             default:
-                return Fail("the " + what + " host is not a DNS name", out why);
+                return Fail("the endpoint host is not a DNS name", out why);
         }
 
         var name = uri.IdnHost.ToLowerInvariant();
-        if (name.Length > 253 || name.EndsWith('.')) return Fail("the " + what + " host is not a usual DNS name", out why);
-        if (name == "localhost" || name.EndsWith(".localhost", StringComparison.Ordinal)) return Fail("the " + what + " host is localhost", out why);
+        if (name.Length > 253 || name.EndsWith('.')) return Fail("the endpoint host is not a usual DNS name", out why);
+        if (name == "localhost" || name.EndsWith(".localhost", StringComparison.Ordinal)) return Fail("the endpoint host is localhost", out why);
         foreach (var local in new[] { ".local", ".home.arpa", ".internal", ".lan", ".intranet" })
         {
-            if (name.EndsWith(local, StringComparison.Ordinal)) return Fail("the " + what + " host is a local network name", out why);
+            if (name.EndsWith(local, StringComparison.Ordinal)) return Fail("the endpoint host is a local network name", out why);
         }
 
         var labels = name.Split('.');
-        if (labels.Length < 2) return Fail("the " + what + " host is a single-label (local) name", out why);
+        if (labels.Length < 2) return Fail("the endpoint host is a single-label (local) name", out why);
         foreach (var label in labels)
         {
-            if (label.Length is 0 or > 63 || label[0] == '-' || label[^1] == '-') return Fail("the " + what + " host is not a usual DNS name", out why);
+            if (label.Length is 0 or > 63 || label[0] == '-' || label[^1] == '-') return Fail("the endpoint host is not a usual DNS name", out why);
             foreach (var c in label)
             {
-                if (!(c is >= 'a' and <= 'z' or >= '0' and <= '9' or '-')) return Fail("the " + what + " host is not a usual DNS name", out why);
+                if (!(c is >= 'a' and <= 'z' or >= '0' and <= '9' or '-')) return Fail("the endpoint host is not a usual DNS name", out why);
             }
         }
 
         // An all-numeric last label would be an IP address in another spelling (for example 2130706433 or 0x7f.1).
-        if (labels[^1].All(char.IsAsciiDigit)) return Fail("the " + what + " host is an IP address", out why);
+        if (labels[^1].All(char.IsAsciiDigit)) return Fail("the endpoint host is an IP address", out why);
         why = "";
         return true;
     }
