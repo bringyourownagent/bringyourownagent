@@ -195,6 +195,18 @@ public class ReviewFixTests
     }
 
     [Fact]
+    public async Task R7_ARequestRightAfterAnAnsweredOneGetsItsOwnQuestion()
+    {
+        // The answered question leaves the shared table a moment later; a request in between must not reuse its answer.
+        for (var i = 0; i < 200; i++)
+        {
+            _ui.Notice = i % 2 == 0 ? NoticeAnswer.Decline : NoticeAnswer.Closed;
+            Assert.Null(await _engine.HandleAsync(Clips.Request(Site, click: true)));
+            Assert.Equal(i + 1, _ui.Notices);
+        }
+    }
+
+    [Fact]
     public async Task R7_WhenEveryTabWaitingHasGoneTheQuestionCloses()
     {
         _ui.ConsentGate = new TaskCompletionSource<ConsentAnswer>(TaskCreationOptions.RunContinuationsAsynchronously);

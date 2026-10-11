@@ -14,6 +14,8 @@ The default route for a call: GigaAM when the page says the language is `ru`, Wh
 
 The design and the security notes are in [docs/wallet-0.1.md](../docs/wallet-0.1.md). The page API is the BYOA 0.1 contract: `window.byoa.request(manifest)`, `call(grantId, skill, input, params)`, `release(grantId)`.
 
+**Without the extension.** A site can also show a `bringyourownagent://connect?...` link. A click on it starts the wallet (or hands the link to the running one); the wallet fetches the site's manifest, shows the same notice and consent, and after Allow opens its own WebSocket to the site's server, which then sends its calls straight to the wallet. Same grants, limits and routing; the activity marks these "via link". Details: [docs/wallet-0.1.md, section 10](../docs/wallet-0.1.md#10-transports).
+
 ## Install for your own Chrome
 
 Needs Windows 10 or 11, the .NET 10 SDK and Chrome (or another Chromium browser).
@@ -24,14 +26,14 @@ Needs Windows 10 or 11, the .NET 10 SDK and Chrome (or another Chromium browser)
    powershell -ExecutionPolicy Bypass -File wallet\install.ps1
    ```
 
-   It publishes the wallet and the host into `%LOCALAPPDATA%\BYOA\wallet-app`, writes the host manifest there and registers the host for your user only (`HKCU\Software\Google\Chrome\NativeMessagingHosts\org.bringyourownagent.wallet` and the same under `Software\Chromium`). Add `-StartWithWindows` to put a shortcut into your Startup folder (off by default).
+   It publishes the wallet and the host into `%LOCALAPPDATA%\BYOA\wallet-app`, writes the host manifest there and registers the host for your user only (`HKCU\Software\Google\Chrome\NativeMessagingHosts\org.bringyourownagent.wallet` and the same under `Software\Chromium`), and the `bringyourownagent://` links (`HKCU\Software\Classes\bringyourownagent`). Add `-StartWithWindows` to put a shortcut into your Startup folder (off by default).
 2. In Chrome open `chrome://extensions`, turn on **Developer mode**, press **Load unpacked** and choose the folder `wallet\extension` that install.ps1 prints. The extension ID is always `niobopdoiopjilmlonjcgllpmgjemhpk` (fixed by the `key` in its manifest), which is the only origin the host accepts.
 3. Optional: add an OpenRouter key for the paid fallback in the wallet's **Sources** page (or `Byoa.Wallet.exe --import-key openrouter <file with the key>`). It is stored with Windows DPAPI for your account and never shown again.
 4. Open a page that uses BYOA (for example the Geo-1 game in its "my agent wallet" mode) and press its button. The wallet starts by itself when a page asks; the extension's toolbar button shows whether it is running and opens it.
 
 To update, quit the wallet from its tray icon (right click, **Quit**) and run `install.ps1` again.
 
-To remove it: `powershell -ExecutionPolicy Bypass -File wallet\uninstall.ps1` removes exactly the two registry keys (and the Startup shortcut, if any); `-WhatIf` shows what it would do. It deletes no files: it prints the folders the wallet used so that you can remove them yourself. Remove the extension in `chrome://extensions`.
+To remove it: `powershell -ExecutionPolicy Bypass -File wallet\uninstall.ps1` removes exactly the three registry keys (and the Startup shortcut, if any); `-WhatIf` shows what it would do. It deletes no files: it prints the folders the wallet used so that you can remove them yourself. Remove the extension in `chrome://extensions`.
 
 ## Where things are
 
@@ -40,6 +42,7 @@ To remove it: `powershell -ExecutionPolicy Bypass -File wallet\uninstall.ps1` re
 | App and host | `%LOCALAPPDATA%\BYOA\wallet-app` (`Byoa.Wallet.exe`, `byoa-host.exe`, `org.bringyourownagent.wallet.json`) |
 | Settings | `%LOCALAPPDATA%\BYOA\wallet\settings.json` (sites, sources, routes, limits; no secrets) |
 | API keys | `%LOCALAPPDATA%\BYOA\wallet\secrets.dat` (DPAPI, current user) |
+| Pairings of direct links | `%LOCALAPPDATA%\BYOA\wallet\pairings.dat` (DPAPI, current user; only for sites with "decide on my own") |
 | Activity | `%LOCALAPPDATA%\BYOA\wallet\activity-YYYY-MM-DD.jsonl` (no audio, no text) |
 | Downloaded models | `%LOCALAPPDATA%\BYOA\models` |
 | Model folders searched | the models folder above, plus `<drive>:\AI-MODELS`, `<drive>:\models` and `%USERPROFILE%\models` when they exist; add more in **Sources** |
@@ -71,10 +74,17 @@ python tests\e2e\e2e.py --samples <samples> --shots <screenshots> --work <empty 
 
 It needs `patchright`, `uiautomation`, `pillow`, and for the samples `sherpa-onnx` and `numpy`. With an OpenRouter key in `%USERPROFILE%\.openrouter-key` it makes two paid calls (about $0.0001); `--no-paid` skips them.
 
+The direct links have their own end-to-end test against small fake sites (`tests\e2e\fake_site.py`, aiohttp) on `ws://localhost` under the developer switch `BYOA_WALLET_DEV_LOCAL=1`: links opened as Windows opens them (`cmd /c start`), the real windows, real speech, a wallet restart with a stored pairing, decline, block, a bad session, revoke, and one click in a headed Chromium:
+
+```powershell
+python tests\e2e\direct_e2e.py --samples <samples> --shots <screenshots> --work <empty folder>
+```
+
 ## Layout
 
 ```
-core/Byoa.Wallet.Core        protocol (framing, messages, paths), the engine, settings, DPAPI secrets, WAV, routing
+core/Byoa.Wallet.Core        protocol (framing, messages, paths), the engine, settings, DPAPI secrets, WAV, routing,
+                             the direct transport (links, address checks, the WebSocket channel, pairings)
 core/Byoa.Wallet.Providers   GigaAM (sherpa-onnx), Whisper (Whisper.net), OpenRouter; the model scanner
 desktop/Byoa.Wallet.Desktop  the Avalonia tray app: notice, consent, settings, the pipe server
 host/Byoa.Wallet.Host        byoa-host.exe, the native messaging host

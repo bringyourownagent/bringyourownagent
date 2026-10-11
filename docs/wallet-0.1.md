@@ -2,7 +2,7 @@
 
 Status: working version for Windows, 11 October 2026. Code and install steps: [wallet/](../wallet/README.md).
 
-The wallet is the visitor's side of BYOA. 0.1 is the first one that runs: a page asks for the visitor's AI, the visitor allows it in a short consent window, and the page's speech clips are recognised by the visitor's own models. It follows the consent flow of the vision ([3.1](vision.md#31-the-consent-flow-proposed)) and checks every call with the draft rules ([spec/rules-0.1-draft.md](../spec/rules-0.1-draft.md)) through the .NET library before any model runs.
+The wallet is the visitor's side of BYOA. 0.1 is the first one that runs: a page asks for the visitor's AI, the visitor allows it in a short consent window, and the page's speech clips are recognised by the visitor's own models. A site reaches it through the browser extension or, with no extension, through a `bringyourownagent://` link and the wallet's own connection to the site's server (section 10). It follows the consent flow of the vision ([3.1](vision.md#31-the-consent-flow-proposed)) and checks every call with the draft rules ([spec/rules-0.1-draft.md](../spec/rules-0.1-draft.md)) through the .NET library before any model runs.
 
 ## 1. Architecture
 
@@ -108,6 +108,7 @@ A silent grant ("decide on my own") on a wallet that the request itself starts: 
 - Windows only (DPAPI, the tray, the registry). The engine itself has no Windows dependency except the secret store.
 - Sessions do not survive a restart of the wallet.
 - No streaming; one clip per call.
+- The direct link does not go through a proxy (the address check needs the site's real address).
 
 ## 8. Security notes
 
@@ -119,7 +120,8 @@ A silent grant ("decide on my own") on a wallet that the request itself starts: 
 - **Answers are user input.** The wallet trims and length-limits the text (4,000 characters) but does not sanitise it; pages must treat it like anything a visitor types.
 - **Input limits.** Frames up to 8 MB, audio up to 6 MB, manifests up to 64 KB; the WAV reader refuses anything it does not understand, and checks chunk sizes in 64-bit arithmetic (a chunk that claims to run past the end of the clip is bad audio, not an overflow). At most 16 messages of one connection run at once.
 - **Local models are read only.** The scanner only reads the visitor's model folders; downloads go only to `%LOCALAPPDATA%\BYOA\models`, checked against the size and SHA-256 Hugging Face publishes.
-- **Registry.** Only the two native host keys under HKCU, written by `install.ps1` and removed by `uninstall.ps1` (which also removes the one Startup shortcut `install.ps1 -StartWithWindows` made, and no other file).
+- **Registry.** Only the two native host keys and the `bringyourownagent` scheme key under HKCU, written by `install.ps1` and removed by `uninstall.ps1` (which also removes the one Startup shortcut `install.ps1 -StartWithWindows` made, and no other file).
+- **The direct link.** Session codes are single use and short-lived because a link may reach another program that registered the scheme later. The pairing token lets its holder use the visitor's AI on that one site, within the same grant and limits; it is kept like a key (DPAPI) and only under "decide on my own". A same-user program can hand the wallet a link over the pipe, which is no more than it could do by starting the wallet with that link; the visitor still sees the notice unless the site already has "decide on my own".
 - **A model that fails to load** (a broken folder, a missing runtime) is marked broken on the Sources page and skipped by the route until its folder changes; calls fall back to the next source.
 - **Logs.** The activity log keeps no audio and no text. Crashes go to `errors.log` with exception types and stacks only.
 
@@ -135,3 +137,34 @@ Found while building 0.1:
 6. **"Asking for more"** needs a definition in the spec (which changes count: new skills, higher expected cost, new languages?). 0.1 counts new skills it can serve, required skills it cannot serve, and an expected cost per session above the visitor's budget.
 7. The contract's extension-host messages say nothing about the payload shapes or about a status message; section 2 above documents what 0.1 uses.
 8. **Readiness**: the contract has no "preparing" state, so the wallet holds `request()` until its models are loaded (at most 30 s). A progress hint in the page API would let sites show their own "preparing" instead of waiting without knowing why.
+
+## 10. Transports
+
+A site reaches the wallet in one of two ways. Both end in the same engine: the same notice and consent, the same
+grants, blocks, "decide on my own", budgets, daily limits, gate, routing, fallbacks, "ask before paid", models ready
+before the answer, and the same activity log. Grants and decisions belong to the origin, so a site allowed through
+one transport is allowed through the other.
+
+| | Extension (CONTRACT.md) | Direct link (CONTRACT-DIRECT.md) |
+|---|---|---|
+| The visitor needs | the browser extension | nothing in the browser; the wallet registers a URL scheme |
+| The page starts it with | `window.byoa.request(manifest)` in a click handler | a click on a `bringyourownagent://connect?...` link (a browser launches a protocol only after a click) |
+| The manifest comes from | the page | the wallet's own GET of the site's manifest URL |
+| Calls come from | the page, through the extension and the native host | the site's server, over the wallet's own WebSocket |
+| Identity | Chrome's `sender.origin` | TLS: the origin `https://host[:port]` of the `wss://` endpoint |
+| Activity | as before | every entry marked "via link" |
+
+### The direct link
+
+- **The link.** `bringyourownagent://connect?v=0.1&endpoint=<wss URL>&manifest=<https URL>&session=<code>`. The scheme is `bringyourownagent`, never `byoa` (a generic name another program could take; on Windows the last program to register a scheme gets its links).
+- **Registration.** `install.ps1` writes `HKCU\Software\Classes\bringyourownagent` ("URL Protocol"; `shell\open\command` = `"<wallet exe>" --url "%1"`); `uninstall.ps1` removes exactly that key, and only while its command is still this wallet's. A link starts the wallet; when the wallet is already running, the new process hands the link to it over the per-user pipe and exits. The native host never forwards a `link` message from the browser.
+- **Checks before anything else.** The endpoint must be `wss://` and the manifest `https://` on the same host and port; no user name, no fragment, no IP literals (in any spelling), no `localhost`, `.localhost`, `.local`, `.home.arpa`, `.internal`, `.lan` or single-label names; the session code is 22 to 256 URL-safe characters (at least 128 bits). A link that fails any check, repeats a code seen in the last 10 minutes, or belongs to a blocked site does nothing but leave an activity entry: no request, no notice.
+- **Addresses.** Every connection (the manifest and the WebSocket) resolves the host itself and refuses it if any address is private, loopback, link-local, carrier-grade NAT, multicast or another special range (also inside IPv6: mapped, NAT64, 6to4, Teredo); it then connects to an address it checked, so DNS cannot change the answer in between. No proxy, no cookies, no redirects.
+- **The developer switch.** `BYOA_WALLET_DEV_LOCAL=1` (tests only) also allows `ws://localhost` and `http://localhost`; the origin is then `http://localhost:<port>`, the same as an extension page there.
+- **Before Allow.** The wallet GETs the manifest (no cookies, no session code, at most 64 KB in 5 s, `application/json`) and shows the usual notice and consent, or grants silently under "decide on my own". Decline and Block never connect: to the site that looks the same as no wallet. Nothing connects before Allow.
+- **The channel.** After the grant, and after the routed models are loaded, the wallet connects and sends `hello` (the session code, the wallet, the granted skills and the grant's expiry). The site answers `welcome` (with a pairing token) or `error` and a close. Then the site sends `call` frames and the wallet answers `result` frames: exactly a page's call, at most 4 running at once (more get `ok: false` at once). Frames are JSON text up to 4 MB; a frame that is not a JSON message, or a site that speaks before its welcome, closes the connection; unknown frame types are ignored. The wallet sends `{"type":"ping"}` every 30 s, and WebSocket pings that end a connection whose site stopped answering. `bye` from either side ends it.
+- **Pairing.** The welcome's token is kept (DPAPI, `pairings.dat` in the data folder) only for a site with "decide on my own". With it the wallet reconnects after a dropped connection (backoff 1, 2, 5, 10, then 30 s) and after its own restart, with `hello` carrying the pairing instead of a code and no notice: it fetches the manifest again and applies the silent rule, so a site that now asks for more gets no silent connection. A grant that ends (12 hours) is renewed the same way. Without the token, a dropped connection stays closed.
+- **Revoke and Block** in the wallet say `bye`, close the site's connections and forget its pairing. Turning "decide on my own" off ends the reconnecting at the next attempt.
+- **What the visitor sees.** Sites shows "Connected without the extension" (and "paired" when the wallet will come back on its own); Activity marks the link's events (link ignored, connected, closed, refused) and every request and call "via link".
+
+Measured on the development machine with the end-to-end test (`wallet/tests/e2e/direct_e2e.py`, fake sites on `ws://localhost`): link to notice 1.2-3.0 s with the wallet starting cold; Allow to `hello` 2.5-3.5 s (the models loaded first, 2.4-3.3 s); calls round trip from the site's server 46-180 ms in Russian (GigaAM) and 490-830 ms in Slovak (Whisper); a restarted wallet back on the connection 2.9-3.3 s after it starts. Against the Geo-1 game run locally (its direct mode, no extension in the browser): Allow to the game saying the wallet is connected 3.8 s; the server's phrases answered by GigaAM in 61-74 ms; a page reload binds the same connection again; a restarted wallet is bound again 3.4 s after it starts. A real click in a headed Chromium shows Chromium's own prompt ("Open <the app>?", with the exe's description, "Agent wallet", once Windows has not cached an older name) and then the wallet's notice; that second process hands the link to the running wallet over the pipe.

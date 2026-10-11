@@ -51,6 +51,7 @@ sealed class DesktopUi : IWalletUi
         _w.Store.Changed += () => Dispatcher.UIThread.Post(() => _settings?.Invalidate());
         _w.Activity.Added += _ => Dispatcher.UIThread.Post(() => _settings?.Invalidate());
         _w.Secrets.Changed += () => Dispatcher.UIThread.Post(() => _settings?.Invalidate());
+        _w.Direct.Changed += () => Dispatcher.UIThread.Post(() => _settings?.Invalidate());
         UpdateBadge();
     }
 

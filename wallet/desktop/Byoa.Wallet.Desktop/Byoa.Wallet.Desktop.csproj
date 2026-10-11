@@ -5,6 +5,8 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <AssemblyName>Byoa.Wallet</AssemblyName>
+    <!-- The file description: what Windows and browsers call the app, e.g. Chrome's "Open Agent wallet?" for a link. -->
+    <AssemblyTitle>Agent wallet</AssemblyTitle>
     <RootNamespace>Byoa.Wallet.Desktop</RootNamespace>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <SelfContained>false</SelfContained>

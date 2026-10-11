@@ -1,4 +1,5 @@
 using System.IO.Pipes;
+using System.Text.Json.Nodes;
 using Byoa.Wallet.Engine;
 using Byoa.Wallet.Protocol;
 
@@ -13,9 +14,14 @@ namespace Byoa.Wallet.Desktop;
 sealed class PipeServer : IDisposable
 {
     readonly WalletEngine _engine;
+    readonly Action<string?> _openLink;
     readonly CancellationTokenSource _stop = new();
 
-    public PipeServer(WalletEngine engine) => _engine = engine;
+    public PipeServer(WalletEngine engine, Action<string?> openLink)
+    {
+        _engine = engine;
+        _openLink = openLink;
+    }
 
     public void Start() => _ = Task.Run(AcceptLoopAsync);
 
@@ -51,12 +57,20 @@ sealed class PipeServer : IDisposable
         try
         {
             // At most FrameServer.DefaultParallel messages of one connection run at once; then the pipe waits.
-            await new FrameServer(_engine.HandleAsync).ServeAsync(pipe, _stop.Token).ConfigureAwait(false);
+            await new FrameServer(HandleAsync).ServeAsync(pipe, _stop.Token).ConfigureAwait(false);
         }
         finally
         {
             await pipe.DisposeAsync().ConfigureAwait(false);
         }
+    }
+
+    /// <summary>A link handed over by a second instance is acted on in the background; the sender only needs "accepted".</summary>
+    Task<JsonNode?> HandleAsync(WireMessage message, CancellationToken ct)
+    {
+        if (message.Type != Wire.Link) return _engine.HandleAsync(message, ct);
+        _openLink(message.Payload["url"] is JsonValue v && v.TryGetValue<string>(out var url) ? url : null);
+        return Task.FromResult<JsonNode?>(new JsonObject { ["accepted"] = true });
     }
 
     public void Dispose() => _stop.Cancel();

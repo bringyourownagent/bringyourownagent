@@ -17,6 +17,15 @@ public static class Wire
     public const string Status = "status";
     public const string Open = "open";
 
+    /// <summary>
+    /// A <c>bringyourownagent://</c> link handed to the running wallet by a second <c>Byoa.Wallet.exe --url</c>
+    /// (the direct transport). Never from the browser: the native host does not forward it.
+    /// </summary>
+    public const string Link = "link";
+
+    /// <summary>The types the native host forwards from the browser; anything else gets the fallback there.</summary>
+    public static bool FromBrowser(string? type) => type is Request or Call or Release or Status or Open;
+
     /// <summary>The answer when nothing better can be given: null for a request, <c>{ ok: false }</c> for a call.</summary>
     public static JsonNode? Fallback(string? type) => type == Call ? new JsonObject { ["ok"] = false } : null;
 

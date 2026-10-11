@@ -9,9 +9,12 @@
     3. Registers the host for the current user only, under
          HKCU\Software\Google\Chrome\NativeMessagingHosts\org.bringyourownagent.wallet
          HKCU\Software\Chromium\NativeMessagingHosts\org.bringyourownagent.wallet
-       (the second one serves Chromium builds such as Playwright's). Nothing else is written to the registry.
-    4. Optionally (-StartWithWindows, off by default) puts a shortcut into the user's Startup folder.
-    5. Prints the folder to load as an unpacked extension.
+       (the second one serves Chromium builds such as Playwright's).
+    4. Registers the bringyourownagent:// links (the direct transport, no extension needed) for the current user:
+         HKCU\Software\Classes\bringyourownagent   ("URL Protocol"; shell\open\command = "<wallet exe>" --url "%1")
+       Nothing else is written to the registry.
+    5. Optionally (-StartWithWindows, off by default) puts a shortcut into the user's Startup folder.
+    6. Prints the folder to load as an unpacked extension.
 
     Needs the .NET 10 SDK. Run it again to update; quit the wallet from its tray icon first.
 
@@ -32,6 +35,7 @@ $registryKeys = @(
     "Software\Google\Chrome\NativeMessagingHosts\$hostName",
     "Software\Chromium\NativeMessagingHosts\$hostName"
 )
+$protocolKey = 'Software\Classes\bringyourownagent'
 
 function Get-ExtensionId([string]$manifestPath) {
     # Chrome derives the ID from the public key: the first 32 hex digits of its SHA-256, written with a-p.
@@ -84,6 +88,19 @@ foreach ($sub in $registryKeys) {
     try { $key.SetValue('', $manifestPath) } finally { $key.Close() }
     Write-Host "Registered HKCU\$sub"
 }
+
+# The bringyourownagent:// scheme (never byoa://, see CONTRACT-DIRECT.md section 6). A link starts the wallet, or
+# hands the link to the wallet that is already running.
+$key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($protocolKey)
+try {
+    $key.SetValue('', 'URL:Bring Your Own Agent link')
+    $key.SetValue('URL Protocol', '')
+} finally { $key.Close() }
+$key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey("$protocolKey\DefaultIcon")
+try { $key.SetValue('', "`"$walletExe`",0") } finally { $key.Close() }
+$key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey("$protocolKey\shell\open\command")
+try { $key.SetValue('', "`"$walletExe`" --url `"%1`"") } finally { $key.Close() }
+Write-Host "Registered HKCU\$protocolKey (bringyourownagent:// links)"
 
 if ($StartWithWindows) {
     $startup = [Environment]::GetFolderPath('Startup')

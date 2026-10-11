@@ -96,3 +96,25 @@ def pipe_name(home=None):
     if home:
         name += "-" + h(os.path.abspath(home).rstrip("\\/").lower())
     return name
+
+
+def find_protocol_prompt(timeout=15.0):
+    """Chromium's own question before it opens an app for a link ("Open <app>?" with Open and Cancel): the window
+    and its Open button, found by the dialog's text (Chromium has other buttons named "Open ...")."""
+    end = time.time() + timeout
+    while time.time() < end:
+        for top in auto.GetRootControl().GetChildren():
+            if top.ClassName != "Chrome_WidgetWin_1":
+                continue
+            text = top.TextControl(SubName="wants to open this application", searchDepth=14)
+            if not text.Exists(0.2, 0.1):
+                continue
+            cancel = top.ButtonControl(Name="Cancel", searchDepth=14)
+            for button in (cancel.GetParentControl().GetChildren() if cancel.Exists(0.2, 0.1) else []):
+                if button.ControlTypeName == "ButtonControl" and button.Name.startswith("Open "):
+                    return top, button
+            button = top.ButtonControl(RegexName=r"^Open (?!tab)", searchDepth=14)
+            if button.Exists(0.2, 0.1):
+                return top, button
+        time.sleep(0.3)
+    return None

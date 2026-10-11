@@ -196,6 +196,12 @@ sealed class SettingsWindow : Window
             card.Children.Add(Ui.Wrap(
                 "Up to " + Money.Show(Money.Parse(site.Budget, 0)) + " per session · paid fallback: " + (site.PaidAllowed ? "allowed without asking" : "asks first")
                 + (sessions > 0 ? " · " + sessions.ToString(CultureInfo.InvariantCulture) + " open session" + (sessions == 1 ? "" : "s") : ""), "muted"));
+            if (_w.Direct.IsConnected(site.Origin) || _w.Pairings.Get(site.Origin) is not null)
+            {
+                card.Children.Add(Ui.Wrap((_w.Direct.IsConnected(site.Origin) ? "Connected without the extension (the wallet's own connection to the site)" : "Not connected now")
+                    + (_w.Pairings.Get(site.Origin) is not null ? " · paired: the wallet reconnects on its own while “decide on my own” is on" : ""), "muted"));
+            }
+
             var auto = new CheckBox { Content = "Next time, decide on my own within these limits", IsChecked = site.AutoDecide };
             AutomationProperties.SetAutomationId(auto, "SiteAuto-" + host);
             auto.IsCheckedChanged += (_, _) => _w.Engine.SetAutoDecide(site.Origin, auto.IsChecked == true);
@@ -599,9 +605,17 @@ sealed class SettingsWindow : Window
         {
             "call" => Vocabulary.SkillName(e.Skill ?? "") + (e.ClipSeconds is { } s ? " · " + s.ToString("0.0", CultureInfo.InvariantCulture) + " s" : "") + (e.Language is { } l ? " · " + l : ""),
             "release" => "Released the grant",
+            "link" => e.Outcome switch
+            {
+                "connected" => "Connected to the site",
+                "closed" => "Connection to the site closed",
+                "error" => "The site refused the connection",
+                _ => "Link from a page",
+            },
             _ => "Request to use your AI",
         };
         var detail = new List<string>();
+        if (e.Via == "link") detail.Add("via link");
         if (e.Source is not null) detail.Add(e.Source);
         if (e.Fallback is not null) detail.Add("route: " + e.Fallback);
         if (e.Milliseconds is { } ms) detail.Add(ms.ToString(CultureInfo.InvariantCulture) + " ms");
@@ -617,7 +631,10 @@ sealed class SettingsWindow : Window
             "refused" => ("Not paid", "outline"),
             "blocked" => ("Blocked", "ink"),
             "revoked" => ("Revoked", "outline"),
-            _ => (e.Outcome == "failed" ? "No answer" : "Invalid", "ink"),
+            "connected" => ("Connected", ""),
+            "ignored" => ("Ignored", "outline"),
+            "error" => ("Refused", "ink"),
+            _ => (e.Outcome == "failed" ? (e.Kind == "link" ? "Failed" : "No answer") : "Invalid", "ink"),
         };
         var time = Ui.Text(e.At.ToLocalTime().ToString("HH:mm:ss", CultureInfo.InvariantCulture), "muted");
         time.Width = 64;

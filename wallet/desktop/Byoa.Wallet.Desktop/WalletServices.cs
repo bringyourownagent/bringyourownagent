@@ -1,5 +1,6 @@
 using System.Runtime.Versioning;
 using Byoa.Wallet.Activity;
+using Byoa.Wallet.Direct;
 using Byoa.Wallet.Engine;
 using Byoa.Wallet.Protocol;
 using Byoa.Wallet.Providers;
@@ -24,8 +25,23 @@ sealed class WalletServices : IDisposable
         Sources = new SourceSet(Store, Secrets, Http);
         Ui = new DesktopUi(this);
         Engine = new WalletEngine(Store, Sources.All, Activity, Ui);
-        Pipe = new PipeServer(Engine);
+        Pairings = new PairingStore(Path.Combine(home, "pairings.dat"));
+        Direct = new DirectTransport(Engine, Pairings, new DirectOptions { DevLocal = DirectLink.DevLocalFromEnvironment });
+        Pipe = new PipeServer(Engine, OpenLink);
     }
+
+    /// <summary>Acts on a bringyourownagent:// link (from the command line or handed over by a second instance).</summary>
+    public void OpenLink(string? url) => _ = Task.Run(async () =>
+    {
+        try
+        {
+            await Direct.HandleLinkAsync(url).ConfigureAwait(false);
+        }
+        catch (Exception e) when (e is not OutOfMemoryException)
+        {
+            Engine.Record(new ActivityEntry { Kind = "link", Via = WalletEngine.ViaLink, Outcome = "failed", Note = e.GetType().Name });
+        }
+    });
 
     public SettingsStore Store { get; }
     public SecretStore Secrets { get; }
@@ -34,10 +50,13 @@ sealed class WalletServices : IDisposable
     public SourceSet Sources { get; }
     public DesktopUi Ui { get; }
     public WalletEngine Engine { get; }
+    public PairingStore Pairings { get; }
+    public DirectTransport Direct { get; }
     public PipeServer Pipe { get; }
 
     public void Dispose()
     {
+        Direct.Dispose();
         Pipe.Dispose();
         Sources.Dispose();
         Http.Dispose();

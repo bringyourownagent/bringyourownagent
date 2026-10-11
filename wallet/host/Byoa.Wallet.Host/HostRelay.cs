@@ -44,6 +44,13 @@ public sealed class HostRelay
             var frame = await Framing.ReadAsync(_browserIn, Framing.MaxIncoming, ct).ConfigureAwait(false);
             if (frame is null) break;
             if (!Wire.TryPeek(frame, out var id, out var type)) continue;
+            if (!Wire.FromBrowser(type))
+            {
+                // Only the extension's message types go to the wallet (a "link" comes only from the wallet's own exe).
+                await AnswerAsync(id, Wire.Fallback(type), ct).ConfigureAwait(false);
+                continue;
+            }
+
             tasks.RemoveAll(t => t.IsCompleted);
             tasks.Add(ForwardAsync(frame, id, type, ct));
         }

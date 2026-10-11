@@ -1,6 +1,8 @@
 using System.IO.Pipes;
 using System.Text;
+using System.Text.Json.Nodes;
 using Avalonia;
+using Byoa.Wallet.Direct;
 using Byoa.Wallet.Protocol;
 using Byoa.Wallet.Secrets;
 
@@ -8,12 +10,17 @@ namespace Byoa.Wallet.Desktop;
 
 static class Program
 {
-    /// <summary>Started by the native host (<c>--background</c>): no window, only the tray icon.</summary>
+    /// <summary>Started by the native host (<c>--background</c>) or by a link: no window, only the tray icon.</summary>
     public static bool Background { get; private set; }
+
+    /// <summary>The <c>bringyourownagent://</c> link this process was started with (<c>--url</c>), if any.</summary>
+    public static string? LinkArgument { get; private set; }
 
     /// <summary>
     /// <c>Byoa.Wallet.exe</c> opens the wallet (or brings the running one forward);
     /// <c>--background</c> starts it in the tray only;
+    /// <c>--url &lt;link&gt;</c> acts on a bringyourownagent:// link (registered by install.ps1); when a wallet is
+    /// already running, the link is handed to it over the pipe and this process exits;
     /// <c>--import-key openrouter &lt;file&gt;</c> stores a key from a text file in the DPAPI store and exits.
     /// </summary>
     [STAThread]
@@ -33,11 +40,14 @@ static class Program
             e.SetObserved();
         };
 
+        var url = Array.IndexOf(args, "--url");
+        if (url >= 0) LinkArgument = url + 1 < args.Length ? args[url + 1] : "";
         using var instance = new Mutex(true, WalletPaths.MutexName(), out var first);
-        Background = args.Contains("--background");
+        Background = args.Contains("--background") || LinkArgument is not null;
         if (!first)
         {
-            if (!Background) AskRunningWalletToOpen();
+            if (LinkArgument is not null) HandOffLink(LinkArgument);
+            else if (!Background) AskRunningWalletToOpen();
             return 0;
         }
 
@@ -59,6 +69,32 @@ static class Program
         catch (Exception e) when (e is IOException or TimeoutException or UnauthorizedAccessException)
         {
             // the other instance is still starting
+        }
+    }
+
+    /// <summary>Hands a link to the running wallet over its pipe (it may still be starting: a few tries for 10 s).</summary>
+    static void HandOffLink(string link)
+    {
+        if (link.Length > DirectLink.MaxLength) link = link[..(DirectLink.MaxLength + 1)];   // the wallet refuses it as too long
+        var frame = Encoding.UTF8.GetBytes(new JsonObject
+        {
+            ["id"] = 1, ["type"] = Wire.Link, ["origin"] = "", ["userActivation"] = false, ["payload"] = new JsonObject { ["url"] = link },
+        }.ToJsonString());
+        var until = DateTime.UtcNow.AddSeconds(10);
+        while (DateTime.UtcNow < until)
+        {
+            try
+            {
+                using var pipe = new NamedPipeClientStream(".", WalletPaths.PipeName(), PipeDirection.InOut, PipeOptions.CurrentUserOnly);
+                pipe.Connect(2000);
+                Framing.WriteAsync(pipe, frame).GetAwaiter().GetResult();
+                Framing.ReadAsync(pipe).GetAwaiter().GetResult();
+                return;
+            }
+            catch (Exception e) when (e is IOException or TimeoutException or UnauthorizedAccessException)
+            {
+                Thread.Sleep(300);
+            }
         }
     }
 

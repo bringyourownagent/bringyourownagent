@@ -73,31 +73,62 @@ public sealed class WalletEngine
     DateTimeOffset Now => _time.GetUtcNow();
 
     /// <summary>Answers one message from the extension. Never throws for bad input: it answers the fallback.</summary>
-    public async Task<JsonNode?> HandleAsync(WireMessage message, CancellationToken ct = default)
+    public Task<JsonNode?> HandleAsync(WireMessage message, CancellationToken ct = default) =>
+        GuardedAsync(message.Type, message.Origin, null, async () => message.Type switch
+        {
+            Wire.Request => await RequestAsync(message.Origin, message.UserActivation, message.Payload, ct, null).ConfigureAwait(false),
+            Wire.Call => await CallAsync(message.Origin, message.Payload, ct, null).ConfigureAwait(false),
+            Wire.Release => Release(message.Origin, message.Payload),
+            Wire.Status => Status(),
+            Wire.Open => OpenWindow(),
+            _ => null,
+        });
+
+    /// <summary>The value of <see cref="ActivityEntry.Via"/> for the direct transport.</summary>
+    public const string ViaLink = "link";
+
+    /// <summary>
+    /// The direct transport (a <c>bringyourownagent://</c> link): a request for a site whose manifest the wallet
+    /// fetched itself. The same rules as a page's request (blocked, decide on my own, the notice and the consent,
+    /// the difference, models ready before the answer); the answer is a grant or null.
+    /// </summary>
+    public Task<JsonNode?> RequestViaLinkAsync(string origin, JsonObject manifest, bool userActivation, CancellationToken ct = default) =>
+        GuardedAsync(Wire.Request, origin, ViaLink, () => RequestAsync(origin, userActivation, new JsonObject { ["manifest"] = manifest.DeepClone() }, ct, ViaLink));
+
+    /// <summary>A call that came over the wallet's own connection to the site: exactly the gate, limits and routing of a page's call.</summary>
+    public Task<JsonNode?> CallViaLinkAsync(string origin, JsonObject payload, CancellationToken ct = default) =>
+        GuardedAsync(Wire.Call, origin, ViaLink, () => CallAsync(origin, payload, ct, ViaLink));
+
+    async Task<JsonNode?> GuardedAsync(string type, string origin, string? via, Func<Task<JsonNode?>> work)
     {
         try
         {
-            return message.Type switch
-            {
-                Wire.Request => await RequestAsync(message.Origin, message.UserActivation, message.Payload, ct).ConfigureAwait(false),
-                Wire.Call => await CallAsync(message.Origin, message.Payload, ct).ConfigureAwait(false),
-                Wire.Release => Release(message.Origin, message.Payload),
-                Wire.Status => Status(),
-                Wire.Open => OpenWindow(),
-                _ => null,
-            };
+            return await work().ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
-            return Wire.Fallback(message.Type);
+            return Wire.Fallback(type);
         }
         catch (Exception e)
         {
             // Whatever went wrong, the page hears the same "unavailable" as for any other no.
-            Log(new ActivityEntry { Origin = message.Origin, Kind = message.Type, Outcome = "invalid", Note = e.GetType().Name });
-            return Wire.Fallback(message.Type);
+            Log(new ActivityEntry { Origin = origin, Kind = type, Via = via, Outcome = "invalid", Note = e.GetType().Name });
+            return Wire.Fallback(type);
         }
     }
+
+    /// <summary>A live grant by its id, or null.</summary>
+    public GrantSession? FindGrant(string grantId) =>
+        _sessions.TryGetValue(grantId, out var s) && s.ExpiresAt > Now ? s : null;
+
+    /// <summary>A copy of what the wallet knows about a site, or null.</summary>
+    public SiteRecord? FindSite(string origin) => _store.Read(s => s.Site(origin) is { } r ? Copy(r) : null);
+
+    /// <summary>Adds an entry to the activity log (the direct transport's own events).</summary>
+    public void Record(ActivityEntry entry) => Log(entry);
+
+    /// <summary>Raised with the origin when the visitor revokes or blocks a site: its connections close.</summary>
+    public event Action<string>? SiteClosed;
 
     JsonNode Status() => new JsonObject
     {
@@ -120,9 +151,9 @@ public sealed class WalletEngine
     // ------------------------------------------------------------------------------------------------
     // request
 
-    async Task<JsonNode?> RequestAsync(string origin, bool userActivation, JsonObject payload, CancellationToken ct)
+    async Task<JsonNode?> RequestAsync(string origin, bool userActivation, JsonObject payload, CancellationToken ct, string? via)
     {
-        var entry = new ActivityEntry { Origin = origin, Kind = Wire.Request, Note = userActivation ? "after a click" : "without a click" };
+        var entry = new ActivityEntry { Origin = origin, Kind = Wire.Request, Via = via, Note = userActivation ? "after a click" : "without a click" };
         if (!Origins.TryParse(origin, out var host, out var secure)) return Done(entry, "invalid", "origin not allowed");
         if (payload["manifest"] is not JsonObject manifestNode) return Done(entry, "invalid", "no manifest");
         var manifestText = manifestNode.ToJsonString();
@@ -162,12 +193,14 @@ public sealed class WalletEngine
         SharedAsk ask;
         lock (_askGate)
         {
-            if (!_asking.TryGetValue(origin, out ask!))
+            // An answered question stays in the table until its continuation removes it: a request in that moment
+            // asks anew instead of taking the old answer.
+            if (!_asking.TryGetValue(origin, out ask!) || ask.Answer.IsCompleted)
             {
                 ask = new SharedAsk();
                 _asking[origin] = ask;
                 var shared = ask;
-                ask.Answer = AskVisitorAsync(origin, host, secure, manifest, ask.Cancel.Token);
+                ask.Answer = AskVisitorAsync(origin, host, secure, manifest, via, ask.Cancel.Token);
                 ask.Answer.ContinueWith(_ =>
                 {
                     lock (_askGate)
@@ -210,10 +243,10 @@ public sealed class WalletEngine
         }
     }
 
-    async Task<JsonNode?> AskVisitorAsync(string origin, string host, bool secure, RequestedManifest manifest, CancellationToken ct)
+    async Task<JsonNode?> AskVisitorAsync(string origin, string host, bool secure, RequestedManifest manifest, string? via, CancellationToken ct)
     {
         await Task.Yield();
-        var entry = new ActivityEntry { Origin = origin, Kind = Wire.Request, Note = "after a click" };
+        var entry = new ActivityEntry { Origin = origin, Kind = Wire.Request, Via = via, Note = "after a click" };
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeout.CancelAfter(RequestTimeout);
         try
@@ -474,12 +507,12 @@ public sealed class WalletEngine
     // ------------------------------------------------------------------------------------------------
     // call
 
-    async Task<JsonNode?> CallAsync(string origin, JsonObject payload, CancellationToken ct)
+    async Task<JsonNode?> CallAsync(string origin, JsonObject payload, CancellationToken ct, string? via)
     {
         var started = Stopwatch.GetTimestamp();
         var grantId = Str(payload["grantId"]);
         var skill = Str(payload["skill"]);
-        var entry = new ActivityEntry { Origin = origin, Kind = Wire.Call, Skill = skill };
+        var entry = new ActivityEntry { Origin = origin, Kind = Wire.Call, Via = via, Skill = skill };
 
         if (grantId is null || !_sessions.TryGetValue(grantId, out var session) || session.Origin != origin)
         {
@@ -852,6 +885,7 @@ public sealed class WalletEngine
         });
         Log(new ActivityEntry { Origin = origin, Kind = Wire.Request, Outcome = "revoked", Note = "revoked in the settings" });
         SitesChanged?.Invoke();
+        SiteClosed?.Invoke(origin);
     }
 
     /// <summary>Blocks a site (no notice ever, null for every request) or unblocks it (it starts again from "not allowed yet").</summary>
@@ -867,6 +901,7 @@ public sealed class WalletEngine
             r.PaidAllowed = false;
         });
         SitesChanged?.Invoke();
+        if (blocked) SiteClosed?.Invoke(origin);
     }
 
     public void SetAutoDecide(string origin, bool auto)

@@ -1,0 +1,265 @@
+"""End to end for the direct transport (no extension): bringyourownagent:// links opened the way Windows opens them
+(cmd /c start), the installed wallet, its real windows driven through UI Automation, real speech clips, and small fake
+sites (fake_site.py) on ws://localhost under the developer switch.
+
+    python direct_e2e.py --samples <dir from make_samples.py> --shots <screenshot dir> --work <empty work dir>
+                         [--app %LOCALAPPDATA%\\BYOA\\wallet-app] [--no-browser]
+
+Before: run install.ps1 (it registers the scheme). The test uses its own wallet data folder (BYOA_WALLET_HOME) and
+BYOA_WALLET_DEV_LOCAL=1, both inherited by the wallet that the link starts.
+
+Checks: the scheme is registered; a link starts the wallet; the manifest is fetched before the consent (no cookies,
+no code) and nothing connects before Allow; the notice and consent (real clicks); hello after Allow, with the models
+loaded first; calls with real Russian and Slovak speech over the connection; activity marked "via link"; a restart
+of the wallet reconnects with the stored pairing and no notice; decline gives no connection; block gives no
+connection and later links do nothing; a bad session gets an error and no retry; Revoke in the settings closes the
+connection; once, a real click in a headed Chromium (its own prompt, then the wallet, which gets the link from the
+second process over the pipe).
+Needs: aiohttp, uiautomation, pillow, patchright (for the browser step). Windows only.
+"""
+import argparse
+import glob
+import json
+import os
+import subprocess
+import sys
+import time
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+import walletui as ui  # noqa: E402
+from fake_site import FakeSite  # noqa: E402
+
+ap = argparse.ArgumentParser()
+ap.add_argument("--samples", required=True)
+ap.add_argument("--shots", required=True)
+ap.add_argument("--work", required=True)
+ap.add_argument("--app", default=os.path.join(os.environ["LOCALAPPDATA"], "BYOA", "wallet-app"))
+ap.add_argument("--no-browser", action="store_true")
+a = ap.parse_args()
+
+os.makedirs(a.shots, exist_ok=True)
+os.makedirs(a.work, exist_ok=True)
+HOME = os.path.join(a.work, "home")
+env = dict(os.environ, BYOA_WALLET_HOME=HOME, BYOA_WALLET_DEV_LOCAL="1")
+wallet_exe = os.path.join(a.app, "Byoa.Wallet.exe")
+results = {"checks": [], "calls": []}
+failed = []
+
+
+def check(label, ok, extra=""):
+    print(("ok   " if ok else "FAIL ") + label + (f"  [{extra}]" if extra else ""), flush=True)
+    results["checks"].append({"check": label, "ok": bool(ok), "extra": str(extra)})
+    if not ok:
+        failed.append(label)
+
+
+def wallet_pids():
+    out = subprocess.run(["powershell", "-NoProfile", "-Command",
+                          "Get-Process -Name Byoa.Wallet -ErrorAction SilentlyContinue | ForEach-Object { $_.Id }"],
+                         capture_output=True, text=True).stdout
+    return {int(x) for x in out.split()}
+
+
+def activity():
+    entries = []
+    for f in sorted(glob.glob(os.path.join(HOME, "activity-*.jsonl"))):
+        for line in open(f, encoding="utf-8"):
+            if line.strip():
+                entries.append(json.loads(line))
+    return entries
+
+
+def open_link(link):
+    """As Windows opens a link from any program: the shell runs the registered command (cmd's start)."""
+    subprocess.run('cmd /c start "" "' + link + '"', env=env)
+
+
+def wait(pred, seconds, step=0.1):
+    end = time.time() + seconds
+    while time.time() < end:
+        if pred():
+            return True
+        time.sleep(step)
+    return pred()
+
+
+def kill_mine():
+    for pid in sorted(wallet_pids() - before):
+        subprocess.run(["taskkill", "/PID", str(pid), "/F"], capture_output=True)
+        started_pids.add(pid)
+
+
+samples = json.load(open(os.path.join(a.samples, "samples.json"), encoding="utf-8"))
+words = {lang: [s for s in samples if s["lang"] == lang and s["kind"] == "word"] for lang in ("ru", "sk")}
+sentences = [s for s in samples if s["kind"] == "sentence"]
+before = wallet_pids()
+started_pids = set()
+main, dec, blk, web_site = (FakeSite(n).start() for n in ("main", "decline", "block", "browser"))
+
+# ---------------------------------------------------------------------------------------------- the registration
+reg = subprocess.run(["reg", "query", r"HKCU\Software\Classes\bringyourownagent\shell\open\command", "/ve"], capture_output=True, text=True).stdout
+proto = subprocess.run(["reg", "query", r"HKCU\Software\Classes\bringyourownagent", "/v", "URL Protocol"], capture_output=True, text=True).returncode == 0
+check("bringyourownagent:// is registered for this user: URL Protocol, Byoa.Wallet.exe --url \"%1\"", proto and "Byoa.Wallet.exe" in reg and '--url "%1"' in reg)
+check("no wallet with this data folder is running before the test", not os.path.exists(os.path.join(HOME, "settings.json")))
+
+# ---------------------------------------------------------------------------------------------- pair: link, notice, consent, hello
+t0 = time.time()
+open_link(main.new_link())
+notice = ui.find_window("Agent wallet notice", 40)
+check("a link starts the wallet, which shows the same notice", notice is not None, f"{time.time() - t0:.1f} s from the link")
+check("the manifest was fetched before the consent, with no cookie and no session code",
+      main.manifest_gets == 1 and not any("Cookie" in h for h in main.manifest_headers), f"{main.manifest_gets} GET")
+check("the wallet that the link started uses this test's data folder (it inherited the environment)",
+      wait(lambda: os.path.exists(os.path.join(HOME, "settings.json")), 5))
+time.sleep(0.8)
+ui.shot(notice, os.path.join(a.shots, "20-link-notice.png"))
+ui.click(notice, "NoticeShow")
+consent = ui.find_window("Agent wallet consent", 10)
+time.sleep(0.8)
+ui.shot(consent, os.path.join(a.shots, "21-link-consent.png"))
+check("nothing connects before Allow", main.upgrades == 0)
+ui.toggle(consent, "ConsentAuto", True)
+allowed_at = time.time()
+ui.click(consent, "ConsentAllow")
+prep = ui.find_window("Agent wallet preparing", 4)
+if prep is not None:
+    try:
+        ui.shot(prep, os.path.join(a.shots, "22-link-preparing.png"))
+    except Exception:  # it may have closed already
+        pass
+ok = main.wait_hello(45)
+hello_after = time.time() - allowed_at
+hello = main.hellos[-1] if main.hellos else {}
+check("after Allow the wallet connects and says hello with the session code",
+      ok and hello.get("session") and hello.get("pairing") is None and hello.get("grant", {}).get("skills") == ["audio.transcribe"]
+      and hello.get("wallet", {}).get("name") == "Agent wallet", f"{hello_after:.2f} s after Allow")
+allowed = [e for e in activity() if e.get("kind") == "request" and e.get("outcome") == "allowed"]
+check("... only once the models were loaded (\"Preparing your model\" meanwhile)",
+      allowed and allowed[-1].get("via") == "link" and "models ready after" in (allowed[-1].get("note") or ""), allowed[-1].get("note") if allowed else "")
+results["allow_to_hello_seconds"] = round(hello_after, 2)
+
+# ---------------------------------------------------------------------------------------------- calls with real speech
+for item in words["ru"][:4] + words["sk"][:4] + sentences[:2]:
+    wav = open(os.path.join(a.samples, item["file"]), "rb").read()
+    r = main.call(wav, item["lang"])
+    entry = [e for e in activity() if e.get("kind") == "call"][-1]
+    results["calls"].append({"lang": item["lang"], "kind": item["kind"], "expect": item["expect"], "ok": r.get("ok"),
+                             "text": (r.get("output") or {}).get("text"), "site_ms": r["ms"], "source": entry.get("source"),
+                             "source_ms": entry.get("milliseconds"), "via": entry.get("via"), "receipt": r.get("receipt")})
+ru = [c for c in results["calls"] if c["lang"] == "ru"]
+sk = [c for c in results["calls"] if c["lang"] == "sk"]
+check("Russian over the connection: answered by GigaAM", all(c["ok"] and (c["source"] or "").startswith("GigaAM") for c in ru),
+      "; ".join(f"{c['text']} ({c['site_ms']} ms)" for c in ru))
+check("Slovak over the connection: answered by Whisper", all(c["ok"] and (c["source"] or "").startswith("Whisper") for c in sk),
+      "; ".join(f"{c['text']} ({c['site_ms']} ms)" for c in sk))
+check("receipts say local, 0.000 USD", all(c["receipt"] == {"cost": "0.000 USD", "provider": "local"} for c in results["calls"]))
+check("the activity marks the request and the calls \"via link\"", all(c["via"] == "link" for c in results["calls"])
+      and any(e.get("kind") == "link" and e.get("outcome") == "connected" for e in activity()))
+
+# ---------------------------------------------------------------------------------------------- restart with the stored pairing
+pairings = os.path.join(HOME, "pairings.dat")
+token = hello and main.pairings and next(iter(main.pairings))
+check("the pairing is stored (\"decide on my own\" was ticked), encrypted", os.path.exists(pairings) and token
+      and token.encode() not in open(pairings, "rb").read())
+kill_mine()
+check("the wallet quit: the site sees the connection end", wait(lambda: main.live is None, 10))
+notices_before = ui.find_window("Agent wallet notice", 0.5)
+restart_at = time.time()
+subprocess.Popen([wallet_exe, "--background"], env=env)
+ok = wait(lambda: len(main.hellos) >= 2 and main.live is not None, 45)
+hello2 = main.hellos[-1]
+check("after a wallet restart it reconnects with the stored pairing: no link, no notice",
+      ok and hello2.get("session") is None and hello2.get("pairing") == token and ui.find_window("Agent wallet notice", 0.5) is None,
+      f"{time.time() - restart_at:.1f} s from the start of the wallet")
+r = main.call(open(os.path.join(a.samples, words["ru"][4]["file"]), "rb").read(), "ru")
+check("... and answers calls again", r.get("ok") is True, (r.get("output") or {}).get("text"))
+
+# ---------------------------------------------------------------------------------------------- decline (the link goes to the running wallet)
+open_link(dec.new_link())
+w = ui.find_window("Agent wallet notice", 20)
+check("a second link reaches the running wallet (handed over the pipe): its notice", w is not None)
+ui.invoke(w, "NoticeDecline")
+time.sleep(4)
+check("decline: the site never sees a connection", dec.upgrades == 0 and dec.manifest_gets == 1)
+
+# ---------------------------------------------------------------------------------------------- block
+open_link(blk.new_link())
+w = ui.find_window("Agent wallet notice", 20)
+ui.invoke(w, "NoticeBlock")
+time.sleep(2)
+gets = blk.manifest_gets
+open_link(blk.new_link())
+seen = ui.find_window("Agent wallet notice", 5) is not None
+time.sleep(1)
+check("block: no connection, and a later link does nothing (no notice, no request to the site)",
+      blk.upgrades == 0 and not seen and blk.manifest_gets == gets
+      and any(e.get("kind") == "link" and e.get("outcome") == "blocked" for e in activity()))
+
+# ---------------------------------------------------------------------------------------------- a bad session
+upgrades, errors = main.upgrades, main.errors_sent
+open_link(main.new_link(code="a-code-this-site-never-made-0123456789"))
+got_error = wait(lambda: main.errors_sent == errors + 1, 20)
+time.sleep(4)
+refused = [e for e in activity() if e.get("kind") == "link" and e.get("outcome") == "error"]
+check("a bad session: the site answers error, the wallet closes and does not try again",
+      got_error and main.upgrades == upgrades + 1 and refused and "bad-session" in refused[-1].get("note", ""), refused[-1].get("note") if refused else "")
+check("... and the paired connection is still there", main.live is not None)
+
+# ---------------------------------------------------------------------------------------------- the settings: connected, via link; Revoke
+subprocess.Popen([wallet_exe], env=env)                     # a second start opens the running wallet's window
+settings = ui.find_window("Agent wallet", 15)
+host = f"localhost:{main.port}"
+if settings is not None:
+    ui.select(settings, "Tab-sites")
+    time.sleep(1.2)
+    connected_text = settings.TextControl(SubName="Connected without the extension", searchDepth=40).Exists(2, 0.2)
+    ui.shot(settings, os.path.join(a.shots, "23-settings-sites-link.png"))
+    ui.select(settings, "Tab-activity")
+    time.sleep(1.2)
+    via_text = settings.TextControl(SubName="via link", searchDepth=40).Exists(2, 0.2)
+    ui.shot(settings, os.path.join(a.shots, "24-settings-activity-link.png"))
+    check("Sites says the site is connected without the extension; Activity says \"via link\"", connected_text and via_text)
+    ui.select(settings, "Tab-sites")
+    time.sleep(1)
+    byes = main.byes
+    ui.invoke(settings, "SiteRevoke-" + host)
+    check("Revoke closes the connection with bye", wait(lambda: main.byes == byes + 1 and main.live is None, 10))
+else:
+    check("the settings window opens", False)
+
+# ---------------------------------------------------------------------------------------------- once from a real click in Chromium
+if not a.no_browser:
+    from patchright.sync_api import sync_playwright
+
+    with sync_playwright() as p:
+        ctx = p.chromium.launch_persistent_context(os.path.join(a.work, "profile"), channel="chromium", headless=False, env=env,
+                                                   viewport={"width": 900, "height": 600})
+        page = ctx.new_page()
+        page.goto(web_site.origin + "/")
+        page.bring_to_front()
+        page.click("#go")                                    # a real click (input events): the browser allows the launch
+        prompt = ui.find_protocol_prompt(15)
+        check("Chromium asks before it opens the link (its own prompt)", prompt is not None, prompt[1].Name if prompt else "")
+        if prompt:
+            ui.shot(prompt[0], os.path.join(a.shots, "25-chromium-prompt.png"))
+            time.sleep(1.0)                                  # Chromium ignores a press right after its dialog appears
+            prompt[1].GetPattern(ui.auto.PatternId.InvokePattern).Invoke()
+            w = ui.find_window("Agent wallet notice", 20)
+            check("... then the wallet's notice (the link came over the pipe from the second process)", w is not None)
+            if w is not None:
+                ui.invoke(w, "NoticeShow")
+                c = ui.find_window("Agent wallet consent", 10)
+                ui.invoke(c, "ConsentAllow")
+                check("... Allow, and the site gets the wallet's hello", web_site.wait_hello(45))
+                r = web_site.call(open(os.path.join(a.samples, words["sk"][4]["file"]), "rb").read(), "sk")
+                check("... and a call works", r.get("ok") is True, (r.get("output") or {}).get("text"))
+        ctx.close()
+
+# ---------------------------------------------------------------------------------------------- end
+kill_mine()
+results["wallet_pids_started_by_test"] = sorted(started_pids)
+json.dump(results, open(os.path.join(a.work, "direct-results.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+print("wallet processes started by this test (stopped):", sorted(started_pids))
+print(f"{len(results['checks']) - len(failed)}/{len(results['checks'])} checks passed" + (": FAILED " + "; ".join(failed) if failed else ""))
+sys.exit(1 if failed else 0)

@@ -483,6 +483,8 @@ with sync_playwright() as p:
 # ---------------------------------------------------------------------------------------------- summary
 mine = wallet_pids() - before
 results["wallet_pids_started_by_test"] = sorted(mine)
+for pid in sorted(mine):                                   # only the wallet this test started, by its PID
+    subprocess.run(["taskkill", "/PID", str(pid), "/F"], capture_output=True)
 paid_cost = sum(e.get("cost", "0 USD").split()[0] != "0" and float(e["cost"].split()[0]) or 0 for e in activity() if e.get("kind") == "call")
 results["paid_cost_usd"] = paid_cost
 by_source = {}
@@ -493,6 +495,6 @@ results["latency_ms_by_source"] = {k: {"n": len(v), "median": sorted(v)[len(v) /
 json.dump(results, open(os.path.join(a.work, "e2e-results.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
 print("latency by source (ms, inside the wallet):", json.dumps(results["latency_ms_by_source"], ensure_ascii=False))
 print(f"paid: ${paid_cost:.6f}")
-print("wallet processes started by this test:", sorted(mine))
+print("wallet processes started by this test (stopped):", sorted(mine))
 print(f"{len(results['checks']) - len(failed)}/{len(results['checks'])} checks passed" + (": FAILED " + "; ".join(failed) if failed else ""))
 sys.exit(1 if failed else 0)

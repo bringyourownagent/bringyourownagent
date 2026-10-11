@@ -19,6 +19,8 @@ public partial class App : Application
             services.Ui.CreateTray(this, () => desktop.Shutdown());
             services.Pipe.Start();
             services.Engine.WarmAllowedSites();
+            services.Direct.ResumePairings();
+            if (Program.LinkArgument is not null) services.OpenLink(Program.LinkArgument);
             if (!Program.Background) services.Ui.OpenSettings("sites");
             desktop.Exit += (_, _) => services.Dispose();
         }

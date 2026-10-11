@@ -12,14 +12,18 @@ public sealed class ActivityEntry
     public DateTimeOffset At { get; set; }
     public string Origin { get; set; } = "";
 
-    /// <summary>"request", "call" or "release".</summary>
+    /// <summary>"request", "call", "release", or "link" (the direct transport: a link, its connection).</summary>
     public string Kind { get; set; } = "";
+
+    /// <summary>"link" when it came through a bringyourownagent:// link and the wallet's own connection to the site; null for the extension.</summary>
+    public string? Via { get; set; }
 
     public string? Skill { get; set; }
 
     /// <summary>
     /// For requests: allowed, auto, declined, blocked, held (no click), invalid, closed (no answer in time).
     /// For calls: ok, failed, limit, refused (a paid fallback the visitor declined), invalid.
+    /// For links: invalid, blocked, ignored, failed, connected, closed, error.
     /// </summary>
     public string Outcome { get; set; } = "";
 
