@@ -11,6 +11,18 @@ Version 0.1 is in progress. Planned contents:
 7. Transport bindings: browser (v0.1), desktop apps, agent to agent.
 8. Security considerations.
 
+## Planned for later drafts
+
+This list is approximate: items may be merged, split, reordered or dropped, and none of them is implemented in the draft libraries yet.
+
+- Grants bound to the requesting origin, the session and the digest of the manifest they were given for.
+- Replay protection and revocation.
+- "Must-understand" limits: limits that a wallet has to refuse to run without, rather than ignore when it does not know them.
+- Budget reservations, settlement and receipts, with estimated and actual cost shown separately.
+- Capability negotiation and structured errors.
+- A browser binding with a no-wallet fallback, and browser built-in AI as one more provider.
+- A permission-difference screen (what changed since the last grant) and a cost-and-data preview in wallets.
+
 The concept is described in [../docs/vision.md](../docs/vision.md).
 
 A first draft of the machine-checkable rules (manifest checks and the call gate) is in [rules-0.1-draft.md](rules-0.1-draft.md). It is implemented by the early draft libraries in [../sdk/](../sdk/).
