@@ -1,0 +1,370 @@
+using System.Text.Json.Nodes;
+using Byoa.Wallet.Activity;
+using Byoa.Wallet.Engine;
+using Byoa.Wallet.Protocol;
+using Byoa.Wallet.Settings;
+using Byoa.Wallet.Sources;
+
+namespace Byoa.Wallet.Tests;
+
+/// <summary>The wallet's decisions, end to end inside the engine: the click rule, decline/block/auto, the
+/// difference, origin binding, the gate (spec/rules-0.1-draft.md through the BringYourOwnAgent library), the
+/// per-day limits, routing with fallbacks and the paid question.</summary>
+public class EngineTests
+{
+    const string Site = "https://geo.example.org";
+    const string Other = "https://other.example.org";
+
+    readonly ManualTime _time = new();
+    readonly ScriptedUi _ui = new();
+    readonly FakeSource _giga = new("gigaam-v3", languages: ["ru"]) { Answer = "francia-giga" };
+    readonly FakeSource _whisper = new("whisper") { Answer = "francia-whisper" };
+    readonly FakeSource _paid = new("openrouter-scribe", Runs.ApiKey, pricePerSecond: 0.00004m) { Answer = "francia-paid" };
+    readonly SettingsStore _store = new(null);
+    readonly ActivityLog _log;
+    readonly WalletEngine _engine;
+
+    public EngineTests()
+    {
+        _log = new ActivityLog(null, _time.Now);
+        _engine = new WalletEngine(_store, [_giga, _whisper, _paid], _log, _ui, _time);
+    }
+
+    async Task<string> GrantAsync(string origin = Site, string manifest = Clips.GeoManifest)
+    {
+        var result = await _engine.HandleAsync(Clips.Request(origin, click: true, manifest));
+        return Assert.IsType<JsonObject>(result)["grantId"]!.GetValue<string>();
+    }
+
+    static bool Ok(JsonNode? result) => result is JsonObject o && o["ok"]?.GetValue<bool>() == true;
+
+    static string Manifest(string limits = "\"maxClipSeconds\": 15, \"maxCallsPerMinute\": 40", string cost = "0.05 USD", string extraSkill = "") =>
+        "{\"byoa\":\"0.1-draft\",\"purpose\":{\"summary\":\"Family geography game\",\"limits\":{" + limits + "}},"
+        + "\"skills\":{\"audio.transcribe\":{\"languages\":[\"ru\",\"sk\"],\"required\":true}" + extraSkill + "},"
+        + "\"privacy\":\"personal-voice\",\"expectedCost\":{\"perSession\":\"" + cost + "\"}}";
+
+    // ------------------------------------------------------------------ requests
+
+    [Fact]
+    public async Task AllowGivesAGrantInTheContractShape()
+    {
+        var result = Assert.IsType<JsonObject>(await _engine.HandleAsync(Clips.Request(Site, click: true)));
+        Assert.Equal(["grantId", "skills", "expiresAt"], result.Select(p => p.Key));
+        Assert.Equal("[\"audio.transcribe\"]", result["skills"]!.ToJsonString());
+        Assert.Equal(1, _ui.Notices);
+        var consent = Assert.Single(_ui.Consents);
+        Assert.Equal("geo.example.org", consent.Host);
+        Assert.True(consent.Secure);
+        Assert.Equal(0.05m, consent.Budget);                       // the site's expected cost is proposed
+        var row = Assert.Single(consent.Rows);
+        Assert.Equal(["ru", "sk"], row.Routes.Select(r => r.Language));
+        Assert.Equal(["Fake gigaam-v3", "Fake whisper"], row.Routes.Select(r => r.SourceName));
+        Assert.Contains("Manager suggests", row.Why);
+        Assert.Equal(SiteStatus.Allowed, _store.Read(s => s.Site(Site)!.Status));
+    }
+
+    [Fact]
+    public async Task NoClickGivesNullAQuietBadgeAndNoNotice()
+    {
+        Assert.Null(await _engine.HandleAsync(Clips.Request(Site, click: false)));
+        Assert.Equal(0, _ui.Notices);
+        Assert.Equal(1, _ui.Quiet);
+        Assert.Equal(1, _engine.UnseenQuiet);
+        Assert.Equal(1, _store.Read(s => s.Site(Site)!.QuietRequests));
+        Assert.Equal("held", _log.Recent()[0].Outcome);
+        _engine.ClearBadge();
+        Assert.Equal(0, _engine.UnseenQuiet);
+    }
+
+    [Fact]
+    public async Task DeclineAndBlockAreTheSameNullForThePage()
+    {
+        _ui.Notice = NoticeAnswer.Decline;
+        Assert.Null(await _engine.HandleAsync(Clips.Request(Site, click: true)));
+        Assert.Equal(SiteStatus.Declined, _store.Read(s => s.Site(Site)!.Status));
+
+        _ui.Notice = NoticeAnswer.Show;
+        _ui.Consent = ConsentAnswer.Declined;
+        Assert.Null(await _engine.HandleAsync(Clips.Request(Site, click: true)));
+
+        _ui.Notice = NoticeAnswer.Block;
+        Assert.Null(await _engine.HandleAsync(Clips.Request(Site, click: true)));
+        Assert.Equal(SiteStatus.Blocked, _store.Read(s => s.Site(Site)!.Status));
+
+        // Blocked: no notice any more, with or without a click.
+        var notices = _ui.Notices;
+        Assert.Null(await _engine.HandleAsync(Clips.Request(Site, click: true)));
+        Assert.Null(await _engine.HandleAsync(Clips.Request(Site, click: false)));
+        Assert.Equal(notices, _ui.Notices);
+        Assert.Equal(0, _ui.Quiet);
+    }
+
+    [Fact]
+    public async Task DecideOnMyOwnGrantsSilentlyEvenWithoutAClick()
+    {
+        _ui.Consent = new ConsentAnswer(true, 0.05m, AutoDecide: true, []);
+        var first = await GrantAsync();
+        var notices = _ui.Notices;
+        var again = Assert.IsType<JsonObject>(await _engine.HandleAsync(Clips.Request(Site, click: false)));
+        Assert.NotEqual(first, again["grantId"]!.GetValue<string>());
+        Assert.Equal(notices, _ui.Notices);
+        Assert.Equal("auto", _log.Recent()[0].Outcome);
+    }
+
+    [Fact]
+    public async Task WithoutDecideOnMyOwnANewVisitAsksAgainAfterAClick()
+    {
+        await GrantAsync();
+        Assert.Null(await _engine.HandleAsync(Clips.Request(Site, click: false)));
+        await GrantAsync();
+        Assert.Equal(2, _ui.Notices);
+    }
+
+    [Fact]
+    public async Task AskingForMoreShowsOnlyTheDifference()
+    {
+        _ui.Consent = new ConsentAnswer(true, 0.05m, AutoDecide: true, []);
+        await GrantAsync();
+        _ui.Consent = null;
+        // A higher expected cost is more than the grant covers: a notice even though "decide on my own" is on.
+        var grant = await _engine.HandleAsync(Clips.Request(Site, click: true, Manifest(cost: "0.10 USD")));
+        Assert.NotNull(grant);
+        var diff = _ui.Consents[^1];
+        Assert.True(diff.IsDifference);
+        Assert.Empty(diff.Rows);
+        Assert.Equal(0.05m, diff.BudgetBefore);
+        Assert.Equal(0.10m, diff.Budget);
+        Assert.Equal("0.1 USD", _store.Read(s => s.Site(Site)!.Budget));
+        // A skill the wallet cannot serve is not "more": it does not keep asking.
+        await _engine.HandleAsync(Clips.Request(Site, click: true, Manifest(cost: "0.10 USD", extraSkill: ",\"text.understand\":{\"required\":false}")));
+        Assert.False(_ui.Consents[^1].IsDifference);
+    }
+
+    [Fact]
+    public async Task ARequiredSkillNoSourceCanServeCannotBeAllowed()
+    {
+        var result = await _engine.HandleAsync(Clips.Request(Site, click: true, Manifest(extraSkill: ",\"text.generate\":{\"required\":true}")));
+        Assert.Null(result);
+        var consent = _ui.Consents[^1];
+        Assert.True(consent.MissingRequired);
+        Assert.False(consent.Rows.Single(r => r.Skill == "text.generate").CanServe);
+    }
+
+    [Theory]
+    [InlineData("http://geo.example.org")]
+    [InlineData("https://geo.example.org/path")]
+    [InlineData("chrome-extension://abc")]
+    [InlineData("")]
+    public async Task OnlyHttpsAndLocalhostOriginsAreServed(string origin)
+    {
+        Assert.Null(await _engine.HandleAsync(Clips.Request(origin, click: true)));
+        Assert.Equal(0, _ui.Notices);
+    }
+
+    [Fact]
+    public async Task AnInvalidManifestIsNull()
+    {
+        Assert.Null(await _engine.HandleAsync(Clips.Request(Site, click: true, "{\"byoa\":\"0.1-draft\"}")));
+        Assert.Equal(0, _ui.Notices);
+        Assert.StartsWith("manifest:", _log.Recent()[0].Note);
+    }
+
+    // ------------------------------------------------------------------ calls
+
+    [Fact]
+    public async Task RussianIsAnsweredByGigaAmSlovakByWhisper()
+    {
+        var grant = await GrantAsync();
+        var ru = Assert.IsType<JsonObject>(await _engine.HandleAsync(Clips.Call(Site, grant, language: "ru")));
+        Assert.Equal("{\"ok\":true,\"output\":{\"text\":\"francia-giga\"},\"receipt\":{\"cost\":\"0.000 USD\",\"provider\":\"local\"}}", ru.ToJsonString());
+        var sk = await _engine.HandleAsync(Clips.Call(Site, grant, language: "sk-SK"));
+        Assert.Equal("francia-whisper", sk!["output"]!["text"]!.GetValue<string>());
+        Assert.Equal("sk", _whisper.LastLanguage);
+        var entry = _log.Recent()[0];
+        Assert.Equal("call", entry.Kind);
+        Assert.Equal("ok", entry.Outcome);
+        Assert.Equal(2.0, entry.ClipSeconds);
+        Assert.Null(entry.Fallback);
+    }
+
+    [Fact]
+    public async Task AGrantIsBoundToItsOrigin()
+    {
+        var grant = await GrantAsync();
+        Assert.False(Ok(await _engine.HandleAsync(Clips.Call(Other, grant))));
+        Assert.False(Ok(await _engine.HandleAsync(Clips.Call(Site, "made-up-grant"))));
+        Assert.True(Ok(await _engine.HandleAsync(Clips.Call(Site, grant))));
+    }
+
+    [Fact]
+    public async Task TheClipLengthIsMeasuredAndLimitedByTheGate()
+    {
+        var grant = await GrantAsync();
+        Assert.True(Ok(await _engine.HandleAsync(Clips.Call(Site, grant, seconds: 15))));
+        Assert.False(Ok(await _engine.HandleAsync(Clips.Call(Site, grant, seconds: 15.5))));
+        Assert.Equal("clip-too-long", _log.Recent()[0].Note);
+        Assert.Equal(1, _giga.Calls);                             // the source never ran for the long clip
+    }
+
+    [Fact]
+    public async Task TheRateLimitOfTheManifestIsEnforced()
+    {
+        var grant = await GrantAsync(manifest: Manifest(limits: "\"maxCallsPerMinute\": 2"));
+        Assert.True(Ok(await _engine.HandleAsync(Clips.Call(Site, grant))));
+        Assert.True(Ok(await _engine.HandleAsync(Clips.Call(Site, grant))));
+        Assert.False(Ok(await _engine.HandleAsync(Clips.Call(Site, grant))));
+        Assert.Equal("rate-exceeded", _log.Recent()[0].Note);
+        _time.Now += TimeSpan.FromSeconds(61);
+        Assert.True(Ok(await _engine.HandleAsync(Clips.Call(Site, grant))));
+    }
+
+    [Fact]
+    public async Task AnExpiredGrantIsRefusedByTheGate()
+    {
+        var grant = await GrantAsync();
+        _time.Now += GrantSession.Lifetime + TimeSpan.FromSeconds(1);
+        Assert.False(Ok(await _engine.HandleAsync(Clips.Call(Site, grant))));
+        Assert.Equal("grant-expired", _log.Recent()[0].Note);
+    }
+
+    [Fact]
+    public async Task ASkillOutsideTheGrantIsRefused()
+    {
+        var grant = await GrantAsync();
+        var call = Clips.Call(Site, grant);
+        call.Payload["skill"] = "text.generate";
+        Assert.False(Ok(await _engine.HandleAsync(call)));
+    }
+
+    [Fact]
+    public async Task BadAudioIsRefused()
+    {
+        var grant = await GrantAsync();
+        var call = Clips.Call(Site, grant);
+        call.Payload["input"]!["audio"]!["base64"] = Convert.ToBase64String("not a wav"u8.ToArray());
+        Assert.False(Ok(await _engine.HandleAsync(call)));
+        call.Payload["input"]!["audio"]!["mime"] = "audio/mpeg";
+        Assert.False(Ok(await _engine.HandleAsync(call)));
+        call.Payload.Remove("input");
+        Assert.False(Ok(await _engine.HandleAsync(call)));
+        Assert.Equal(0, _giga.Calls);
+    }
+
+    [Fact]
+    public async Task TheDailyCallLimitOfASiteIsEnforced()
+    {
+        _store.Update(s => s.Limits.SiteCallsPerDay = 2);
+        var grant = await GrantAsync();
+        Assert.True(Ok(await _engine.HandleAsync(Clips.Call(Site, grant))));
+        Assert.True(Ok(await _engine.HandleAsync(Clips.Call(Site, grant))));
+        Assert.False(Ok(await _engine.HandleAsync(Clips.Call(Site, grant))));
+        Assert.Equal("limit", _log.Recent()[0].Outcome);
+        Assert.Single(_ui.Infos);
+    }
+
+    [Fact]
+    public async Task AFailingSourceFallsBackToTheNextAndTheRouteIsLogged()
+    {
+        _giga.Fail = true;
+        var grant = await GrantAsync();
+        var result = await _engine.HandleAsync(Clips.Call(Site, grant));
+        Assert.Equal("francia-whisper", result!["output"]!["text"]!.GetValue<string>());
+        Assert.Equal("Fake gigaam-v3: fake failure → Fake whisper", _log.Recent()[0].Fallback);
+    }
+
+    [Fact]
+    public async Task ATurnedOffSourceFallsBackToTheNext()
+    {
+        _store.Update(s => s.Source("gigaam-v3").Enabled = false);
+        var grant = await GrantAsync();
+        var result = await _engine.HandleAsync(Clips.Call(Site, grant));
+        Assert.Equal("francia-whisper", result!["output"]!["text"]!.GetValue<string>());
+        Assert.Equal("Fake gigaam-v3: turned off → Fake whisper", _log.Recent()[0].Fallback);
+    }
+
+    [Fact]
+    public async Task APaidFallbackAsksFirstAndNoMeansOkFalse()
+    {
+        _giga.Fail = true;
+        _whisper.Fail = true;
+        var grant = await GrantAsync();
+        _ui.Paid = PaidAnswer.No;
+        Assert.False(Ok(await _engine.HandleAsync(Clips.Call(Site, grant))));
+        Assert.Equal(1, _ui.PaidQuestions);
+        Assert.Equal(0, _paid.Calls);
+        Assert.Equal("refused", _log.Recent()[0].Outcome);
+
+        _ui.Paid = PaidAnswer.Once;
+        var result = Assert.IsType<JsonObject>(await _engine.HandleAsync(Clips.Call(Site, grant)));
+        Assert.Equal("api-key", result["receipt"]!["provider"]!.GetValue<string>());
+        Assert.Equal("0.00008 USD", _log.Recent()[0].Cost);
+        Assert.Equal("0.00008 USD", result["receipt"]!["cost"]!.GetValue<string>());
+        Assert.Equal(2, _ui.PaidQuestions);
+
+        _ui.Paid = PaidAnswer.Always;
+        Assert.True(Ok(await _engine.HandleAsync(Clips.Call(Site, grant))));
+        Assert.True(Ok(await _engine.HandleAsync(Clips.Call(Site, grant))));
+        Assert.Equal(3, _ui.PaidQuestions);                       // "always for this site" asks no more
+    }
+
+    [Fact]
+    public async Task OverTheBudgetPerSessionNothingIsPaid()
+    {
+        _giga.Fail = true;
+        _whisper.Fail = true;
+        _ui.Paid = PaidAnswer.Once;
+        var grant = await GrantAsync(manifest: Manifest(cost: "0.0001 USD"));
+        Assert.True(Ok(await _engine.HandleAsync(Clips.Call(Site, grant))));    // 0.00008 of 0.0001
+        Assert.False(Ok(await _engine.HandleAsync(Clips.Call(Site, grant))));   // would be 0.00016
+        Assert.Equal(1, _paid.Calls);
+        Assert.Equal("budget per session", _log.Recent()[0].Note);
+    }
+
+    [Fact]
+    public async Task TheDailyMoneyLimitStopsPaidCalls()
+    {
+        _giga.Fail = true;
+        _whisper.Fail = true;
+        _ui.Paid = PaidAnswer.Always;
+        _store.Update(s => s.Limits.SitePerDay = "0.0001 USD");
+        var grant = await GrantAsync();
+        Assert.True(Ok(await _engine.HandleAsync(Clips.Call(Site, grant))));
+        Assert.False(Ok(await _engine.HandleAsync(Clips.Call(Site, grant))));
+        Assert.Equal("money per day", _log.Recent()[0].Note);
+    }
+
+    [Fact]
+    public async Task ReleaseRevokeAndBlockEndTheGrant()
+    {
+        var a = await GrantAsync();
+        await _engine.HandleAsync(new WireMessage(5, Wire.Release, Site, false, new JsonObject { ["grantId"] = a }));
+        Assert.False(Ok(await _engine.HandleAsync(Clips.Call(Site, a))));
+
+        var b = await GrantAsync();
+        _engine.Revoke(Site);
+        Assert.False(Ok(await _engine.HandleAsync(Clips.Call(Site, b))));
+
+        var c = await GrantAsync();
+        _engine.Block(Site, true);
+        Assert.False(Ok(await _engine.HandleAsync(Clips.Call(Site, c))));
+        Assert.Null(await _engine.HandleAsync(Clips.Request(Site, click: true)));
+        _engine.Block(Site, false);
+        Assert.NotNull(await _engine.HandleAsync(Clips.Request(Site, click: true)));
+    }
+
+    [Fact]
+    public async Task WithoutALanguageAndOneDeclaredLanguageThatOneIsUsed()
+    {
+        var grant = await GrantAsync(manifest: Clips.GeoManifest.Replace("[\"ru\", \"sk\"]", "[\"ru\"]"));
+        var result = await _engine.HandleAsync(Clips.Call(Site, grant, language: null));
+        Assert.Equal("francia-giga", result!["output"]!["text"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task StatusReportsTheWalletAndTheBadge()
+    {
+        await _engine.HandleAsync(Clips.Request(Site, click: false));
+        var status = await _engine.HandleAsync(new WireMessage(9, Wire.Status, "", false, new JsonObject()));
+        Assert.Equal("{\"running\":true,\"version\":\"0.1.0\",\"quiet\":1}", status!.ToJsonString());
+    }
+}

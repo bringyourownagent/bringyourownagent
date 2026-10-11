@@ -44,6 +44,7 @@ A family geography game: players name countries out loud, the map fills in. It n
 - [spec/](spec/) — the protocol specification (v0.1 in progress)
 - [spec/rules-0.1-draft.md](spec/rules-0.1-draft.md) — the first machine-checkable rules, a draft for discussion
 - [sdk/](sdk/) — early draft libraries for Python, Node.js and .NET that implement these rules, with shared test vectors
+- [wallet/](wallet/) — the agent wallet 0.1 for Windows: a tray app, a native messaging host and a Chrome extension; local speech recognition with your own models ([design](docs/wallet-0.1.md))
 
 ## Author
 

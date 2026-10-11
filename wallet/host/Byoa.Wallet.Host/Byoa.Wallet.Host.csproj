@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- byoa-host.exe: the Chrome native messaging host. It relays framed JSON between the extension (stdio) and the
+       running wallet (a per-user named pipe), and starts the wallet when a page asks for it. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>byoa-host</AssemblyName>
+    <RootNamespace>Byoa.Wallet.Host</RootNamespace>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>false</SelfContained>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <UseAppHost>true</UseAppHost>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\core\Byoa.Wallet.Core\Byoa.Wallet.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Byoa.Wallet.Tests" />
+  </ItemGroup>
+
+</Project>

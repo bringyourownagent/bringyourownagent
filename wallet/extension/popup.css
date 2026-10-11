@@ -1,0 +1,38 @@
+/* Colours and type of the BYOA design system: sign blue, Exit Orange for the visitor's own action. */
+:root {
+  --sign: #1c2f73;
+  --signal-deep: #c8401c;
+  --signal-dark: #a93514;
+  --ink: #13151b;
+  --ink-2: #3c4150;
+  --muted: #5a6070;
+  --win-rule: #dde1e8;
+  --chip: #e6e8ed;
+}
+body {
+  margin: 0;
+  width: 300px;
+  padding: 14px 16px 14px;
+  font: 400 14px/1.4 Barlow, "Segoe UI", system-ui, sans-serif;
+  color: var(--ink);
+  background: #fff;
+}
+header { display: flex; align-items: center; gap: 8px; }
+h1 { margin: 0; font: 700 19px/1.1 "Barlow Semi Condensed", "Segoe UI", sans-serif; }
+.status { margin: 12px 0 4px; }
+.chip {
+  display: inline-block; padding: 4px 10px; border-radius: 999px; background: var(--chip);
+  font-weight: 600; font-size: 13px;
+}
+.chip.off { background: transparent; border: 1px solid #9aa1af; color: var(--ink-2); }
+.note { margin: 6px 0 0; color: var(--muted); font-size: 13px; }
+.note:empty { display: none; }
+.versions { margin: 10px 0 0; color: var(--muted); font-size: 12px; }
+footer { margin-top: 14px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+button {
+  font: 600 14px/1 Barlow, "Segoe UI", sans-serif; color: #fff; background: var(--signal-deep);
+  border: 0; border-radius: 7px; padding: 9px 14px; cursor: pointer;
+}
+button:hover { background: var(--signal-dark); }
+button:focus-visible, a:focus-visible { outline: 3px solid #e8552e; outline-offset: 2px; }
+a { color: var(--sign); font-size: 12.5px; }

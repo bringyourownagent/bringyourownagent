@@ -1,0 +1,154 @@
+using Avalonia;
+using Avalonia.Automation;
+using Avalonia.Controls;
+using Avalonia.Input;
+using Avalonia.Layout;
+using Avalonia.Media;
+using Avalonia.Threading;
+using Byoa.Wallet.Engine;
+using Byoa.Wallet.Sources;
+
+namespace Byoa.Wallet.Desktop;
+
+/// <summary>
+/// The small notice above the tray, in the style of a Windows notification. It never takes the focus away from
+/// the browser (it is shown without activation). It answers with the id of the button pressed, or null when it was
+/// closed or timed out.
+/// </summary>
+sealed class ToastWindow : CornerWindow
+{
+    readonly TaskCompletionSource<string?> _answer = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    readonly StackPanel _body = new() { Spacing = 10 };
+    CancellationTokenRegistration _timeout;
+    bool _closed;
+
+    ToastWindow(string title) : base(352)
+    {
+        Title = title;
+        ShowActivated = false;
+        var card = new Border { Child = _body, Padding = new Thickness(14, 12, 12, 12), Margin = new Thickness(ShadowMargin), Background = Brushes.White };
+        card.Classes.Add("popup");
+        card.Classes.Add("notice");
+        Content = card;
+        KeyDown += (_, e) =>
+        {
+            if (e.Key == Key.Escape) Answer(null);
+        };
+        Closed += (_, _) =>
+        {
+            _closed = true;
+            _timeout.Dispose();
+            _answer.TrySetResult(null);
+        };
+    }
+
+    public Task<string?> Result => _answer.Task;
+
+    void Answer(string? id)
+    {
+        _answer.TrySetResult(id);
+        if (!_closed) Close();
+    }
+
+    /// <summary>Closes the toast when <paramref name="ct"/> is cancelled (no answer in time).</summary>
+    public void CloseOn(CancellationToken ct) =>
+        _timeout = ct.Register(() => Dispatcher.UIThread.Post(() => Answer(null)));
+
+    Control Header(Control icon, Control text, bool closable = true)
+    {
+        var close = new Button { Content = Ui.Glyph(Ui.Cross, Ui.Brush("Ink2"), 12, 2.4) };
+        close.Classes.Add("close");
+        AutomationProperties.SetAutomationId(close, "NoticeClose");
+        AutomationProperties.SetName(close, "Close the notice");
+        close.Click += (_, _) => Answer(null);
+        var grid = Ui.Columns("Auto,*,Auto", icon, text, closable ? close : new Panel());
+        icon.Margin = new Thickness(0, 2, 10, 0);
+        icon.VerticalAlignment = VerticalAlignment.Top;
+        close.VerticalAlignment = VerticalAlignment.Top;
+        return grid;
+    }
+
+    /// <summary>"host wants to use your AI": Show, Decline, Block this site.</summary>
+    public static ToastWindow Request(NoticeModel model)
+    {
+        var t = new ToastWindow("Agent wallet notice");
+        var lines = Ui.Column(2,
+            Ui.Runs((model.Host, true), (" wants to use your AI", false)),
+            Ui.Text("Agent wallet", "muted", "small"));
+        AutomationProperties.SetName(lines, model.Host + " wants to use your AI");
+        t._body.Children.Add(t.Header(Ui.Tile(Ui.Globe, 24), lines));
+        var show = Ui.Button("Show", "allow", "NoticeShow", () => t.Answer("show"), "small");
+        var decline = Ui.Button("Decline", "deny", "NoticeDecline", () => t.Answer("decline"), "small");
+        var block = Ui.Link("Block this site", "NoticeBlock", () => t.Answer("block"));
+        block.HorizontalAlignment = HorizontalAlignment.Right;
+        t._body.Children.Add(Ui.Columns("Auto,*", Ui.Row(8, show, decline), block));
+        return t;
+    }
+
+    /// <summary>"Your local models could not answer: use the paid source?" Allow once, Always for this site, No.</summary>
+    public static ToastWindow Paid(PaidModel model)
+    {
+        var t = new ToastWindow("Agent wallet paid fallback");
+        var lines = Ui.Column(3,
+            Ui.Runs((model.Host, true), (" needs a paid source", false)),
+            Ui.Wrap("Use " + model.SourceName + " for this clip? About " + Money.Show(model.Estimate) + ", from your API key. " + model.Why, "muted"),
+            Ui.Text("Agent wallet", "muted", "small"));
+        t._body.Children.Add(t.Header(Ui.Tile(Ui.Key, 24, "SignalDeep"), lines));
+        var once = Ui.Button("Allow once", "allow", "PaidOnce", () => t.Answer("once"), "small");
+        var always = Ui.Button("Always for this site", "deny", "PaidAlways", () => t.Answer("always"), "small");
+        var no = Ui.Link("No", "PaidNo", () => t.Answer("no"));
+        no.HorizontalAlignment = HorizontalAlignment.Right;
+        t._body.Children.Add(Ui.Columns("Auto,*", Ui.Row(8, once, always), no));
+        return t;
+    }
+
+    /// <summary>A message with an optional button; it closes on its own after a while.</summary>
+    public static ToastWindow Info(InfoModel model, Action<string?>? open)
+    {
+        var t = new ToastWindow("Agent wallet message");
+        var lines = Ui.Column(3, Ui.Runs((model.Title, true)), Ui.Wrap(model.Text, "muted"));
+        t._body.Children.Add(t.Header(Ui.Tile(Ui.Globe, 24), lines));
+        if (model.ActionText is not null)
+        {
+            var button = Ui.Button(model.ActionText, "deny", "InfoAction", () =>
+            {
+                open?.Invoke(model.OpenPage);
+                t.Answer("open");
+            }, "small");
+            t._body.Children.Add(button);
+        }
+
+        DispatcherTimer.RunOnce(() => t.Answer(null), TimeSpan.FromSeconds(20));
+        return t;
+    }
+
+    /// <summary>A model downloading on first use, with its progress.</summary>
+    public static ToastWindow Download(ISpeechSource source, IDownloadableSource download)
+    {
+        var t = new ToastWindow("Agent wallet download");
+        var bar = new ProgressBar { Minimum = 0, Maximum = 1, Value = download.DownloadProgress ?? 0 };
+        bar.Classes.Add("meter");
+        var line = Ui.Text("starting…", "muted");
+        var lines = Ui.Column(4,
+            Ui.Runs(("Downloading ", false), (source.Name, true)),
+            Ui.Wrap("Used for languages your other sources do not know, and as a fallback. It is saved in your models folder, once.", "muted"),
+            bar,
+            line);
+        t._body.Children.Add(t.Header(Ui.Tile(Ui.Screen, 24), lines));
+        void Update()
+        {
+            bar.Value = download.DownloadProgress ?? (source.State == SourceState.Ready ? 1 : 0);
+            line.Text = source.StateText;
+            if (source.State is SourceState.Ready or SourceState.Broken)
+            {
+                DispatcherTimer.RunOnce(() => t.Answer(null), TimeSpan.FromSeconds(source.State == SourceState.Ready ? 4 : 15));
+            }
+        }
+
+        void OnProgress() => Dispatcher.UIThread.Post(Update);
+        download.ProgressChanged += OnProgress;
+        t.Closed += (_, _) => download.ProgressChanged -= OnProgress;
+        Update();
+        return t;
+    }
+}

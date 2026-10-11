@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The wallet's logic without any UI: the wire protocol, the engine (grants, limits, the gate, routing),
+       settings, the DPAPI secret store and WAV measuring. Shared by the desktop app, the native host and the tests. -->
+  <PropertyGroup>
+    <RootNamespace>Byoa.Wallet</RootNamespace>
+    <AssemblyName>Byoa.Wallet.Core</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="BringYourOwnAgent" Version="0.0.2" />
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.12" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Byoa.Wallet.Tests" />
+  </ItemGroup>
+
+</Project>

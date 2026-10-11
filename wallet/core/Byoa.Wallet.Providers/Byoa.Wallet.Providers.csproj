@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The speech sources of 0.1: GigaAM v3 (sherpa-onnx, Russian), Whisper (Whisper.net, GPU through Vulkan with a CPU
+       fallback) and OpenRouter (an API key, paid). -->
+  <PropertyGroup>
+    <RootNamespace>Byoa.Wallet.Providers</RootNamespace>
+    <AssemblyName>Byoa.Wallet.Providers</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Byoa.Wallet.Core\Byoa.Wallet.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="org.k2fsa.sherpa.onnx" Version="1.13.8" />
+    <PackageReference Include="Whisper.net" Version="1.9.1" />
+    <PackageReference Include="Whisper.net.Runtime" Version="1.9.1" />
+    <PackageReference Include="Whisper.net.Runtime.Vulkan" Version="1.9.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Byoa.Wallet.Tests" />
+  </ItemGroup>
+
+  <!-- 0.1 is Windows first (DPAPI, the tray, the native host registration). -->
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.Versioning.SupportedOSPlatformAttribute">
+      <_Parameter1>windows</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+
+</Project>

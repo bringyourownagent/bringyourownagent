@@ -1,0 +1,62 @@
+<#
+.SYNOPSIS
+    Unregisters the BYOA agent wallet 0.1 for the current Windows user.
+
+.DESCRIPTION
+    Removes exactly the two registry keys install.ps1 created:
+      HKCU\Software\Google\Chrome\NativeMessagingHosts\org.bringyourownagent.wallet
+      HKCU\Software\Chromium\NativeMessagingHosts\org.bringyourownagent.wallet
+    and the Startup shortcut if install.ps1 -StartWithWindows made one. Nothing else.
+
+    It does not delete files: it prints the folders the wallet used (the app, its data with your settings and
+    DPAPI-protected keys, downloaded models), so that you can remove them yourself if you want to.
+    Remove the unpacked extension in chrome://extensions.
+
+.EXAMPLE
+    powershell -ExecutionPolicy Bypass -File wallet\uninstall.ps1
+    powershell -ExecutionPolicy Bypass -File wallet\uninstall.ps1 -WhatIf
+#>
+[CmdletBinding(SupportsShouldProcess = $true)]
+param(
+    [string]$InstallDir = (Join-Path $env:LOCALAPPDATA 'BYOA\wallet-app')
+)
+
+$ErrorActionPreference = 'Stop'
+$hostName = 'org.bringyourownagent.wallet'
+$registryKeys = @(
+    "Software\Google\Chrome\NativeMessagingHosts\$hostName",
+    "Software\Chromium\NativeMessagingHosts\$hostName"
+)
+
+foreach ($sub in $registryKeys) {
+    $existing = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($sub)
+    if ($null -eq $existing) {
+        Write-Host "Not registered: HKCU\$sub"
+        continue
+    }
+    $existing.Close()
+    if ($PSCmdlet.ShouldProcess("HKCU\$sub", 'Remove registry key')) {
+        # The key holds only its default value; no subkeys are created by install.ps1.
+        [Microsoft.Win32.Registry]::CurrentUser.DeleteSubKey($sub, $false)
+        Write-Host "Removed HKCU\$sub"
+    }
+}
+
+$link = Join-Path ([Environment]::GetFolderPath('Startup')) 'BYOA agent wallet.lnk'
+if (Test-Path $link) {
+    if ($PSCmdlet.ShouldProcess($link, 'Remove the Startup shortcut')) {
+        Remove-Item -LiteralPath $link
+        Write-Host "Removed $link"
+    }
+}
+
+Write-Host ''
+if ($WhatIfPreference) {
+    Write-Host 'Dry run: nothing was changed. Without -WhatIf the keys above are removed; files are never deleted:'
+} else {
+    Write-Host 'The wallet is no longer registered with Chrome. Files were left in place; remove them yourself if you wish:'
+}
+Write-Host "  App and host:   $InstallDir"
+Write-Host "  Data:           $(Join-Path $env:LOCALAPPDATA 'BYOA\wallet')"
+Write-Host "  Models:         $(Join-Path $env:LOCALAPPDATA 'BYOA\models')"
+Write-Host 'Quit the wallet from its tray icon, and remove the unpacked extension in chrome://extensions.'

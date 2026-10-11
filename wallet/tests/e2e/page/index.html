@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>BYOA wallet test page</title>
+  <style>
+    body { font: 16px/1.5 "Segoe UI", system-ui, sans-serif; margin: 32px; color: #13151b; }
+    button { font: 600 15px "Segoe UI", sans-serif; padding: 10px 16px; border-radius: 7px; border: 0; background: #c8401c; color: #fff; cursor: pointer; }
+    pre { background: #f4f5f8; padding: 12px; border-radius: 8px; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <h1>BYOA wallet test page</h1>
+  <p>A page that asks for the visitor's AI after a click, then sends speech clips through <code>window.byoa</code>.</p>
+  <p><button id="connect" type="button">Use my AI</button></p>
+  <p>byoa: <span id="present">?</span> · ready event: <span id="ready">no</span></p>
+  <pre id="result">no request yet</pre>
+  <script>
+    // The manifest of the Geo-1 game (CONTRACT.md §2); a test may replace it before pressing the button.
+    window.MANIFEST = {
+      byoa: "0.1-draft",
+      purpose: { summary: "Family geography game: recognise country names spoken aloud", limits: { maxClipSeconds: 15, maxCallsPerMinute: 40 } },
+      skills: { "audio.transcribe": { languages: ["ru", "sk"], required: true } },
+      privacy: "personal-voice",
+      expectedCost: { perSession: "0.05 USD" },
+    };
+    window.grant = undefined;
+    window.addEventListener("byoa:ready", () => { document.getElementById("ready").textContent = "yes"; });
+    document.getElementById("present").textContent = window.byoa ? "present, version " + window.byoa.version : "missing";
+
+    // Only a click may ask: the request is made inside the click handler.
+    document.getElementById("connect").addEventListener("click", async () => {
+      document.getElementById("result").textContent = "asking…";
+      const started = performance.now();
+      window.grant = await window.byoa.request(window.MANIFEST);
+      window.requestMs = Math.round(performance.now() - started);
+      document.getElementById("result").textContent = JSON.stringify(window.grant, null, 1);
+    });
+
+    // A request made by the page on its own, later, with no click: a timer, so that no input reaches the page.
+    window.requestLater = (ms) => setTimeout(async () => {
+      window.activeAtRequest = navigator.userActivation.isActive;
+      const started = performance.now();
+      window.grant = await window.byoa.request(window.MANIFEST);
+      window.requestMs = Math.round(performance.now() - started);
+    }, ms);
+
+    // One clip: fetched from this test server, sent as base64 WAV, the answer treated as user input (text only).
+    window.transcribe = async (file, language, grantId) => {
+      const bytes = new Uint8Array(await (await fetch(file.startsWith("/") ? file : "/samples/" + file)).arrayBuffer());
+      let binary = "";
+      for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+      const started = performance.now();
+      const r = await window.byoa.call(grantId ?? (window.grant && window.grant.grantId), "audio.transcribe",
+        { audio: { mime: "audio/wav", base64: btoa(binary) } }, language ? { language } : {});
+      return { ms: Math.round(performance.now() - started), result: r };
+    };
+  </script>
+</body>
+</html>

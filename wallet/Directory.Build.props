@@ -1,0 +1,16 @@
+<Project>
+  <!-- Shared by every .NET project of the BYOA agent wallet 0.1. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <Version>0.1.0</Version>
+    <Authors>ultrathinker</Authors>
+    <Product>BYOA agent wallet</Product>
+    <Copyright>BYOA contributors, Apache License 2.0</Copyright>
+    <Deterministic>true</Deterministic>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+</Project>

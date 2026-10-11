@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "BYOA agent wallet",
+  "short_name": "BYOA wallet",
+  "version": "0.1.0",
+  "description": "Lets web pages use your own AI through the BYOA agent wallet on this computer, within the limits you set.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA+PeTaoAoTMuXudKAi0eaw9G8VGY2OxUrNz6BBWX/NTcgfaplrWlPg0TNKaJdKyhpTiRZAfr3LIBvluTUWtEKoLjucr59m5dNFy4q0JxAMj8zujP+CIuIwz4NZrkAd3zC7HkIAvcQ4oTbPawbsJxl9kC/hSHNlPiQD8Hbz0ASkuznKve33RtwleuTgjWPCquABj8Uw6pRcaoORJMM7hbwO/98tprfHNICcFcTq5qHngbtRIJHKYHInSIK3TXR2BhXfJ21Bn+ftyDQ7Dh/FgO5ic2ORA71C5AFogcngfSKT7MJI6aqegi6o0e+YYzKlaFiueWXS8aMC3EkoK3drsaFywIDAQAB",
+  "minimum_chrome_version": "111",
+  "permissions": ["nativeMessaging"],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [
+    {
+      "matches": ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"],
+      "js": ["page.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"],
+      "js": ["bridge.js"],
+      "run_at": "document_start"
+    }
+  ],
+  "action": {
+    "default_title": "Agent wallet",
+    "default_popup": "popup.html",
+    "default_icon": { "16": "icons/icon-16.png", "32": "icons/icon-32.png", "48": "icons/icon-48.png" }
+  },
+  "icons": { "16": "icons/icon-16.png", "32": "icons/icon-32.png", "48": "icons/icon-48.png", "128": "icons/icon-128.png" }
+}
