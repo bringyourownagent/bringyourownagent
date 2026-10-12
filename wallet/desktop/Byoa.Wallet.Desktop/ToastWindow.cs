@@ -176,7 +176,12 @@ sealed class ToastWindow : CornerWindow
     public static ToastWindow Download(ISpeechSource source, IDownloadableSource download)
     {
         var t = new ToastWindow("Agent wallet download");
-        var bar = new ProgressBar { Minimum = 0, Maximum = 1, Value = download.DownloadProgress ?? 0 };
+        var bar = new ProgressBar
+        {
+            Minimum = 0,
+            Maximum = 1,
+            Value = download.DownloadProgress ?? (source.State == SourceState.Ready ? 1 : 0),
+        };
         bar.Classes.Add("meter");
         var line = Ui.Text("starting…", "muted");
         var lines = Ui.Column(4,

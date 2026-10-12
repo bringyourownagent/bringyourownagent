@@ -79,7 +79,7 @@ public sealed class WalletEngine
     readonly SemaphoreSlim _prompt = new(1, 1);
 
     public WalletEngine(SettingsStore store, IReadOnlyList<ISpeechSource> sources, ActivityLog activity, IWalletUi ui,
-        TimeProvider? time = null, IReadOnlyList<ITextSource>? textSources = null)
+        TimeProvider? time = null, IReadOnlyList<ITextSource>? textSources = null, bool? preferGpu = null)
     {
         _store = store;
         _sources = sources;
@@ -87,7 +87,7 @@ public sealed class WalletEngine
         _activity = activity;
         _ui = ui;
         _time = time ?? TimeProvider.System;
-        _store.Update(Router.EnsureDefaults);
+        _store.Update(s => Router.EnsureDefaultsForHardware(s, preferGpu ?? true));
     }
 
     public IReadOnlyList<ISpeechSource> Sources => _sources;
@@ -577,7 +577,8 @@ public sealed class WalletEngine
             whys.Add(Router.Explain(plan, language));
             if (plan.First is { } first)
             {
-                routes.Add(new RouteLine(language, first.Source.Name, Where(first.Source), first.Source.Paid, true));
+                routes.Add(new RouteLine(language, first.Source.Name, Where(first.Source), first.Source.Paid, true,
+                    SpeechRouteDetail(first.Source, language)));
             }
             else
             {
@@ -614,6 +615,22 @@ public sealed class WalletEngine
     }
 
     public static string Where(ISpeechSource s) => s.Runs == Runs.ThisDevice ? "this PC" : "API key";
+
+    internal static string? SpeechRouteDetail(ISpeechSource source, string? language)
+    {
+        var details = new List<string>();
+        if (source is IDownloadableSource downloadable
+            && source.State is SourceState.NeedsDownload or SourceState.Downloading
+            && downloadable.DownloadSize is { } bytes and > 0)
+        {
+            details.Add(((int)Math.Ceiling(bytes / 1_000_000d)).ToString(CultureInfo.InvariantCulture) + " MB download");
+        }
+
+        if (source.Id == Router.CpuWhisperId && language is not "ru")
+            details.Add("on this computer, about 3 s per phrase");
+
+        return details.Count == 0 ? null : string.Join("; ", details);
+    }
 
     public static string Where(ITextSource s) => s.ProviderKind switch
     {

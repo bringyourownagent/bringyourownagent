@@ -62,10 +62,12 @@ public sealed class SourceSet : IDisposable
     Dictionary<string, ITextSource> _lastGood = new(StringComparer.Ordinal);
     IReadOnlyList<InvalidTextSource> _invalid = [];
 
-    public SourceSet(SettingsStore store, SecretStore secrets, HttpClient http)
+    public SourceSet(SettingsStore store, SecretStore secrets, HttpClient http,
+        CpuFeatureSet? cpuFeatures = null, Func<VulkanProbeResult>? vulkanProbe = null)
     {
         _store = store;
         _secrets = secrets;
+        var features = cpuFeatures ?? CpuFeatures.Current;
         // Text calls go through a client that never follows redirects: an endpoint on this computer must not send
         // the wallet's requests (and the visitor's API key) onward to another computer.
         TextHttp = new HttpClient(new SocketsHttpHandler
@@ -87,11 +89,11 @@ public sealed class SourceSet : IDisposable
         }
 
         Catalog = new ModelCatalog(() => store.Read(s => s.ModelFolders.ToList()));
-        // The Whisper loader's order is process-global. Pin it before any source can create a native factory.
-        WhisperSource.ConfigureProcessRuntime(CpuFeatures.Current, cpuSourceEnabled: true);
-        GigaAm = new GigaAmSource(() => Catalog.Found.FirstOrDefault(m => m.Kind == "gigaam")?.Path);
-        Whisper = new WhisperSource(() => store.Read(s => s.WhisperModel), () => Catalog.Found, http);
-        WhisperCpu = new WhisperCpuSource(() => Catalog.Found, http);
+        // The Whisper loader's order is process-global. Decide it before any source can create a native factory.
+        WhisperSource.ConfigureProcessRuntime(features, cpuSourceEnabled: true, probe: vulkanProbe);
+        GigaAm = new GigaAmSource(() => Catalog.Found.FirstOrDefault(m => m.Kind == "gigaam")?.Path, http);
+        Whisper = new WhisperSource(() => store.Read(s => s.WhisperModel), () => Catalog.Found, http, features);
+        WhisperCpu = new WhisperCpuSource(() => Catalog.Found, http, features, processGpuOverride: WhisperSource.ProcessUsesGpu);
         OpenRouter = new OpenRouterSource(http, () => secrets.Get(OpenRouterSource.SecretName), () => secrets.Has(OpenRouterSource.SecretName));
         All = [GigaAm, Whisper, WhisperCpu, OpenRouter];
         Scanner = new RuntimeScanner(TextHttp, AddedEndpoints);

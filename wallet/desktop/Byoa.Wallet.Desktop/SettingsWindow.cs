@@ -338,7 +338,7 @@ sealed class SettingsWindow : Window
 
         page.Children.Add(Section("On this PC"));
         page.Children.Add(SourceCard(_w.Sources.GigaAm, settings,
-            "GigaAM v3 transducer (sherpa-onnx). " + (_w.Sources.GigaAm.Folder ?? "Not found in your model folders."), null));
+            "GigaAM v3 transducer (sherpa-onnx). " + (_w.Sources.GigaAm.Folder ?? "Not found in your model folders; the wallet can download 230 MB into its own models folder."), null));
         page.Children.Add(SourceCard(_w.Sources.Whisper, settings, "whisper.cpp model " + settings.WhisperModel + ". " + (_w.Sources.Whisper.ModelPath ?? "It downloads into " + Byoa.Wallet.Protocol.WalletPaths.Models + " on first use."), WhisperExtras(settings)));
 
         page.Children.Add(Section("API keys"));
@@ -480,7 +480,7 @@ sealed class SettingsWindow : Window
         var list = new StackPanel { Spacing = 7 };
         foreach (var model in _w.Registry.ListDownloadableModels())
         {
-            var size = model.SizeBytes is { } bytes ? (bytes / 1_000_000).ToString(CultureInfo.InvariantCulture) + " MB" : "size unknown";
+            var size = model.SizeBytes is { } bytes ? ((long)Math.Ceiling(bytes / 1_000_000d)).ToString(CultureInfo.InvariantCulture) + " MB" : "size unknown";
             var state = model.Downloaded ? "downloaded in this wallet" : model.CanDownload ? "not downloaded" : "put its folder in Model folders";
             var row = Ui.Columns("*,Auto", Ui.Column(2, Ui.Text(model.Name, "strong"), Ui.Wrap(size + " · " + state + " · " + model.Hardware, "muted", "small")),
                 model.CanDownload && !model.Downloaded
@@ -490,6 +490,8 @@ sealed class SettingsWindow : Window
                         {
                             try
                             {
+                                if (model.Id == "gigaam:gigaam-v3") _w.Ui.DownloadStarted(_w.Sources.GigaAm);
+                                else if (model.Id.StartsWith("whisper:", StringComparison.Ordinal)) _w.Ui.DownloadStarted(_w.Sources.Whisper);
                                 var result = await _w.Registry.DownloadModelAsync(model.Id);
                                 DesktopUi.PostSafe(() => { _w.Ui.ShowInfo(new InfoModel(result.Ok ? "Model downloaded" : "Model download", result.Message)); Render(); });
                             }
@@ -603,7 +605,12 @@ sealed class SettingsWindow : Window
 
         if (whisper.State == SourceState.Downloading)
         {
-            var bar = new ProgressBar { Minimum = 0, Maximum = 1, Value = whisper.DownloadProgress ?? 0 };
+            var bar = new ProgressBar
+            {
+                Minimum = 0,
+                Maximum = 1,
+                Value = whisper.DownloadProgress ?? (whisper.State == SourceState.Ready ? 1 : 0),
+            };
             bar.Classes.Add("meter");
             panel.Children.Add(bar);
         }

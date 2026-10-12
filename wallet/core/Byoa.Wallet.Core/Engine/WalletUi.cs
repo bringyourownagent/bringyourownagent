@@ -24,7 +24,7 @@ public enum PaidAnswer
 public sealed record NoticeModel(string Origin, string Host);
 
 /// <summary>One language of a skill and the source the manager suggests for it.</summary>
-public sealed record RouteLine(string? Language, string SourceName, string Where, bool Paid, bool Fits);
+public sealed record RouteLine(string? Language, string SourceName, string Where, bool Paid, bool Fits, string? Detail = null);
 
 /// <summary>One row of the consent window: a skill, the sources that will answer it, and the reason.</summary>
 public sealed record ConsentRow(

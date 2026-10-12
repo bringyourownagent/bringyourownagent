@@ -9,6 +9,26 @@ using Whisper.net.LibraryLoader;
 
 namespace Byoa.Wallet.Providers;
 
+/// <summary>The immutable process-wide choice made before Whisper.net loads a native library.</summary>
+public sealed record WhisperRuntimeDecision(bool Avx, bool UseGpu, VulkanProbeResult Probe, IReadOnlyList<RuntimeLibrary> Order);
+
+/// <summary>A small, independently testable latch for the process-wide native runtime choice.</summary>
+internal sealed class RuntimeDecisionLatch
+{
+    readonly object _gate = new();
+    WhisperRuntimeDecision? _value;
+
+    public WhisperRuntimeDecision GetOrCreate(Func<WhisperRuntimeDecision> factory)
+    {
+        lock (_gate) return _value ??= factory();
+    }
+
+    public WhisperRuntimeDecision? Value
+    {
+        get { lock (_gate) return _value; }
+    }
+}
+
 /// <summary>
 /// Whisper (multilingual) through Whisper.net / whisper.cpp. The ggml model downloads into
 /// <c>%LOCALAPPDATA%\BYOA\models\whisper</c> on first use, with progress shown. It runs on the GPU through Vulkan
@@ -33,12 +53,13 @@ public class WhisperSource : ISpeechSource, IDownloadableSource, IWarmable, IDis
         ["ggml-base-q5_1.bin"] = 59_707_625,
     };
 
-    static int _processRuntimeConfigured;
+    static readonly RuntimeDecisionLatch RuntimeLatch = new();
 
     readonly Func<string> _modelFile;
     readonly Func<IReadOnlyList<FoundModel>> _found;
     readonly HttpClient _http;
     readonly CpuFeatureSet _cpuFeatures;
+    readonly bool? _processGpuOverride;
     readonly SemaphoreSlim _gate = new(1, 1);
     readonly Dictionary<string, WhisperProcessor> _processors = new(StringComparer.Ordinal);
     readonly object _downloadGate = new();
@@ -53,12 +74,14 @@ public class WhisperSource : ISpeechSource, IDownloadableSource, IWarmable, IDis
 
     /// <param name="modelFile">The ggml file name chosen in the settings.</param>
     /// <param name="found">The models found in the visitor's model folders.</param>
-    public WhisperSource(Func<string> modelFile, Func<IReadOnlyList<FoundModel>> found, HttpClient http, CpuFeatureSet? cpuFeatures = null)
+    public WhisperSource(Func<string> modelFile, Func<IReadOnlyList<FoundModel>> found, HttpClient http,
+        CpuFeatureSet? cpuFeatures = null, bool? processGpuOverride = null)
     {
         _modelFile = modelFile;
         _found = found;
         _http = http;
         _cpuFeatures = cpuFeatures ?? CpuFeatures.Current;
+        _processGpuOverride = processGpuOverride;
     }
 
     public event Action? ProgressChanged;
@@ -95,21 +118,38 @@ public class WhisperSource : ISpeechSource, IDownloadableSource, IWarmable, IDis
         }
     }
 
-    public SourceState State =>
+    public virtual SourceState State =>
         !_cpuFeatures.Avx ? SourceState.Unavailable
+        : !UseGpu && ProcessGpuSelected ? SourceState.Unavailable
         : _download is { IsCompleted: false } ? SourceState.Downloading
         : _error is not null ? SourceState.Broken
         : ModelPath is null ? SourceState.NeedsDownload
         : SourceState.Ready;
 
-    public string StateText => State switch
+    public virtual string StateText => State switch
     {
-        SourceState.Unavailable => "unavailable: this processor has no AVX (too slow)",
+        SourceState.Unavailable => !_cpuFeatures.Avx
+            ? "unavailable: this processor has no AVX (too slow)"
+            : "unavailable: the GPU build is in use",
         SourceState.Downloading => "downloading " + (_progress ?? 0).ToString("P0", CultureInfo.InvariantCulture),
         SourceState.Broken => "failed: " + _error,
         SourceState.NeedsDownload => "not downloaded yet (" + Mb(DownloadSize) + "), downloads on first use",
         _ => _runtime is null ? "ready (loads on first use)" : "ready · " + _runtime,
     };
+
+    bool ProcessGpuSelected => _processGpuOverride ?? ProcessUsesGpu;
+
+    /// <summary>True when the one process-wide decision selected the Vulkan-capable build for the large source.</summary>
+    public static bool ProcessUsesGpu
+    {
+        get => RuntimeLatch.Value?.UseGpu == true;
+    }
+
+    /// <summary>The decision made before any Whisper factory is created, or null before the source set starts.</summary>
+    public static WhisperRuntimeDecision? ProcessRuntime
+    {
+        get => RuntimeLatch.Value;
+    }
 
     static string Mb(long? bytes) => bytes is null ? "size unknown" : (bytes.Value / 1_000_000).ToString(CultureInfo.InvariantCulture) + " MB";
 
@@ -138,16 +178,19 @@ public class WhisperSource : ISpeechSource, IDownloadableSource, IWarmable, IDis
 
     async Task DownloadAsync(string file)
     {
+        string? part = null;
         try
         {
             var (expectedSize, expectedSha) = await ExpectedAsync(file).ConfigureAwait(false);
             var dir = ModelDir;
             Directory.CreateDirectory(dir);
             var target = Path.Combine(dir, file);
-            var part = target + ".part";
+            part = target + ".part";
             using var response = await _http.GetAsync(BaseUrl + file, HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(false);
             response.EnsureSuccessStatusCode();
             var total = response.Content.Headers.ContentLength ?? expectedSize;
+            if (expectedSize is { } known && response.Content.Headers.ContentLength is { } given && given != known)
+                throw new IOException($"downloaded content is {given} bytes, expected {known}");
             _size = total;
             _progress = 0;
             ProgressChanged?.Invoke();
@@ -155,7 +198,8 @@ public class WhisperSource : ISpeechSource, IDownloadableSource, IWarmable, IDis
             long done = 0;
             var lastShown = -1;
             await using (var source = await response.Content.ReadAsStreamAsync().ConfigureAwait(false))
-            await using (var output = new FileStream(part, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 20, useAsync: true))
+            await using (var output = new FileStream(part, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 20,
+                FileOptions.Asynchronous | FileOptions.SequentialScan))
             {
                 var buffer = new byte[1 << 20];
                 int n;
@@ -190,7 +234,24 @@ public class WhisperSource : ISpeechSource, IDownloadableSource, IWarmable, IDis
         }
         finally
         {
+            if (_error is not null && part is not null) DeleteOwnedPart(part);
             ProgressChanged?.Invoke();
+        }
+    }
+
+    static void DeleteOwnedPart(string part)
+    {
+        try
+        {
+            var root = Path.GetFullPath(Path.Combine(WalletPaths.Models, "whisper"));
+            var candidate = Path.GetFullPath(part);
+            if (!candidate.StartsWith(root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                    + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) return;
+            if (File.Exists(candidate)) File.Delete(candidate);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or NotSupportedException)
+        {
+            // A partial file in the wallet's own folder is harmless and remains unclaimable until a full download.
         }
     }
 
@@ -223,13 +284,35 @@ public class WhisperSource : ISpeechSource, IDownloadableSource, IWarmable, IDis
     // transcription
 
     /// <summary>
-    /// Whisper.net's library order is process-global. Decide it once before either the GPU or CPU factory exists;
-    /// the CPU fallback is present in the source set, so Vulkan is never allowed to win that decision.
+    /// Whisper.net's library order is process-global. Decide it once before either the GPU or CPU factory exists.
+    /// The automatic choice uses the Vulkan probe; the environment override is intended for diagnostics and people
+    /// who know their driver better than the probe does.
     /// </summary>
-    public static void ConfigureProcessRuntime(CpuFeatureSet features, bool cpuSourceEnabled)
+    public static void ConfigureProcessRuntime(CpuFeatureSet features, bool cpuSourceEnabled,
+        Func<VulkanProbeResult>? probe = null, string? runtimePreference = null)
     {
-        if (Interlocked.Exchange(ref _processRuntimeConfigured, 1) == 1) return;
-        RuntimeOptions.RuntimeLibraryOrder = RuntimeOrderFor(!cpuSourceEnabled, features.Avx);
+        _ = RuntimeLatch.GetOrCreate(() =>
+        {
+            var result = features.Avx
+                ? (probe ?? VulkanProbe.Probe)()
+                : new VulkanProbeResult(false, "no AVX");
+            var decision = DecideRuntime(features, result, runtimePreference ?? Environment.GetEnvironmentVariable("BYOA_WHISPER_RUNTIME"));
+            RuntimeOptions.RuntimeLibraryOrder = decision.Order.ToList();
+            return decision;
+        });
+    }
+
+    /// <summary>Pure, injectable hardware decision used by the startup code and tests.</summary>
+    public static WhisperRuntimeDecision DecideRuntime(CpuFeatureSet features, VulkanProbeResult probe, string? preference = null)
+    {
+        var choice = preference?.Trim().ToLowerInvariant() switch
+        {
+            "cpu" => false,
+            "gpu" => true,
+            _ => probe.Usable,
+        };
+        var useGpu = features.Avx && choice;
+        return new WhisperRuntimeDecision(features.Avx, useGpu, probe, RuntimeOrderFor(useGpu, features.Avx));
     }
 
     /// <summary>
@@ -260,7 +343,7 @@ public class WhisperSource : ISpeechSource, IDownloadableSource, IWarmable, IDis
         var path = ModelPath ?? throw new InvalidOperationException("the Whisper model is not downloaded yet");
         if (_factory is not null && _factoryPath == path) return _factory;
         DisposeFactory();
-        ConfigureProcessRuntime(_cpuFeatures, cpuSourceEnabled: true);
+        ConfigureProcessRuntime(_cpuFeatures, cpuSourceEnabled: true, runtimePreference: null);
         if (!_cpuFeatures.Avx) throw new InvalidOperationException("unavailable: this processor has no AVX (too slow)");
         var useGpu = UseGpu;
         try

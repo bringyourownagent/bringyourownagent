@@ -40,22 +40,37 @@ public interface ILiveness
 /// </summary>
 public static class Router
 {
-    /// <summary>The default chain for audio.transcribe: GigaAM (Russian), Whisper (other languages and the fallback), a
-    /// small Whisper on the CPU for machines without a usable GPU Whisper, OpenRouter last (paid, asks first).</summary>
+    /// <summary>The legacy/GPU default chain: GigaAM (Russian), Whisper, the CPU safety net, then the paid fallback.</summary>
     public static readonly string[] DefaultTranscribeChain = ["gigaam-v3", WhisperId, CpuWhisperId, "openrouter-scribe"];
+
+    /// <summary>The default chain when startup found no usable Vulkan device.</summary>
+    public static readonly string[] DefaultCpuTranscribeChain = ["gigaam-v3", CpuWhisperId, "openrouter-scribe"];
 
     /// <summary>The sources of the built-in speech chain, by their ids in the settings.</summary>
     public const string GigaAmId = "gigaam-v3";
     public const string WhisperId = "whisper";
     public const string CpuWhisperId = "whisper-cpu";
 
-    /// <summary>Adds the default chains and the default stops to settings that miss them.</summary>
-    public static void EnsureDefaults(WalletSettings settings)
+    /// <summary>Adds the legacy/GPU defaults to settings that miss them.</summary>
+    public static void EnsureDefaults(WalletSettings settings) => EnsureDefaultsForHardware(settings, preferGpu: true);
+
+    /// <summary>
+    /// Adds defaults without replacing a route the visitor has edited. An untouched old default is also adjusted for
+    /// a machine without a usable GPU, so a clean CPU wallet never starts the 1.1 GB model by default.
+    /// </summary>
+    public static void EnsureDefaultsForHardware(WalletSettings settings, bool preferGpu)
     {
         var chain = settings.Chain(Vocabulary.Transcribe);
-        foreach (var id in DefaultTranscribeChain)
+        var oldDefault = chain.Stops.Select(s => s.SourceId).SequenceEqual(DefaultTranscribeChain, StringComparer.Ordinal);
+        var desired = preferGpu ? DefaultTranscribeChain : DefaultCpuTranscribeChain;
+        if (chain.Stops.Count == 0 || oldDefault)
         {
-            if (chain.Stops.All(s => s.SourceId != id)) chain.Stops.Add(new ChainStop { SourceId = id });
+            chain.Stops = desired.Select(id => new ChainStop { SourceId = id }).ToList();
+        }
+        else
+        {
+            foreach (var id in DefaultTranscribeChain)
+                if (chain.Stops.All(s => s.SourceId != id)) chain.Stops.Add(new ChainStop { SourceId = id });
         }
 
         foreach (var id in DefaultTranscribeChain) settings.Source(id);

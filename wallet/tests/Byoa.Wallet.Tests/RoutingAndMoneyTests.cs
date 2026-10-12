@@ -27,6 +27,17 @@ public class RoutingTests
     }
 
     [Fact]
+    public void CpuOnlyDefaultsDoNotStartTheLargeWhisperDownload()
+    {
+        var settings = new WalletSettings();
+        Router.EnsureDefaultsForHardware(settings, preferGpu: false);
+
+        Assert.Equal(["gigaam-v3", "whisper-cpu", "openrouter-scribe"],
+            settings.Chain(Vocabulary.Transcribe).Stops.Select(stop => stop.SourceId));
+        Assert.NotNull(settings.Source("whisper"));
+    }
+
+    [Fact]
     public void RussianGoesToGigaAmFirst()
     {
         var plan = Plan(Defaults(), "ru");

@@ -239,7 +239,16 @@ sealed class ConsentWindow : CornerWindow
                         + (multi && route.Language is not null ? " · " + Vocabulary.LanguageName(route.Language) : ""), "muted"));
                 if (route.Fits) line.Children.Add(Ui.InkCheck(15));
                 ((TextBlock)line.Children[2]).FontSize = 14;
-                panel.Children.Add(line);
+                if (route.Detail is { Length: > 0 } detail)
+                {
+                    // Keep download size and CPU latency on a second line: the source row remains readable at the
+                    // narrow consent width instead of clipping the explanation after the provider name.
+                    panel.Children.Add(Ui.Column(2, line, Ui.Text(detail, "muted", "small")));
+                }
+                else
+                {
+                    panel.Children.Add(line);
+                }
             }
         }
 

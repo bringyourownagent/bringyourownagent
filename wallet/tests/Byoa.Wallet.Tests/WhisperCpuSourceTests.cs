@@ -59,6 +59,25 @@ public class WhisperCpuSourceTests
             Environment.SetEnvironmentVariable(WalletPaths.HomeVariable, oldHome);
         }
     }
+
+    [Fact]
+    public void CpuWhisperStepsAsideWhenTheGpuBuildOwnsTheProcess()
+    {
+        using var source = new WhisperCpuSource(() => [], new HttpClient(), CpuFeatures.ForTests(avx: true), processGpuOverride: true);
+
+        Assert.Equal(SourceState.Unavailable, source.State);
+        Assert.Equal("unavailable: the GPU build is in use", source.StateText);
+    }
+
+    [Fact]
+    public void BigWhisperAlsoReportsNoAvxBeforeItLooksForAFile()
+    {
+        using var source = new WhisperSource(() => "ggml-large-v3-q5_0.bin", () => [], new HttpClient(),
+            CpuFeatures.ForTests(avx: false));
+
+        Assert.Equal(SourceState.Unavailable, source.State);
+        Assert.Contains("no AVX", source.StateText, StringComparison.OrdinalIgnoreCase);
+    }
 }
 
 /// <summary>The answer hygiene the wallet applies to everything a model writes back.</summary>

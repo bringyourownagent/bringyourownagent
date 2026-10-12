@@ -20,20 +20,31 @@ sealed class WalletModelManager : IWalletModelManager
 
     readonly SettingsStore _store;
     readonly WhisperSource _whisper;
+    readonly GigaAmSource? _gigaAm;
     readonly string _modelsRoot;
     readonly string _whisperRoot;
+    readonly string _gigaAmRoot;
 
     // A model is removable only when both the settings ledger and this marker say that the wallet created it.
     // The marker also keeps a visitor's own model folder from becoming a deletion target.
     internal const string OwnershipMarker = ".byoa-wallet-owned";
+    const string GigaAmLedger = "gigaam:" + GigaAmSource.ModelFolderName;
 
     public WalletModelManager(SettingsStore store, WhisperSource whisper, string? modelsRoot = null)
+        : this(store, whisper, null, modelsRoot)
+    {
+    }
+
+    public WalletModelManager(SettingsStore store, WhisperSource whisper, GigaAmSource? gigaAm, string? modelsRoot = null)
     {
         _store = store;
         _whisper = whisper;
+        _gigaAm = gigaAm;
         _modelsRoot = Path.GetFullPath(modelsRoot ?? WalletPaths.Models);
         _whisperRoot = Path.Combine(_modelsRoot, "whisper");
+        _gigaAmRoot = Path.Combine(_modelsRoot, "gigaam");
         _whisper.ProgressChanged += TrackAutomaticDownload;
+        if (_gigaAm is not null) _gigaAm.ProgressChanged += TrackAutomaticGigaAmDownload;
     }
 
     public IReadOnlyList<DownloadableModelInfo> Models
@@ -54,18 +65,21 @@ sealed class WalletModelManager : IWalletModelManager
                 "gigaam:gigaam-v3",
                 "GigaAM v3",
                 Vocabulary.Transcribe,
-                null,
+                GigaAmSource.ModelSizeBytes,
                 ["ru"],
-                "CPU; put the model folder in a model folder",
-                false,
-                null,
-                CanDownload: false));
+                "CPU; Russian only",
+                IsOwnedGigaAm(_store.Snapshot()),
+                IsOwnedGigaAm(_store.Snapshot()) ? GigaAmFolder : null,
+                CanDownload: true));
             return list;
         }
     }
 
+    string GigaAmFolder => Path.Combine(_gigaAmRoot, GigaAmSource.ModelFolderName);
+
     public async Task<RegistryOperationResult> DownloadAsync(string modelId, IProgress<ModelDownloadProgress>? progress, CancellationToken ct)
     {
+        if (modelId == "gigaam:gigaam-v3") return await DownloadGigaAmAsync(progress, ct).ConfigureAwait(false);
         var model = WhisperModels.FirstOrDefault(m => "whisper:" + m.File == modelId);
         if (model.File is null) return RegistryOperationResult.Failure("That model is not in the wallet's download catalog.");
         var folder = EnsureOwnedFolder();
@@ -108,9 +122,48 @@ sealed class WalletModelManager : IWalletModelManager
         }
     }
 
+    async Task<RegistryOperationResult> DownloadGigaAmAsync(IProgress<ModelDownloadProgress>? progress, CancellationToken ct)
+    {
+        if (_gigaAm is null) return RegistryOperationResult.Failure("GigaAM is not available in this wallet build.");
+        if (_gigaAm.Folder is { } visitorFolder && !PathsEqual(visitorFolder, GigaAmFolder))
+            return RegistryOperationResult.Success("GigaAM v3 is already available in your model folders; nothing was downloaded.",
+                "gigaam:gigaam-v3");
+        var folder = EnsureGigaAmFolder();
+        if (!folder.Ok) return folder;
+        var settings = _store.Snapshot();
+        if (IsOwnedGigaAm(settings)) return RegistryOperationResult.Success("GigaAM v3 is already downloaded.", "gigaam:gigaam-v3");
+
+        void Report() => progress?.Report(new ModelDownloadProgress("gigaam:gigaam-v3", _gigaAm.DownloadProgress,
+            _gigaAm.DownloadProgress is { } fraction ? (long)(fraction * GigaAmSource.ModelSizeBytes) : null,
+            _gigaAm.DownloadSize ?? GigaAmSource.ModelSizeBytes));
+        _gigaAm.ProgressChanged += Report;
+        try
+        {
+            Report();
+            await _gigaAm.EnsureDownloadedAsync(ct).ConfigureAwait(false);
+            Report();
+            if (_gigaAm.State == SourceState.Ready && IsWalletGigaAmFolder(GigaAmFolder))
+            {
+                _store.Update(s =>
+                {
+                    if (!s.DownloadedModelFiles.Contains(GigaAmLedger, StringComparer.OrdinalIgnoreCase))
+                        s.DownloadedModelFiles.Add(GigaAmLedger);
+                });
+                return RegistryOperationResult.Success("Downloaded GigaAM v3.", "gigaam:gigaam-v3");
+            }
+
+            return RegistryOperationResult.Failure("The GigaAM download did not finish: " + _gigaAm.StateText);
+        }
+        finally
+        {
+            _gigaAm.ProgressChanged -= Report;
+        }
+    }
+
     public Task<RegistryOperationResult> RemoveAsync(DownloadableModelInfo model, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
+        if (model.Id == "gigaam:gigaam-v3") return RemoveGigaAmAsync(model);
         if (string.IsNullOrWhiteSpace(model.OwnedPath) || !IsOwnedModel(model.OwnedPath, _store.Snapshot()))
             return Task.FromResult(RegistryOperationResult.Failure("The wallet refused that file because it did not download it itself."));
 
@@ -120,6 +173,24 @@ sealed class WalletModelManager : IWalletModelManager
             _store.Update(s => s.DownloadedModelFiles.RemoveAll(file =>
                 file.Equals(Path.GetFileName(model.OwnedPath), StringComparison.OrdinalIgnoreCase)));
             return Task.FromResult(RegistryOperationResult.Success("Removed " + model.Name + ". You can download it again.", model.Id));
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or NotSupportedException)
+        {
+            return Task.FromResult(RegistryOperationResult.Failure("The wallet could not remove that downloaded model: " + e.Message));
+        }
+    }
+
+    Task<RegistryOperationResult> RemoveGigaAmAsync(DownloadableModelInfo model)
+    {
+        if (!PathsEqual(model.OwnedPath, GigaAmFolder) || !IsOwnedGigaAm(_store.Snapshot()))
+            return Task.FromResult(RegistryOperationResult.Failure("The wallet refused that folder because it did not download it itself."));
+        try
+        {
+            Directory.Delete(GigaAmFolder, recursive: true);
+            _gigaAm?.ForgetDownloadedFolder(GigaAmFolder);
+            _store.Update(s => s.DownloadedModelFiles.RemoveAll(file =>
+                file.Equals(GigaAmLedger, StringComparison.OrdinalIgnoreCase)));
+            return Task.FromResult(RegistryOperationResult.Success("Removed GigaAM v3. You can download it again.", model.Id));
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or NotSupportedException)
         {
@@ -150,13 +221,57 @@ sealed class WalletModelManager : IWalletModelManager
         }
     }
 
+    RegistryOperationResult EnsureGigaAmFolder()
+    {
+        try
+        {
+            if (HasReparsePoint(_modelsRoot))
+                return RegistryOperationResult.Failure("The wallet will not use that model folder because it is redirected.");
+            Directory.CreateDirectory(_modelsRoot);
+            if (HasReparsePoint(_gigaAmRoot))
+                return RegistryOperationResult.Failure("The wallet will not use that GigaAM folder because it is redirected.");
+            Directory.CreateDirectory(_gigaAmRoot);
+            return RegistryOperationResult.Success("The wallet GigaAM folder is ready.");
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or NotSupportedException)
+        {
+            return RegistryOperationResult.Failure("The wallet could not prepare its GigaAM folder: " + e.Message);
+        }
+    }
+
+    bool IsOwnedGigaAm(WalletSettings settings) =>
+        settings.DownloadedModelFiles.Contains(GigaAmLedger, StringComparer.OrdinalIgnoreCase)
+        && IsWalletGigaAmFolder(GigaAmFolder);
+
+    bool IsWalletGigaAmFolder(string path)
+    {
+        try
+        {
+            var candidate = Path.GetFullPath(path);
+            if (!PathsEqual(candidate, GigaAmFolder)
+                || !WalletRegistry.IsInsideModels(candidate, _modelsRoot)
+                || !Directory.Exists(candidate)
+                || !File.Exists(Path.Combine(candidate, OwnershipMarker))
+                || GigaAmFiles.Find(candidate) is null
+                || HasReparsePoint(_modelsRoot)
+                || HasReparsePoint(_gigaAmRoot)
+                || HasReparsePoint(candidate)) return false;
+            return Directory.EnumerateFileSystemEntries(candidate, "*", SearchOption.TopDirectoryOnly)
+                .All(entry => File.Exists(entry) && !HasReparsePoint(entry));
+        }
+        catch (Exception e) when (e is ArgumentException or IOException or NotSupportedException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
     /// <summary>
     /// Whisper can download on first use without going through the model catalog button. Once its progress event
     /// proves that a download is in flight, claim only the exact file that appeared in the active wallet folder.
     /// </summary>
     void TrackAutomaticDownload()
     {
-        if (_whisper.State != SourceState.Downloading) return;
+        if (_whisper.State is not (SourceState.Downloading or SourceState.Ready)) return;
         var file = _store.Snapshot().WhisperModel;
         if (string.IsNullOrWhiteSpace(file)) return;
         var target = Path.Combine(_whisperRoot, file);
@@ -174,6 +289,16 @@ sealed class WalletModelManager : IWalletModelManager
         {
             // The source will report the download result; an unclaimable file remains non-removable by the wallet.
         }
+    }
+
+    void TrackAutomaticGigaAmDownload()
+    {
+        if (_gigaAm?.State != SourceState.Ready || !IsWalletGigaAmFolder(GigaAmFolder)) return;
+        _store.Update(s =>
+        {
+            if (!s.DownloadedModelFiles.Contains(GigaAmLedger, StringComparer.OrdinalIgnoreCase))
+                s.DownloadedModelFiles.Add(GigaAmLedger);
+        });
     }
 
     bool IsOwnedModel(string path, WalletSettings settings)

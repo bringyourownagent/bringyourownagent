@@ -6,11 +6,11 @@ The first working agent wallet for [BYOA](../README.md): a tray app on your comp
 
 | Source | Runs | Languages | Cost | Notes |
 |---|---|---|---|---|
-| GigaAM v3 (sherpa-onnx) | this PC, CPU | Russian only | no cloud bill | very fast and accurate for Russian; uses a model folder already on disk |
+| GigaAM v3 (sherpa-onnx) | this PC, CPU | Russian only | no cloud bill | very fast and accurate for Russian; downloads 230 MB into the wallet's models folder when needed |
 | Whisper large-v3, q5_0 (Whisper.net / whisper.cpp) | this PC, GPU or CPU | 100 | no cloud bill | downloads once (1.1 GB) into the wallet's active `models\whisper` folder on first use, with progress shown |
 | ElevenLabs Scribe v2 through OpenRouter | your API key | 99 | paid, about $0.00004 a second | the last fallback; asks before it runs |
 
-The default route for speech is GigaAM for `ru`, Whisper for other languages and as the fallback, and OpenRouter last. Text sources are added to their own route when the visitor chooses them; local sources are tried before paid sources. You can reorder either route, switch sources off and decide whether the paid one asks.
+The default route for speech depends on hardware: GigaAM for `ru`, then Whisper large on a usable GPU; without a usable GPU it uses the small CPU Whisper model for other languages and leaves the large model as an option. OpenRouter is last. Text sources are added to their own route when the visitor chooses them; local sources are tried before paid sources. You can reorder either route, switch sources off and decide whether the paid one asks.
 
 The design and the security notes are in [docs/wallet-0.1.md](../docs/wallet-0.1.md). The page API is the BYOA 0.1 contract: `window.byoa.request(manifest)`, `call(grantId, skill, input, params)`, `release(grantId)`.
 
@@ -125,4 +125,4 @@ packaging/                   make-package.ps1 (the ready-to-install zip), Instal
 install.ps1, uninstall.ps1   install from the source, or (next to app\ in the package) from the package
 ```
 
-Packages: Avalonia 11.3 (MIT), Whisper.net 1.9 (MIT), org.k2fsa.sherpa.onnx 1.13 (Apache-2.0), BringYourOwnAgent 0.0.2 (Apache-2.0), System.Security.Cryptography.ProtectedData (MIT); xunit (Apache-2.0) for the tests. The Barlow fonts are under the SIL Open Font License (`desktop/Byoa.Wallet.Desktop/Assets/Fonts/OFL.txt`). Model weights are not in the repository: Whisper's ggml files come from Hugging Face (MIT), GigaAM from the visitor's own folder.
+Packages: Avalonia 11.3 (MIT), Whisper.net 1.9 (MIT), org.k2fsa.sherpa.onnx 1.13 (Apache-2.0), BringYourOwnAgent 0.0.2 (Apache-2.0), System.Security.Cryptography.ProtectedData (MIT); xunit (Apache-2.0) for the tests. The Barlow fonts are under the SIL Open Font License (`desktop/Byoa.Wallet.Desktop/Assets/Fonts/OFL.txt`). Model weights are not in the repository: Whisper's ggml files and the pinned GigaAM v3 files come from Hugging Face and are verified before they enter the wallet's active models folder. Visitor-provided folders remain read-only.

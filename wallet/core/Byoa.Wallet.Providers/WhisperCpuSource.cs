@@ -14,8 +14,9 @@ public sealed class WhisperCpuSource : WhisperSource
     /// <summary>Small beats base on non-English words (measured, see docs/text-generate.md) and still fits a first download.</summary>
     public const string ModelFile = "ggml-small-q5_1.bin";
 
-    public WhisperCpuSource(Func<IReadOnlyList<FoundModel>> found, HttpClient http, CpuFeatureSet? cpuFeatures = null)
-        : base(() => ModelFile, found, http, cpuFeatures)
+    public WhisperCpuSource(Func<IReadOnlyList<FoundModel>> found, HttpClient http, CpuFeatureSet? cpuFeatures = null,
+        bool? processGpuOverride = false)
+        : base(() => ModelFile, found, http, cpuFeatures, processGpuOverride)
     {
     }
 

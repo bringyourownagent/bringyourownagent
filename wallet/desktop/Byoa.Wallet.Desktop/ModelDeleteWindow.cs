@@ -60,7 +60,7 @@ sealed class ModelDeleteWindow : Window
         if (bytes is null) return "size unknown";
         return bytes.Value >= 1_000_000_000
             ? (bytes.Value / 1_000_000_000d).ToString("0.0", CultureInfo.InvariantCulture) + " GB"
-            : (bytes.Value / 1_000_000d).ToString("0", CultureInfo.InvariantCulture) + " MB";
+            : ((long)Math.Ceiling(bytes.Value / 1_000_000d)).ToString(CultureInfo.InvariantCulture) + " MB";
     }
 
     void Answer(bool answer)
