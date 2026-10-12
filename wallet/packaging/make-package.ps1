@@ -87,13 +87,14 @@ foreach ($config in 'Byoa.Wallet.runtimeconfig.json', 'byoa-host.runtimeconfig.j
 }
 
 # 2. Stage the package. Native libraries that Whisper.net ships for other systems (runtimes\linux-*, osx, arm, x86)
-#    are left out; the wallet runs on Windows x64 only.
+#    are left out; the wallet runs on Windows x64 only. The Windows x64 builds are kept: the normal CPU build, the
+#    no-AVX CPU build (for processors without AVX, which the Vulkan and the normal builds cannot run) and Vulkan.
 function Test-Wanted([string]$relative) {
     $parts = $relative.Split('\')
     if ($relative -eq 'ggml-metal.metal') { return $false }          # a shader for Apple's Metal
     if ($parts[0] -ne 'runtimes' -or $parts.Count -lt 3) { return $true }
     if ($parts[1] -eq $rid) { return $true }
-    return ($parts[1] -eq 'vulkan' -and $parts.Count -ge 4 -and $parts[2] -eq $rid)
+    return ((@('vulkan', 'noavx') -contains $parts[1]) -and ($parts.Count -ge 4) -and ($parts[2] -eq $rid))
 }
 function Copy-Into([string]$from, [string]$to, [switch]$Filter) {
     $base = (Resolve-Path -LiteralPath $from).Path.TrimEnd('\')

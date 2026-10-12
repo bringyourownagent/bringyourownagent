@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Runtime.Intrinsics.X86;
 using System.Security.Cryptography;
 using System.Text.Json.Nodes;
 using Byoa.Wallet.Protocol;
@@ -222,12 +223,19 @@ public class WhisperSource : ISpeechSource, IDownloadableSource, IWarmable, IDis
     static void ConfigureRuntime(bool useGpu)
     {
         if (Interlocked.Exchange(ref useGpu ? ref _gpuRuntimeConfigured : ref _cpuRuntimeConfigured, 1) == 1) return;
-        // GPU through Vulkan first; the CPU build is the automatic fallback when Vulkan cannot load. A source that
-        // runs without the GPU never loads Vulkan at all: on some machines its driver breaks the CPU run instead.
-        RuntimeOptions.RuntimeLibraryOrder = useGpu
-            ? [RuntimeLibrary.Vulkan, RuntimeLibrary.Cpu, RuntimeLibrary.CpuNoAvx]
-            : [RuntimeLibrary.Cpu, RuntimeLibrary.CpuNoAvx];
+        RuntimeOptions.RuntimeLibraryOrder = RuntimeOrderFor(useGpu, Avx.IsSupported);
     }
+
+    /// <summary>
+    /// The native builds to try, in order. A processor without AVX gets the no-AVX build only: the Vulkan build and
+    /// the AVX CPU build both need AVX (the CPU build is refused with an exception, the Vulkan build ends the process).
+    /// With AVX: GPU through Vulkan first, the CPU build as the automatic fallback. A source that runs without the GPU
+    /// never loads Vulkan at all: on some machines its driver breaks the CPU run instead.
+    /// </summary>
+    public static List<RuntimeLibrary> RuntimeOrderFor(bool useGpu, bool avx) =>
+        !avx ? [RuntimeLibrary.CpuNoAvx]
+        : useGpu ? [RuntimeLibrary.Vulkan, RuntimeLibrary.Cpu, RuntimeLibrary.CpuNoAvx]
+        : [RuntimeLibrary.Cpu, RuntimeLibrary.CpuNoAvx];
 
     /// <summary>Whether this source may use the GPU; the CPU source loads without it.</summary>
     protected virtual bool UseGpu => true;
@@ -247,7 +255,17 @@ public class WhisperSource : ISpeechSource, IDownloadableSource, IWarmable, IDis
         if (_factory is not null && _factoryPath == path) return _factory;
         DisposeFactory();
         ConfigureRuntime(UseGpu);
-        _factory = WhisperFactory.FromPath(path, new WhisperFactoryOptions { UseGpu = UseGpu });
+        // Without AVX the no-AVX build runs on the CPU only, so the GPU is switched off for it.
+        var useGpu = UseGpu && Avx.IsSupported;
+        try
+        {
+            _factory = WhisperFactory.FromPath(path, new WhisperFactoryOptions { UseGpu = useGpu });
+        }
+        catch (PlatformNotSupportedException e)
+        {
+            // Whisper.net refuses a build this processor cannot run: the source is unavailable, the wallet keeps running.
+            throw new InvalidOperationException("this PC cannot run Whisper: " + e.Message, e);
+        }
         _factoryPath = path;
         _runtime = RuntimeLabel();
         if (_runtime is "Cpu" or "CpuNoAvx") _runtime = "CPU";
