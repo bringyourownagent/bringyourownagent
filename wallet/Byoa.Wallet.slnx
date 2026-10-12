@@ -6,6 +6,7 @@
   <Folder Name="/apps/">
     <Project Path="desktop/Byoa.Wallet.Desktop/Byoa.Wallet.Desktop.csproj" />
     <Project Path="host/Byoa.Wallet.Host/Byoa.Wallet.Host.csproj" />
+    <Project Path="mcp/Byoa.Wallet.Mcp/Byoa.Wallet.Mcp.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Byoa.Wallet.Tests/Byoa.Wallet.Tests.csproj" />

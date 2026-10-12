@@ -16,4 +16,8 @@
     <InternalsVisibleTo Include="Byoa.Wallet.Tests" />
   </ItemGroup>
 
+  <ItemGroup>
+    <EmbeddedResource Include="Help\*.md" LogicalName="Byoa.Wallet.Help.%(Filename).md" />
+  </ItemGroup>
+
 </Project>

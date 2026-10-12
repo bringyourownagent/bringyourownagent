@@ -74,7 +74,8 @@ public static class ModelScanner
             foreach (var sub in Directory.EnumerateDirectories(dir))
             {
                 var name = System.IO.Path.GetFileName(sub);
-                if (name.StartsWith('.') || name.Equals("espeak-ng-data", StringComparison.OrdinalIgnoreCase)) continue;
+                if (name.StartsWith('.') || name.EndsWith(".part", StringComparison.OrdinalIgnoreCase)
+                    || name.Equals("espeak-ng-data", StringComparison.OrdinalIgnoreCase)) continue;
                 Walk(sub, depth + 1, found, seen);
             }
         }

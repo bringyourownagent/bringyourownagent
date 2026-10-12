@@ -10,7 +10,8 @@
         no .NET is needed. This mode is chosen by itself when app\Byoa.Wallet.exe lies next to this script, or with
         -FromPackage.
 
-    1. Source: publishes the tray app (Byoa.Wallet.exe) and the native messaging host (byoa-host.exe) into
+    1. Source: publishes the tray app (Byoa.Wallet.exe), the native messaging host (byoa-host.exe), and the MCP bridge
+       (byoa-mcp.exe) into
        -InstallDir. Package: copies app\ into -InstallDir, the extension into -InstallDir\extension and the
        uninstaller (uninstall.ps1, Uninstall.cmd) next to the app, so the unzipped folder is not needed afterwards.
        The copies lose the "downloaded from the internet" mark (Unblock-File), so that Windows does not ask again
@@ -123,13 +124,16 @@ if ($FromPackage) {
         if ($LASTEXITCODE -ne 0) { throw 'dotnet publish failed for the wallet' }
         & dotnet publish (Join-Path $root 'host\Byoa.Wallet.Host') -c Release -o $InstallDir --nologo -v quiet
         if ($LASTEXITCODE -ne 0) { throw 'dotnet publish failed for the native host' }
+        & dotnet publish (Join-Path $root 'mcp\Byoa.Wallet.Mcp') -c Release -o $InstallDir --nologo -v quiet
+        if ($LASTEXITCODE -ne 0) { throw 'dotnet publish failed for the MCP bridge' }
     }
     $extensionDir = Join-Path $root 'extension'
 }
 
 $hostExe = Join-Path $InstallDir 'byoa-host.exe'
 $walletExe = Join-Path $InstallDir 'Byoa.Wallet.exe'
-if (-not (Test-Path $hostExe) -or -not (Test-Path $walletExe)) { throw "byoa-host.exe or Byoa.Wallet.exe is missing in $InstallDir" }
+$mcpExe = Join-Path $InstallDir 'byoa-mcp.exe'
+if (-not (Test-Path $hostExe) -or -not (Test-Path $walletExe) -or -not (Test-Path $mcpExe)) { throw "byoa-host.exe, byoa-mcp.exe or Byoa.Wallet.exe is missing in $InstallDir" }
 
 $extensionId = Get-ExtensionId (Join-Path $extensionDir 'manifest.json')
 
@@ -179,9 +183,9 @@ if ($StartWithWindows) {
 
 Write-Host ''
 Write-Host 'Installed the BYOA agent wallet 0.1.'
-Write-Host "  App and host:   $InstallDir"
+Write-Host "  App, host, MCP: $InstallDir"
 Write-Host "  Data:           $(Join-Path $env:LOCALAPPDATA 'BYOA\wallet') (settings, DPAPI-protected keys, activity)"
-Write-Host "  Models:         $(Join-Path $env:LOCALAPPDATA 'BYOA\models')"
+Write-Host "  Models:         $(Join-Path $env:LOCALAPPDATA 'BYOA\wallet\models')"
 Write-Host "  Extension ID:   $extensionId"
 Write-Host ''
 Write-Host 'Load the extension in Chrome: open chrome://extensions, turn on Developer mode,'

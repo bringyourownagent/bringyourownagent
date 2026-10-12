@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>byoa-mcp</AssemblyName>
+    <RootNamespace>Byoa.Wallet.Mcp</RootNamespace>
+    <PublishSingleFile>false</PublishSingleFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\core\Byoa.Wallet.Core\Byoa.Wallet.Core.csproj" />
+  </ItemGroup>
+</Project>

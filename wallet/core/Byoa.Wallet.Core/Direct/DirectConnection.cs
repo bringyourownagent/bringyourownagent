@@ -200,6 +200,7 @@ public sealed class DirectConnection
         if (_stop.IsCancellationRequested || _token is null) return false;
         var stored = _owner.Pairings.Get(Origin);
         if (stored is null || stored.Token != _token) return false;
+        if (_owner.Engine.PauseSiteIfDue(Origin)) return false;
         if (_owner.Engine.DecidesOnItsOwn(Origin)) return true;          // not while the site is paused
         _owner.Pairings.Forget(Origin, _token);
         return false;
@@ -280,7 +281,8 @@ public sealed class DirectConnection
             {
                 // After a reconnect the welcome carries the site's current manifest: within the grant it is taken
                 // silently; asking for more needs a new link and the visitor's consent (showing only the difference).
-                var current = DirectLink.TryManifest(echoed, out var json, out _) && _owner.Engine.CoveredByGrant(Origin, json!)
+                var current = !_owner.Engine.PauseSiteIfDue(Origin)
+                    && DirectLink.TryManifest(echoed, out var json, out _) && _owner.Engine.CoveredByGrant(Origin, json!)
                     ? await _owner.GrantSilentlyAsync(Origin, json!, ct).ConfigureAwait(false)
                     : null;
                 if (current is null)
@@ -610,8 +612,9 @@ public sealed class DirectConnection
         _ => "a broken connection",
     };
 
-    /// <summary>A pairing token: 16 to 1024 printable ASCII characters (opaque to the wallet).</summary>
-    internal static bool IsToken(string token) => token.Length is >= 16 and <= 1024 && token.All(c => c is > ' ' and < '\u007f');
+    /// <summary>A pairing token: 22 to 1024 URL-safe characters (opaque to the wallet).</summary>
+    internal static bool IsToken(string? token) => token is not null && token.Length is >= 22 and <= 1024
+        && token.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_');
 
     static string Code(JsonNode? node)
     {

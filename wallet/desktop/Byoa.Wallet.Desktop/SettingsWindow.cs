@@ -9,6 +9,8 @@ using Avalonia.Threading;
 using Byoa.Wallet.Activity;
 using Byoa.Wallet.Engine;
 using Byoa.Wallet.Providers;
+using Byoa.Wallet.Protocol;
+using Byoa.Wallet.Registry;
 using Byoa.Wallet.Settings;
 using Byoa.Wallet.Sources;
 
@@ -27,12 +29,19 @@ sealed class SettingsWindow : Window
         ("skills", "Skills & fallbacks", Ui.Arrow),
         ("limits", "Limits", Ui.Gauge),
         ("activity", "Activity", Ui.List),
+        ("agents", "Agents", Ui.Screen),
+        ("connect", "Connect your AI agent", Ui.Plus),
+        ("help", "Help", Ui.Key),
     ];
 
     readonly WalletServices _w;
     readonly ListBox _tabs;
     readonly Dictionary<string, Avalonia.Controls.Shapes.Path> _tabGlyphs = [];
-    readonly ScrollViewer _content = new() { HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled };
+    readonly ScrollViewer _content = new()
+    {
+        HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled,
+        HorizontalContentAlignment = HorizontalAlignment.Stretch,
+    };
     readonly TextBlock _todayText = new() { FontFamily = Ui.SignFace, FontWeight = FontWeight.Bold, FontSize = 17 };
     readonly ProgressBar _todayBar = new() { Minimum = 0, Maximum = 1 };
     readonly DispatcherTimer _refresh;
@@ -76,6 +85,7 @@ sealed class SettingsWindow : Window
                 if (id == "sites") _w.Engine.ClearBadge();
             }
         };
+        _content.SizeChanged += (_, _) => ResizePageToViewport();
 
         _todayBar.Classes.Add("meter");
         var sidebarFoot = Ui.Column(4, Ui.Text("Wallet today", "muted", "small"), _todayText, _todayBar);
@@ -142,13 +152,24 @@ sealed class SettingsWindow : Window
             case "sources": SourcesPage(page); break;
             case "skills": SkillsPage(page); break;
             case "limits": LimitsPage(page); break;
+            case "agents": AgentsPage(page); break;
+            case "connect": ConnectAgentPage(page); break;
+            case "help": HelpPage(page); break;
             default: ActivityPage(page); break;
         }
 
         var previous = _content.Tag as string;
+        page.HorizontalAlignment = HorizontalAlignment.Stretch;
         _content.Content = page;
         _content.Tag = _page;
+        ResizePageToViewport();
         if (previous == _page) Dispatcher.UIThread.Post(() => _content.Offset = offset, DispatcherPriority.Loaded);
+    }
+
+    void ResizePageToViewport()
+    {
+        if (_content.Content is Control page && _content.Bounds.Width > 0)
+            page.Width = Math.Max(0, _content.Bounds.Width - page.Margin.Left - page.Margin.Right);
     }
 
     static void Head(StackPanel page, string title, string sub)
@@ -312,13 +333,30 @@ sealed class SettingsWindow : Window
         Head(page, "Sources", "Your models and keys. The site never learns which one answered, and keys never leave this computer.");
         var settings = _w.Store.Snapshot();
 
+        page.Children.Add(Ui.Columns("*,Auto", Ui.Wrap("Add a local model or a provider model with your own key. The short wizard tests it before it changes your route.", "muted"),
+            Ui.Button("Add a model", "allow", "AddModel", () => _w.Ui.OpenAddModel(), "small")));
+
         page.Children.Add(Section("On this PC"));
         page.Children.Add(SourceCard(_w.Sources.GigaAm, settings,
-            "GigaAM v3 transducer (sherpa-onnx). " + (_w.Sources.GigaAm.Folder ?? "Not found in your model folders."), null));
+            "GigaAM v3 transducer (sherpa-onnx). " + (_w.Sources.GigaAm.Folder ?? "Not found in your model folders; the wallet can download 230 MB into its own models folder."), null));
         page.Children.Add(SourceCard(_w.Sources.Whisper, settings, "whisper.cpp model " + settings.WhisperModel + ". " + (_w.Sources.Whisper.ModelPath ?? "It downloads into " + Byoa.Wallet.Protocol.WalletPaths.Models + " on first use."), WhisperExtras(settings)));
 
         page.Children.Add(Section("API keys"));
         page.Children.Add(SourceCard(_w.Sources.OpenRouter, settings, "ElevenLabs Scribe v2 through OpenRouter, with your own key. Stored with Windows DPAPI for your account only; never shown, never logged.", KeyExtras()));
+
+        page.Children.Add(Section("Added models"));
+        var added = settings.Sources.Where(s => s.Kind is not null).ToList();
+        if (added.Count == 0)
+        {
+            page.Children.Add(Ui.Box("card", Ui.Wrap("No added models yet. Use Add a model to find one on this PC or behind your own API key.", "muted")));
+        }
+        else
+        {
+            foreach (var source in added) page.Children.Add(AddedSourceCard(source));
+        }
+
+        page.Children.Add(Section("Wallet downloads"));
+        page.Children.Add(DownloadableModelsCard());
 
         page.Children.Add(Section("Local models found",
             Ui.Button("Rescan", "deny", "ModelsRescan", () => { _w.Sources.Catalog.Rescan(); Render(); }, "small")));
@@ -362,12 +400,140 @@ sealed class SettingsWindow : Window
         page.Children.Add(Ui.Box("card", folders));
     }
 
+    Control AddedSourceCard(SourceSetting source)
+    {
+        var info = _w.Registry.ListSources().FirstOrDefault(s => s.Id == source.Id);
+        var enabled = new CheckBox { Content = "Use it", IsChecked = source.Enabled };
+        AutomationProperties.SetAutomationId(enabled, "AddedSourceEnabled-" + source.Id);
+        enabled.IsCheckedChanged += (_, _) => { _w.Registry.EnableSource(source.Id, enabled.IsChecked == true); Render(); };
+        var edit = Ui.Button("Edit", "deny", "AddedSourceEdit-" + source.Id, () => _w.Ui.OpenAddModel(source.Id), "small");
+        var remove = Ui.Button("Remove", "deny", "AddedSourceRemove-" + source.Id, () =>
+        {
+            _w.Registry.RemoveSource(source.Id);
+            Render();
+        }, "small");
+        var invalid = _w.Sources.InvalidTextSources.FirstOrDefault(x => x.Id == source.Id);
+        if (invalid is not null && info is not null) info = info with { StateText = "invalid: " + invalid.Message };
+        var detail = (info?.StateText ?? "configured") + " · " + string.Join(", ", source.Skills.Count == 0 ? ["text.generate"] : source.Skills)
+            + (source.Languages.Count == 0 ? " · any language" : " · " + string.Join(", ", source.Languages));
+        var buttons = Ui.Row(8, enabled, edit, remove);
+        var order = AddedSourceOrder(source);
+        return Ui.Box("card", Ui.Column(7,
+            Ui.Columns("*,Auto", Ui.Column(2, Ui.Text(info?.Name ?? source.Label ?? source.Model ?? source.Id, "h2"), Ui.Text(source.Id, "mono", "small")), buttons),
+            Ui.Wrap(detail, "muted"),
+            Ui.Wrap((source.Endpoint is null ? "No endpoint" : source.Endpoint) + (source.Model is null ? "" : " · " + source.Model), "muted", "small"),
+            order));
+    }
+
+    Control AddedSourceOrder(SourceSetting source)
+    {
+        var panel = new StackPanel { Spacing = 5 };
+        var skills = source.Skills.Count == 0 ? [Vocabulary.Generate] : source.Skills;
+        foreach (var skill in skills.Distinct(StringComparer.Ordinal))
+        {
+            var chain = _w.Registry.ListChains(skill).FirstOrDefault(c => c.Language is null);
+            var ids = chain?.OrderedSourceIds.ToList() ?? [];
+            var index = ids.FindIndex(id => id == source.Id);
+            if (index < 0)
+            {
+                panel.Children.Add(Ui.Row(8,
+                    Ui.Text(Vocabulary.SkillName(skill) + " order", "label"),
+                    Ui.Button("Add to order", "deny", "AddedSourceOrderAdd-" + SafeId(source.Id) + "-" + SafeId(skill),
+                        () =>
+                        {
+                            ids.Add(source.Id);
+                            _w.Registry.SetOrder(skill, null, ids);
+                            Render();
+                        }, "small")));
+                continue;
+            }
+
+            var up = Ui.Button("↑", "deny", "AddedSourceOrderUp-" + SafeId(source.Id) + "-" + SafeId(skill),
+                () => MoveAddedSourceOrder(skill, source.Id, -1), "square");
+            var down = Ui.Button("↓", "deny", "AddedSourceOrderDown-" + SafeId(source.Id) + "-" + SafeId(skill),
+                () => MoveAddedSourceOrder(skill, source.Id, 1), "square");
+            up.IsEnabled = index > 0;
+            down.IsEnabled = index < ids.Count - 1;
+            panel.Children.Add(Ui.Row(8, Ui.Text(Vocabulary.SkillName(skill) + " order", "label"),
+                Ui.Text((index + 1).ToString(CultureInfo.InvariantCulture) + " of " + ids.Count.ToString(CultureInfo.InvariantCulture), "muted", "small"), up, down));
+        }
+
+        return Ui.Box("field", panel);
+    }
+
+    void MoveAddedSourceOrder(string skill, string sourceId, int by)
+    {
+        var ids = _w.Registry.ListChains(skill).FirstOrDefault(c => c.Language is null)?.OrderedSourceIds.ToList();
+        if (ids is null) return;
+        var i = ids.FindIndex(id => id == sourceId);
+        var j = i + by;
+        if (i < 0 || j < 0 || j >= ids.Count) return;
+        (ids[i], ids[j]) = (ids[j], ids[i]);
+        _w.Registry.SetOrder(skill, null, ids);
+        Render();
+    }
+
+    static string SafeId(string value) => new string(value.Select(c => char.IsLetterOrDigit(c) ? c : '-').ToArray());
+
+    Control DownloadableModelsCard()
+    {
+        var list = new StackPanel { Spacing = 7 };
+        foreach (var model in _w.Registry.ListDownloadableModels())
+        {
+            var size = model.SizeBytes is { } bytes ? ((long)Math.Ceiling(bytes / 1_000_000d)).ToString(CultureInfo.InvariantCulture) + " MB" : "size unknown";
+            var state = model.Downloaded ? "downloaded in this wallet" : model.CanDownload ? "not downloaded" : "put its folder in Model folders";
+            var row = Ui.Columns("*,Auto", Ui.Column(2, Ui.Text(model.Name, "strong"), Ui.Wrap(size + " · " + state + " · " + model.Hardware, "muted", "small")),
+                model.CanDownload && !model.Downloaded
+                    ? Ui.Button("Download", "deny", "DownloadModel-" + model.Id, () =>
+                    {
+                        _ = Task.Run(async () =>
+                        {
+                            try
+                            {
+                                if (model.Id == "gigaam:gigaam-v3") _w.Ui.DownloadStarted(_w.Sources.GigaAm);
+                                else if (model.Id.StartsWith("whisper:", StringComparison.Ordinal)) _w.Ui.DownloadStarted(_w.Sources.Whisper);
+                                var result = await _w.Registry.DownloadModelAsync(model.Id);
+                                DesktopUi.PostSafe(() => { _w.Ui.ShowInfo(new InfoModel(result.Ok ? "Model downloaded" : "Model download", result.Message)); Render(); });
+                            }
+                            catch (Exception e) when (e is not OutOfMemoryException)
+                            {
+                                DesktopUi.PostSafe(() => _w.Ui.ShowInfo(new InfoModel("Model download", "The wallet could not download that model: " + e.Message)));
+                            }
+                        });
+                    }, "small")
+                    : model.Downloaded
+                    ? Ui.Button("Delete", "deny", "DeleteModel-" + model.Id, () => _ = DeleteModelAsync(model), "small")
+                    : Ui.Text(model.Downloaded ? "Ready" : "Not available automatically", "muted", "small"));
+            list.Children.Add(row);
+        }
+        if (list.Children.Count == 0) list.Children.Add(Ui.Wrap("No model downloads are available.", "muted"));
+        return Ui.Box("card", list);
+    }
+
+    async Task DeleteModelAsync(DownloadableModelInfo model)
+    {
+        try
+        {
+            var confirmation = new ModelDeleteWindow(model.Name, model.SizeBytes);
+            confirmation.Show();
+            if (!await confirmation.Result.ConfigureAwait(true)) return;
+            var result = await _w.Registry.RemoveDownloadedModelAsync(model.Id).ConfigureAwait(true);
+            _w.Ui.ShowInfo(new InfoModel(result.Ok ? "Model removed" : "Model removal", result.Message));
+            Render();
+        }
+        catch (Exception e) when (e is not OutOfMemoryException)
+        {
+            ErrorLog.Write(WalletPaths.Home, e);
+            _w.Ui.ShowInfo(new InfoModel("Model removal", "The wallet could not remove that model."));
+        }
+    }
+
     Control SourceCard(ISpeechSource source, WalletSettings settings, string description, Control? extras)
     {
         var enabled = new CheckBox { Content = "Use it", IsChecked = settings.Sources.FirstOrDefault(x => x.Id == source.Id)?.Enabled ?? true };
         AutomationProperties.SetAutomationId(enabled, "SourceEnabled-" + source.Id);
         AutomationProperties.SetName(enabled, "Use " + source.Name);
-        enabled.IsCheckedChanged += (_, _) => _w.Store.Update(s => s.Source(source.Id).Enabled = enabled.IsChecked == true);
+        enabled.IsCheckedChanged += (_, _) => _w.Registry.EnableSource(source.Id, enabled.IsChecked == true);
 
         var langs = source.Languages is null ? source.LanguageCount.ToString(CultureInfo.InvariantCulture) + " languages" : string.Join(", ", source.Languages.Select(Vocabulary.LanguageName));
         var props = new WrapPanel();
@@ -393,6 +559,7 @@ sealed class SettingsWindow : Window
             SourceState.Downloading => Ui.Chip("Downloading", "orange"),
             SourceState.NeedsDownload => Ui.Chip("Not downloaded", "outline"),
             SourceState.NoKey => Ui.Chip("No key", "outline"),
+            SourceState.Unavailable => Ui.Chip("Unavailable", "outline"),
             _ => Ui.Chip(source.State == SourceState.Missing ? "Not found" : "Failed", "ink"),
         };
         var panel = Ui.Column(6,
@@ -430,7 +597,7 @@ sealed class SettingsWindow : Window
         {
             panel.Children.Add(Ui.Button("Download now", "allow", "WhisperDownload", () =>
             {
-                _ = whisper.EnsureDownloadedAsync(CancellationToken.None);
+                _ = StartWhisperDownloadAsync(whisper);
                 _w.Ui.DownloadStarted(whisper);
                 Render();
             }, "small"));
@@ -438,12 +605,35 @@ sealed class SettingsWindow : Window
 
         if (whisper.State == SourceState.Downloading)
         {
-            var bar = new ProgressBar { Minimum = 0, Maximum = 1, Value = whisper.DownloadProgress ?? 0 };
+            var bar = new ProgressBar
+            {
+                Minimum = 0,
+                Maximum = 1,
+                Value = whisper.DownloadProgress ?? (whisper.State == SourceState.Ready ? 1 : 0),
+            };
             bar.Classes.Add("meter");
             panel.Children.Add(bar);
         }
 
         return panel;
+    }
+
+    async Task StartWhisperDownloadAsync(WhisperSource whisper)
+    {
+        try
+        {
+            await whisper.EnsureDownloadedAsync(CancellationToken.None).ConfigureAwait(true);
+        }
+        catch (Exception e)
+        {
+            // This task is started by a button event. Keep its failure on the wallet's side of the UI instead of
+            // allowing an unobserved task exception to reach the process-level handler.
+            _w.Ui.ShowInfo(new InfoModel("Model download", "The wallet could not download Whisper: " + e.Message));
+        }
+        finally
+        {
+            Render();
+        }
     }
 
     static readonly (string File, string Note)[] WhisperChoices =
@@ -457,14 +647,15 @@ sealed class SettingsWindow : Window
     Control KeyExtras()
     {
         var panel = new StackPanel { Spacing = 8 };
-        var has = _w.Secrets.Has(OpenRouterSource.SecretName);
+        var has = _w.Registry.ListSources().FirstOrDefault(s => s.Id == OpenRouterSource.SourceId)?.HasApiKey == true;
         var box = new TextBox { PasswordChar = '•', Watermark = "sk-or-…", MinWidth = 300 };
         AutomationProperties.SetAutomationId(box, "KeyInput");
         var save = Ui.Button(has ? "Replace the key" : "Add the key", "deny", "KeySave", () =>
         {
             if (string.IsNullOrWhiteSpace(box.Text)) return;
-            _w.Secrets.Set(OpenRouterSource.SecretName, box.Text);
+            var result = _w.Registry.SetApiKeyAsync(OpenRouterSource.SourceId, box.Text).GetAwaiter().GetResult();
             box.Text = "";
+            if (!result.Ok) _w.Ui.ShowInfo(new InfoModel("API key", result.Message));
             Render();
         }, "small");
         panel.Children.Add(Ui.Row(8, box, save));
@@ -500,14 +691,16 @@ sealed class SettingsWindow : Window
         var settings = _w.Store.Snapshot();
         foreach (var chain in settings.Chains)
         {
-            page.Children.Add(Section(Vocabulary.SkillName(chain.Skill), Ui.Text(chain.Skill, "mono")));
+            var chainName = Vocabulary.SkillName(chain.Skill) + (chain.Language is null ? "" : " · " + Vocabulary.LanguageName(chain.Language));
+            page.Children.Add(Section(chainName, Ui.Text(chain.Skill + (chain.Language is null ? "" : " / " + chain.Language), "mono")));
             var stops = new StackPanel { Spacing = 10 };
             for (var i = 0; i < chain.Stops.Count; i++)
             {
                 var stop = chain.Stops[i];
-                var source = _w.Sources.All.FirstOrDefault(s => s.Id == stop.SourceId);
-                if (source is null) continue;
-                stops.Children.Add(StopRow(chain.Skill, i, chain.Stops.Count, stop, source));
+                if (_w.Sources.All.FirstOrDefault(s => s.Id == stop.SourceId) is { } speech)
+                    stops.Children.Add(StopRow(chain.Skill, chain.Language, i, chain.Stops.Count, stop, speech));
+                else if (_w.Sources.FindText(stop.SourceId) is { } text)
+                    stops.Children.Add(TextStopRow(chain.Skill, chain.Language, i, chain.Stops.Count, stop, text));
             }
 
             page.Children.Add(Ui.Box("card", stops));
@@ -517,16 +710,20 @@ sealed class SettingsWindow : Window
             manager.Children.Add(Ui.Text("Manager suggests", "label"));
             foreach (var language in new string?[] { "ru", "sk", "en", null })
             {
-                var plan = Router.Plan(chain, _w.Sources.All, id => settings.Source(id).Enabled, language);
                 var label = language is null ? "Language not given" : Vocabulary.LanguageName(language);
-                manager.Children.Add(Ui.Wrap(label + ": " + Router.Explain(plan, language), "small"));
+                var chosen = settings.Chains.FirstOrDefault(c => c.Skill == chain.Skill && c.Language == Vocabulary.PrimaryLanguage(language))
+                    ?? settings.Chains.FirstOrDefault(c => c.Skill == chain.Skill && c.Language is null) ?? chain;
+                var explanation = chain.Skill == Vocabulary.Generate
+                    ? Router.ExplainText(Router.PlanText(chosen, _w.Sources.Text, id => settings.Source(id).Enabled, language))
+                    : Router.Explain(Router.Plan(chosen, _w.Sources.All, id => settings.Source(id).Enabled, language), language);
+                manager.Children.Add(Ui.Wrap(label + ": " + explanation, "small"));
             }
 
             page.Children.Add(Ui.Box("manager", manager));
         }
     }
 
-    Control StopRow(string skill, int index, int count, ChainStop stop, ISpeechSource source)
+    Control StopRow(string skill, string? language, int index, int count, ChainStop stop, ISpeechSource source)
     {
         var name = Ui.Row(8, Ui.Text(source.Name, "strong"),
             Ui.Glyph(source.Runs == Runs.ApiKey ? Ui.Key : Ui.Screen, Ui.Brush("Ink2"), 13, 2),
@@ -536,21 +733,21 @@ sealed class SettingsWindow : Window
 
         var on = new CheckBox { Content = "On", IsChecked = stop.Enabled };
         AutomationProperties.SetAutomationId(on, "StopEnabled-" + source.Id);
-        on.IsCheckedChanged += (_, _) => _w.Store.Update(s => s.Chain(skill).Stops.First(x => x.SourceId == source.Id).Enabled = on.IsChecked == true);
+        on.IsCheckedChanged += (_, _) => _w.Registry.SetStopEnabled(skill, language, source.Id, on.IsChecked == true);
         var options = Ui.Row(14, on);
         if (source.Paid)
         {
             var ask = new CheckBox { Content = "Ask before paid", IsChecked = stop.AskBeforePaid };
             AutomationProperties.SetAutomationId(ask, "StopAsk-" + source.Id);
-            ask.IsCheckedChanged += (_, _) => _w.Store.Update(s => s.Chain(skill).Stops.First(x => x.SourceId == source.Id).AskBeforePaid = ask.IsChecked == true);
+            ask.IsCheckedChanged += (_, _) => _w.Registry.SetAskBeforePaid(skill, language, source.Id, ask.IsChecked == true);
             options.Children.Add(ask);
         }
 
-        var up = Ui.Button("", "deny", "StopUp-" + source.Id, () => Move(skill, source.Id, -1), "square");
+        var up = Ui.Button("", "deny", "StopUp-" + source.Id, () => Move(skill, language, source.Id, -1), "square");
         up.Content = Ui.Glyph(Ui.Up, Ui.Brush("Ink"), 14);
         up.IsEnabled = index > 0;
         AutomationProperties.SetName(up, "Move " + source.Name + " up");
-        var down = Ui.Button("", "deny", "StopDown-" + source.Id, () => Move(skill, source.Id, 1), "square");
+        var down = Ui.Button("", "deny", "StopDown-" + source.Id, () => Move(skill, language, source.Id, 1), "square");
         down.Content = Ui.Glyph(Ui.Down, Ui.Brush("Ink"), 14);
         down.IsEnabled = index < count - 1;
         AutomationProperties.SetName(down, "Move " + source.Name + " down");
@@ -560,18 +757,51 @@ sealed class SettingsWindow : Window
         return Ui.Columns("Auto,*,Auto", Ui.Stop(index + 1, index == 0, source.Paid), middle, Ui.Row(6, up, down));
     }
 
-    static string EngineWhere(ISpeechSource s) => WalletEngine.Where(s);
-
-    void Move(string skill, string id, int by)
+    Control TextStopRow(string skill, string? language, int index, int count, ChainStop stop, ITextSource source)
     {
-        _w.Store.Update(s =>
+        var name = Ui.Row(8, Ui.Text(source.Name, "strong"),
+            Ui.Glyph(source.Runs == Runs.ApiKey ? Ui.Key : Ui.Screen, Ui.Brush("Ink2"), 13, 2),
+            Ui.Text(EngineWhere(source), "muted"));
+        var langs = source.Languages is null ? "many languages" : "only " + string.Join(", ", source.Languages.Select(Vocabulary.LanguageName));
+        var info = Ui.Wrap((index == 0 ? "First choice · " : "") + langs + " · " + (source.Paid ? "paid" : "no cloud bill") + " · " + source.StateText, "muted");
+        var on = new CheckBox { Content = "On", IsChecked = stop.Enabled };
+        AutomationProperties.SetAutomationId(on, "StopEnabled-" + source.Id);
+        on.IsCheckedChanged += (_, _) => _w.Registry.SetStopEnabled(skill, language, source.Id, on.IsChecked == true);
+        var options = Ui.Row(14, on);
+        if (source.Paid)
         {
-            var stops = s.Chain(skill).Stops;
-            var i = stops.FindIndex(x => x.SourceId == id);
-            var j = i + by;
-            if (i < 0 || j < 0 || j >= stops.Count) return;
-            (stops[i], stops[j]) = (stops[j], stops[i]);
-        });
+            var ask = new CheckBox { Content = "Ask before paid", IsChecked = stop.AskBeforePaid };
+            AutomationProperties.SetAutomationId(ask, "StopAsk-" + source.Id);
+            ask.IsCheckedChanged += (_, _) => _w.Registry.SetAskBeforePaid(skill, language, source.Id, ask.IsChecked == true);
+            options.Children.Add(ask);
+        }
+
+        var up = Ui.Button("", "deny", "StopUp-" + source.Id, () => Move(skill, language, source.Id, -1), "square");
+        up.Content = Ui.Glyph(Ui.Up, Ui.Brush("Ink"), 14);
+        up.IsEnabled = index > 0;
+        AutomationProperties.SetName(up, "Move " + source.Name + " up");
+        var down = Ui.Button("", "deny", "StopDown-" + source.Id, () => Move(skill, language, source.Id, 1), "square");
+        down.Content = Ui.Glyph(Ui.Down, Ui.Brush("Ink"), 14);
+        down.IsEnabled = index < count - 1;
+        AutomationProperties.SetName(down, "Move " + source.Name + " down");
+        var middle = Ui.Column(3, name, info, options);
+        middle.Margin = new Thickness(12, 0, 12, 0);
+        return Ui.Columns("Auto,*,Auto", Ui.Stop(index + 1, index == 0, source.Paid), middle, Ui.Row(6, up, down));
+    }
+
+    static string EngineWhere(ISpeechSource s) => WalletEngine.Where(s);
+    static string EngineWhere(ITextSource s) => WalletEngine.Where(s);
+
+    void Move(string skill, string? language, string id, int by)
+    {
+        var primary = Vocabulary.PrimaryLanguage(language);
+        var ids = _w.Registry.ListChains(skill).FirstOrDefault(c => c.Language == primary)?.OrderedSourceIds.ToList();
+        if (ids is null) return;
+        var i = ids.FindIndex(sourceId => sourceId == id);
+        var j = i + by;
+        if (i < 0 || j < 0 || j >= ids.Count) return;
+        (ids[i], ids[j]) = (ids[j], ids[i]);
+        _w.Registry.SetOrder(skill, primary, ids);
         Render();
     }
 
@@ -644,6 +874,100 @@ sealed class SettingsWindow : Window
         var col = Ui.Column(4, Ui.Columns("*,Auto", Ui.Text(label), box));
         if (used is { } u) col.Children.Add(Ui.Text(u.ToString(CultureInfo.InvariantCulture) + " of " + value.ToString(CultureInfo.InvariantCulture) + " used today", "muted", "small"));
         return col;
+    }
+
+    // ------------------------------------------------------------------------------------------------
+    // Agents, connection and help
+
+    void AgentsPage(StackPanel page)
+    {
+        Head(page, "Agents", "AI agents can manage sources and routes by default. Full access is a separate switch for sites, limits, paid approvals, and other agents.");
+        var agents = _w.Store.Snapshot().Agents.OrderByDescending(a => a.LastUsed ?? DateTimeOffset.MinValue).ToList();
+        if (agents.Count == 0)
+        {
+            page.Children.Add(Ui.Box("card", Ui.Wrap("No AI agent has connected yet. Connect Claude Code, Codex, or OpenCode from the page beside this one.", "muted")));
+            return;
+        }
+
+        foreach (var agent in agents)
+        {
+            var full = new CheckBox { Content = "Full access", IsChecked = agent.FullAccess && agent.Status == "allowed" };
+            AutomationProperties.SetAutomationId(full, "AgentFull-" + agent.Id);
+            full.IsCheckedChanged += (_, _) =>
+            {
+                _w.Store.Update(s =>
+                {
+                    var current = s.Agents.FirstOrDefault(a => a.Id == agent.Id);
+                    if (current is not null) current.FullAccess = full.IsChecked == true && current.Status == "allowed";
+                });
+                _w.Activity.Add(new ActivityEntry { At = DateTimeOffset.UtcNow, Origin = "wallet", Kind = "agent", Outcome = "changed", Actor = "you in the window", Change = (full.IsChecked == true ? "Granted" : "Removed") + " Full access for " + agent.Name });
+            };
+            var revoke = Ui.Button("Revoke", "deny", "AgentRevoke-" + agent.Id, () =>
+            {
+                _w.Store.Update(s => s.Agents.RemoveAll(a => a.Id == agent.Id));
+                _w.Activity.Add(new ActivityEntry { At = DateTimeOffset.UtcNow, Origin = "wallet", Kind = "agent", Outcome = "revoked", Actor = "you in the window", Change = "Revoked " + agent.Name });
+                Render();
+            }, "small");
+            var last = agent.LastUsed is { } at ? at.ToLocalTime().ToString("g", CultureInfo.InvariantCulture) : "never";
+            var state = agent.Status == "blocked" ? "Blocked" : "Allowed";
+            page.Children.Add(Ui.Box("card", Ui.Column(8,
+                Ui.Columns("*,Auto", Ui.Column(3, Ui.Text(agent.Name, "h2"), Ui.Chip(state, agent.Status == "blocked" ? "ink" : "")), Ui.Row(10, full, revoke)),
+                Ui.Wrap(agent.ExecutablePath, "mono", "small"),
+                Ui.Text("Last used " + last, "muted", "small"))));
+        }
+    }
+
+    void ConnectAgentPage(StackPanel page)
+    {
+        Head(page, "Connect your AI agent", "The wallet talks to your agent through byoa-mcp.exe over a per-user pipe. Start the wallet first; the bridge never starts it and never holds your keys.");
+        var exe = McpPath();
+        page.Children.Add(Ui.Box("card", Ui.Column(7,
+            Ui.Text("MCP server path", "label"),
+            Ui.Wrap(exe, "mono", "small"),
+            Ui.Wrap("Copy one command into the tool you use. The first connection asks your permission in the wallet.", "muted"))));
+        var snippets = new[]
+        {
+            ("Claude Code", "claude mcp add --transport stdio byoa-wallet -- \"" + exe + "\""),
+            ("Codex", "codex mcp add byoa-wallet -- \"" + exe + "\""),
+            ("OpenCode", "{\n  \"mcp\": {\n    \"byoa-wallet\": {\n      \"type\": \"local\",\n      \"command\": [\"" + exe.Replace("\\", "\\\\", StringComparison.Ordinal) + "\"],\n      \"enabled\": true\n    }\n  }\n}"),
+        };
+        foreach (var (name, snippet) in snippets)
+        {
+            var text = new TextBox { Text = snippet, IsReadOnly = true, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = name == "OpenCode" ? 130 : 42 };
+            AutomationProperties.SetAutomationId(text, "AgentSnippet-" + name.Replace(" ", "", StringComparison.Ordinal));
+            var copy = Ui.Button("Copy", "deny", "AgentCopy-" + name.Replace(" ", "", StringComparison.Ordinal), () => Copy(text.Text ?? ""), "small");
+            page.Children.Add(Ui.Column(6, Ui.Text(name, "h2"), Ui.Columns("*,Auto", text, copy)));
+        }
+        page.Children.Add(Ui.Wrap("Use request_api_key_entry when an agent needs a provider key: the visitor types it in the wallet, and the agent never receives it.", "muted", "small"));
+    }
+
+    static string McpPath()
+    {
+        var candidates = new[]
+        {
+            Path.Combine(AppContext.BaseDirectory, "byoa-mcp.exe"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BYOA", "wallet-app", "byoa-mcp.exe"),
+        };
+        return candidates.FirstOrDefault(File.Exists) ?? candidates[0];
+    }
+
+    void Copy(string text)
+    {
+        var clipboard = TopLevel.GetTopLevel(this)?.Clipboard;
+        if (clipboard is not null) _ = clipboard.SetTextAsync(text);
+    }
+
+    void HelpPage(StackPanel page)
+    {
+        Head(page, "Help", "Short articles for people who are not developers. The same articles are available to your AI agent through the help tool.");
+        foreach (var topic in Byoa.Wallet.Help.HelpCatalog.Topics)
+        {
+            var name = topic.Replace('-', ' ');
+            var button = Ui.Button("Read", "deny", "HelpRead-" + topic, () => _w.Ui.OpenHelp(topic), "small");
+            var preview = Byoa.Wallet.Help.HelpCatalog.Get(topic).Split('\n')
+                .FirstOrDefault(line => line.Length > 0 && !line.StartsWith('#')) ?? "";
+            page.Children.Add(Ui.Box("card", Ui.Columns("*,Auto", Ui.Column(3, Ui.Text(name, "h2"), Ui.Wrap(preview, "muted", "small")), button)));
+        }
     }
 
     // ------------------------------------------------------------------------------------------------
@@ -755,6 +1079,7 @@ sealed class SettingsWindow : Window
         var what = e.Kind switch
         {
             "call" => Vocabulary.SkillName(e.Skill ?? "") + (e.ClipSeconds is { } s ? " · " + s.ToString("0.0", CultureInfo.InvariantCulture) + " s" : "") + (e.Language is { } l ? " · " + l : ""),
+            "change" or "agent" => e.Change ?? "Wallet settings changed",
             "release" => "Released the grant",
             "link" => e.Outcome switch
             {
@@ -769,25 +1094,28 @@ sealed class SettingsWindow : Window
         if (e.Via == "link") detail.Add("via link");
         if (e.Source is not null) detail.Add(e.Source);
         if (e.Fallback is not null) detail.Add("route: " + e.Fallback);
+        if (e.Actor is not null) detail.Add("by " + e.Actor);
         if (e.Milliseconds is { } ms) detail.Add(ms.ToString(CultureInfo.InvariantCulture) + " ms");
         if (e.Note is not null) detail.Add(e.Note);
-        var (chip, kind) = e.Outcome switch
-        {
-            "ok" or "allowed" or "released" => (e.Outcome == "ok" ? "Answered" : e.Outcome == "allowed" ? "Allowed" : "Released", ""),
-            "auto" => ("On its own", ""),
-            "held" => ("Held back", "outline"),
-            "declined" => ("Declined", "outline"),
-            "closed" => ("No answer", "outline"),
-            "limit" => ("Limit", "orange"),
-            "refused" => ("Not paid", "outline"),
-            "blocked" => ("Blocked", "ink"),
-            "revoked" => ("Revoked", "outline"),
-            "paused" => ("Paused", "orange"),
-            "connected" => ("Connected", ""),
-            "ignored" => ("Ignored", "outline"),
-            "error" => ("Refused", "ink"),
-            _ => (e.Outcome == "failed" ? (e.Kind == "link" ? "Failed" : "No answer") : "Invalid", "ink"),
-        };
+        var (chip, kind) = e.Kind is "change" or "agent"
+            ? ("Changed", "")
+            : e.Outcome switch
+            {
+                "ok" or "allowed" or "released" => (e.Outcome == "ok" ? "Answered" : e.Outcome == "allowed" ? "Allowed" : "Released", ""),
+                "auto" => ("On its own", ""),
+                "held" => ("Held back", "outline"),
+                "declined" => ("Declined", "outline"),
+                "closed" => ("No answer", "outline"),
+                "limit" => ("Limit", "orange"),
+                "refused" => ("Not paid", "outline"),
+                "blocked" => ("Blocked", "ink"),
+                "revoked" => ("Revoked", "outline"),
+                "paused" => ("Paused", "orange"),
+                "connected" => ("Connected", ""),
+                "ignored" => ("Ignored", "outline"),
+                "error" => ("Refused", "ink"),
+                _ => (e.Outcome == "failed" ? (e.Kind == "link" ? "Failed" : "No answer") : "Invalid", "ink"),
+            };
         var time = Ui.Text(e.At.ToLocalTime().ToString("HH:mm:ss", CultureInfo.InvariantCulture), "muted");
         time.Width = 64;
         time.VerticalAlignment = VerticalAlignment.Top;

@@ -5,7 +5,7 @@ namespace Byoa.Wallet.Protocol;
 
 /// <summary>
 /// The messages between the extension, the native host and the wallet (CONTRACT.md §4):
-/// <c>{ "id": n, "type": "request"|"call"|"release", "origin": "...", "userActivation": true|false, "payload": {...} }</c>
+/// <c>{ "id": n, "type": "request"|"call"|"release"|"link", "origin": "...", "userActivation": true|false, "payload": {...} }</c>
 /// answered by <c>{ "id": n, "result": ... }</c>. Two more types serve only the extension's own popup:
 /// <c>status</c> (is the wallet running?) and <c>open</c> (open the wallet's window).
 /// </summary>
@@ -18,13 +18,13 @@ public static class Wire
     public const string Open = "open";
 
     /// <summary>
-    /// A <c>bringyourownagent://</c> link handed to the running wallet by a second <c>Byoa.Wallet.exe --url</c>
-    /// (the direct transport). Never from the browser: the native host does not forward it.
+    /// A <c>bringyourownagent://</c> link handed to the running wallet by the browser or by a second
+    /// <c>Byoa.Wallet.exe --url</c> process. Its user-activation bit is preserved end to end.
     /// </summary>
     public const string Link = "link";
 
     /// <summary>The types the native host forwards from the browser; anything else gets the fallback there.</summary>
-    public static bool FromBrowser(string? type) => type is Request or Call or Release or Status or Open;
+    public static bool FromBrowser(string? type) => type is Request or Call or Release or Status or Open or Link;
 
     /// <summary>The answer when nothing better can be given: null for a request, <c>{ ok: false }</c> for a call.</summary>
     public static JsonNode? Fallback(string? type) => type == Call ? new JsonObject { ["ok"] = false } : null;

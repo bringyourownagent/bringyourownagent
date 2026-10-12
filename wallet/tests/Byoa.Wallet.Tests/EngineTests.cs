@@ -143,11 +143,11 @@ public class EngineTests
     [Fact]
     public async Task ARequiredSkillNoSourceCanServeCannotBeAllowed()
     {
-        var result = await _engine.HandleAsync(Clips.Request(Site, click: true, Manifest(extraSkill: ",\"text.generate\":{\"required\":true}")));
+        var result = await _engine.HandleAsync(Clips.Request(Site, click: true, Manifest(extraSkill: ",\"text.embed\":{\"required\":true}")));
         Assert.Null(result);
         var consent = _ui.Consents[^1];
         Assert.True(consent.MissingRequired);
-        Assert.False(consent.Rows.Single(r => r.Skill == "text.generate").CanServe);
+        Assert.False(consent.Rows.Single(r => r.Skill == "text.embed").CanServe);
     }
 
     [Theory]
@@ -424,6 +424,21 @@ public class EngineTests
         Assert.NotNull(await _engine.HandleAsync(Clips.Request(Site, click: false)));
         Assert.Equal("auto", _log.Recent()[0].Outcome);
         Assert.Null(_engine.PausedNow(_engine.FindSite(Site)!));
+    }
+
+    [Fact]
+    public async Task CoveredByGrantIsAQueryAndDoesNotPauseOrWrite()
+    {
+        await GrantAsync();
+        _time.Now = _time.Now.AddHours(25);
+        var before = System.Text.Json.JsonSerializer.Serialize(_store.Snapshot());
+        var closed = false;
+        _engine.SiteClosed += _ => closed = true;
+
+        var manifest = JsonNode.Parse(Clips.GeoManifest)!.AsObject();
+        Assert.True(_engine.CoveredByGrant(Site, manifest));
+        Assert.Equal(before, System.Text.Json.JsonSerializer.Serialize(_store.Snapshot()));
+        Assert.False(closed);
     }
 
     [Fact]

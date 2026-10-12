@@ -16,11 +16,11 @@ public static class LinkHandOff
     public static readonly TimeSpan AnswerWithin = TimeSpan.FromSeconds(4);
 
     /// <returns>True when the running wallet confirmed the link.</returns>
-    public static bool Send(string pipeName, string link, TimeSpan? tryFor = null, TimeSpan? answerWithin = null)
+    public static bool Send(string pipeName, string link, TimeSpan? tryFor = null, TimeSpan? answerWithin = null, bool userActivation = true)
     {
         var frame = Encoding.UTF8.GetBytes(new JsonObject
         {
-            ["id"] = 1, ["type"] = Wire.Link, ["origin"] = "", ["userActivation"] = false, ["payload"] = new JsonObject { ["url"] = link },
+            ["id"] = 1, ["type"] = Wire.Link, ["origin"] = "", ["userActivation"] = userActivation, ["payload"] = new JsonObject { ["url"] = link },
         }.ToJsonString());
         var until = DateTime.UtcNow + (tryFor ?? TimeSpan.FromSeconds(10));
         while (true)

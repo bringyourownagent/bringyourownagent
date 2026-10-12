@@ -1,20 +1,32 @@
 # BYOA agent wallet 0.1 (Windows)
 
-The first working agent wallet for [BYOA](../README.md): a tray app on your computer, a small native messaging host and a Chrome extension. A web page asks for your AI with `window.byoa`; the wallet shows a short notice, then a short consent window, and answers the page's calls with **your** models: local speech recognition on your own GPU or CPU, or your own API key as a paid fallback that asks first.
+The first working agent wallet for [BYOA](../README.md): a tray app on your computer, a small native messaging host and a Chrome extension. A web page asks for your AI with `window.byoa`; the wallet shows a short notice, then a short consent window, and answers the page's calls with **your** models: local speech recognition, local text generation, a compatible home server, or your own API key as a paid fallback that asks first.
 
-0.1 serves one skill, `audio.transcribe` (speech to text), from three sources:
+0.1 serves `audio.transcribe` (speech to text) from built-in sources and `text.generate` from LM Studio, Ollama, another OpenAI-compatible endpoint, or OpenRouter. The same source registry manages both skills:
 
 | Source | Runs | Languages | Cost | Notes |
 |---|---|---|---|---|
-| GigaAM v3 (sherpa-onnx) | this PC, CPU | Russian only | no cloud bill | very fast and accurate for Russian; uses a model folder already on disk |
-| Whisper large-v3, q5_0 (Whisper.net / whisper.cpp) | this PC, GPU through Vulkan, CPU fallback | 100 | no cloud bill | downloads once (1.1 GB) into `%LOCALAPPDATA%\BYOA\models` on first use, with progress shown |
+| GigaAM v3 (sherpa-onnx) | this PC, CPU | Russian only | no cloud bill | very fast and accurate for Russian; downloads 230 MB into the wallet's models folder when needed |
+| Whisper large-v3, q5_0 (Whisper.net / whisper.cpp) | this PC, GPU or CPU | 100 | no cloud bill | downloads once (1.1 GB) into the wallet's active `models\whisper` folder on first use, with progress shown |
 | ElevenLabs Scribe v2 through OpenRouter | your API key | 99 | paid, about $0.00004 a second | the last fallback; asks before it runs |
 
-The default route for a call: GigaAM when the page says the language is `ru`, Whisper for other languages and as the fallback, OpenRouter last. You can reorder the route, switch sources off and decide whether the paid one asks.
+The default route for speech depends on hardware: GigaAM for `ru`, then Whisper large on a usable GPU; without a usable GPU it uses the small CPU Whisper model for other languages and leaves the large model as an option. OpenRouter is last. Text sources are added to their own route when the visitor chooses them; local sources are tried before paid sources. You can reorder either route, switch sources off and decide whether the paid one asks.
 
 The design and the security notes are in [docs/wallet-0.1.md](../docs/wallet-0.1.md). The page API is the BYOA 0.1 contract: `window.byoa.request(manifest)`, `call(grantId, skill, input, params)`, `release(grantId)`.
 
 **Without the extension.** A site can also show a `bringyourownagent://connect?...` link. A click on it starts the wallet (or hands the link to the running one); the wallet reads the site's manifest from the link itself, shows the same notice and consent, and only after Allow contacts the site at all: it opens its own WebSocket to the site's server, which then sends its calls straight to the wallet. Same grants, limits and routing; the activity marks these "via link". Details: [docs/wallet-0.1.md, section 10](../docs/wallet-0.1.md#10-transports).
+
+## Manage the wallet from your AI agent
+
+The package includes `byoa-mcp.exe`, a small MCP server for Claude Code, Codex, OpenCode, and other MCP clients. Open **Settings → Connect your AI agent**, copy the command or config snippet, and keep the wallet running. The bridge uses a per-user named pipe tied to `BYOA_WALLET_HOME`; it does not start the wallet and it does not hold settings or secrets.
+
+On the first connection the wallet shows the agent's announced name and executable path. **Allow** gives source, model, route, test, download, and activity tools. **Full access** is a separate visitor choice for site access, limits, paid approvals, and approving other agents; it is off by default. Settings → Agents shows last use, the Full access switch, and Revoke. API keys are write-only: prefer `request_api_key_entry`, where the visitor types the key in the wallet. The agent never receives it.
+
+The MCP entry point is `help`; it returns the same embedded articles shown by the wallet's Help page. `status`, `list_runtimes`, `add_source`, `test_source`, `set_order`, and `activity` cover the normal “add my local model” path. If the wallet is not running, the bridge says so and never starts it.
+
+`remove_model` is also available after Allow. It removes immediately on the visitor's request, without another prompt, but only a model that this wallet downloaded into its own active `models` folder. A model found in another folder, or a path outside the wallet home, is never removed. The action appears in Activity with the agent's name.
+
+The same registry backs Sources, Help, and MCP. API keys are write-only: the preferred `request_api_key_entry` tool opens a field in the wallet so the visitor enters the key himself; the agent receives only a saved confirmation.
 
 ## Install from the ready package
 
@@ -52,20 +64,23 @@ To remove it: `powershell -ExecutionPolicy Bypass -File wallet\uninstall.ps1` re
 
 | What | Where |
 |---|---|
-| App and host | `%LOCALAPPDATA%\BYOA\wallet-app` (`Byoa.Wallet.exe`, `byoa-host.exe`, `org.bringyourownagent.wallet.json`; from the package also `extension\`, `uninstall.ps1` and `Uninstall.cmd`) |
+| App, host and MCP bridge | `%LOCALAPPDATA%\BYOA\wallet-app` (`Byoa.Wallet.exe`, `byoa-host.exe`, `byoa-mcp.exe`, `org.bringyourownagent.wallet.json`; from the package also `extension\`, `uninstall.ps1` and `Uninstall.cmd`) |
 | Settings | `%LOCALAPPDATA%\BYOA\wallet\settings.json` (sites, sources, routes, limits; no secrets) |
 | API keys | `%LOCALAPPDATA%\BYOA\wallet\secrets.dat` (DPAPI, current user) |
 | Pairings of direct links | `%LOCALAPPDATA%\BYOA\wallet\pairings.dat` (DPAPI, current user; only for sites with "decide on my own") |
 | Activity | `%LOCALAPPDATA%\BYOA\wallet\activity-YYYY-MM-DD.jsonl` (no audio, no text) |
-| Downloaded models | `%LOCALAPPDATA%\BYOA\models` |
+| Downloaded models | `%LOCALAPPDATA%\BYOA\wallet\models` (under the active `BYOA_WALLET_HOME`) |
+| Error log | `%LOCALAPPDATA%\BYOA\wallet\errors.log` (exception types and stacks only) |
 | Model folders searched | the models folder above, plus `<drive>:\AI-MODELS`, `<drive>:\models` and `%USERPROFILE%\models` when they exist; add more in **Sources** |
 
 `BYOA_WALLET_HOME` points the wallet (and the host it is started by) at a separate data folder and pipe; the tests use it so that they never touch your own settings.
 
 ## The windows
 
+An extension request is marked verified because the browser vouches for its origin. A direct-link request says "came by a link: confirmed after you allow". A link frame without browser activation is held quietly, just like a page request without a click; a normal browser click keeps the notice and consent flow.
+
 - **The notice**, above the tray, only after a click on the page: "*site* wants to use your AI" with **Show**, **Decline** and **Block this site**. It does not take the focus from the browser.
-- **The consent window**: the site (verified by the browser), its purpose in its own words, one row per skill with the source the manager suggests for each language (and **why?**), the budget per session (**change**), "Next time, decide on my own within these limits", **Decline**, **Allow** and **Detailed settings…**. It takes the focus; Tab moves through it and Esc declines. When an allowed site asks for more, only the difference is shown.
+- **The consent window**: the site (verified by the browser for extension requests; direct links are marked as links until Allow), its purpose in its own words, one row per skill with the source the manager suggests for each language (and **why?**), the budget per session (**change**), "Next time, decide on my own within these limits", **Decline**, **Allow** and **Detailed settings…**. It takes the focus; Tab moves through it and Esc declines. When an allowed site asks for more, only the difference is shown.
 - **Settings**, from the tray icon or **Detailed settings…**: Sites (grants, pause, revoke, block or unblock, decide on its own; a dot per site: green when it used the wallet in the last 3 minutes, yellow within a day, grey before that), Sources (local models found, model folders, the Whisper model and its download, API keys), Skills & fallbacks (the route, ask before paid, the manager's reasons), Limits (per session, per site per day in money and calls, the whole wallet per day), Activity (every request and call: time, site, skill, the source that answered, the fallback route, cost; grouped by day, today and the days before it, 50, 100 or 200 entries a page).
 - **Pause.** A site can be paused in Sites, and an allowed site that goes unused for a day (the time is set at the top of Sites: never, an hour, a day or a week) is paused by the wallet. A paused site keeps what you allowed, but nothing runs for it on its own: its open sessions end, it does not reconnect by itself, calls on its old grants are refused. Its next request, after your click, shows the notice and then the consent window with "You allowed this site before. Paused ... Resume it?" and **Resume**.
 - **Paid fallback question**: "Use Scribe v2 (OpenRouter) for this clip? About $0.0001": **Allow once**, **Always for this site**, **No**.
@@ -102,6 +117,7 @@ core/Byoa.Wallet.Core        protocol (framing, messages, paths), the engine, se
 core/Byoa.Wallet.Providers   GigaAM (sherpa-onnx), Whisper (Whisper.net), OpenRouter; the model scanner
 desktop/Byoa.Wallet.Desktop  the Avalonia tray app: notice, consent, settings, the pipe server
 host/Byoa.Wallet.Host        byoa-host.exe, the native messaging host
+mcp/Byoa.Wallet.Mcp          byoa-mcp.exe, the stdio MCP bridge for the visitor's own AI agent
 extension/                   the MV3 extension: page.js (MAIN world), bridge.js (isolated world), background.js, popup
 tests/                       unit tests and the end-to-end test
 packaging/                   make-package.ps1 (the ready-to-install zip), Install.cmd, Uninstall.cmd, README.txt and
@@ -109,4 +125,4 @@ packaging/                   make-package.ps1 (the ready-to-install zip), Instal
 install.ps1, uninstall.ps1   install from the source, or (next to app\ in the package) from the package
 ```
 
-Packages: Avalonia 11.3 (MIT), Whisper.net 1.9 (MIT), org.k2fsa.sherpa.onnx 1.13 (Apache-2.0), BringYourOwnAgent 0.0.2 (Apache-2.0), System.Security.Cryptography.ProtectedData (MIT); xunit (Apache-2.0) for the tests. The Barlow fonts are under the SIL Open Font License (`desktop/Byoa.Wallet.Desktop/Assets/Fonts/OFL.txt`). Model weights are not in the repository: Whisper's ggml files come from Hugging Face (MIT), GigaAM from the visitor's own folder.
+Packages: Avalonia 11.3 (MIT), Whisper.net 1.9 (MIT), org.k2fsa.sherpa.onnx 1.13 (Apache-2.0), BringYourOwnAgent 0.0.2 (Apache-2.0), System.Security.Cryptography.ProtectedData (MIT); xunit (Apache-2.0) for the tests. The Barlow fonts are under the SIL Open Font License (`desktop/Byoa.Wallet.Desktop/Assets/Fonts/OFL.txt`). Model weights are not in the repository: Whisper's ggml files and the pinned GigaAM v3 files come from Hugging Face and are verified before they enter the wallet's active models folder. Visitor-provided folders remain read-only.

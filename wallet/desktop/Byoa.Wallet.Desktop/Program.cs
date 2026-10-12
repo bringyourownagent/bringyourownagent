@@ -1,4 +1,5 @@
 using System.IO.Pipes;
+using System.Runtime.InteropServices;
 using System.Text;
 using Avalonia;
 using Byoa.Wallet.Direct;
@@ -26,12 +27,7 @@ static class Program
     public static int Main(string[] args)
     {
         if (!OperatingSystem.IsWindows()) return 1;
-        if (args.Length >= 3 && args[0] == "--import-key")
-        {
-            var secrets = new SecretStore(Path.Combine(WalletPaths.Home, "secrets.dat"));
-            return secrets.ImportFromFile(args[1], args[2]) ? 0 : 2;
-        }
-
+        if (WalletPaths.IsCustomHome) Native.SetErrorMode(0x8003);
         AppDomain.CurrentDomain.UnhandledException += (_, e) => LogError(e.ExceptionObject as Exception);
         TaskScheduler.UnobservedTaskException += (_, e) =>
         {
@@ -39,13 +35,24 @@ static class Program
             e.SetObserved();
         };
 
+        if (args.Length >= 3 && args[0] == "--import-key")
+        {
+            var secrets = new SecretStore(Path.Combine(WalletPaths.Home, "secrets.dat"));
+            return secrets.ImportFromFile(args[1], args[2]) ? 0 : 2;
+        }
+
+        if (WalletPaths.IsCustomHome && Environment.GetEnvironmentVariable("BYOA_WALLET_TEST_CRASH") == "1"
+            && args.Contains("--crash-test"))
+            throw new InvalidOperationException("deliberate isolated-wallet crash");
+
         var url = Array.IndexOf(args, "--url");
         if (url >= 0) LinkArgument = url + 1 < args.Length ? args[url + 1] : "";
         using var instance = new Mutex(true, WalletPaths.MutexName(), out var first);
         Background = args.Contains("--background") || LinkArgument is not null;
+        var userActivation = !args.Contains("--no-user-activation", StringComparer.Ordinal);
         if (!first)
         {
-            if (LinkArgument is not null) HandOffLink(LinkArgument);
+            if (LinkArgument is not null) HandOffLink(LinkArgument, userActivation);
             else if (!Background) AskRunningWalletToOpen();
             return 0;
         }
@@ -72,24 +79,21 @@ static class Program
     }
 
     /// <summary>Hands a link to the running wallet over its pipe; every step is time-limited (LinkHandOff).</summary>
-    static void HandOffLink(string link)
+    static void HandOffLink(string link, bool userActivation)
     {
         if (link.Length > DirectLink.MaxLength) link = link[..(DirectLink.MaxLength + 1)];   // the wallet refuses it as too long
-        LinkHandOff.Send(WalletPaths.PipeName(), link);
+        LinkHandOff.Send(WalletPaths.PipeName(), link, userActivation: userActivation);
     }
 
     /// <summary>Crashes go to errors.log in the data folder (types and stack only; no content, no secrets).</summary>
     static void LogError(Exception? e)
     {
-        if (e is null) return;
-        try
-        {
-            Directory.CreateDirectory(WalletPaths.Home);
-            File.AppendAllText(Path.Combine(WalletPaths.Home, "errors.log"), DateTimeOffset.Now.ToString("O") + " " + e.GetType().FullName + "\n" + e.StackTrace + "\n\n");
-        }
-        catch (IOException)
-        {
-            // nothing more to do
-        }
+        if (e is not null) ErrorLog.Write(WalletPaths.Home, e);
+    }
+
+    static class Native
+    {
+        [DllImport("kernel32.dll")]
+        internal static extern uint SetErrorMode(uint mode);
     }
 }

@@ -14,8 +14,9 @@ public interface IWalletConnector
 
 /// <summary>
 /// The native host's work: messages from the extension (stdin) go to the wallet's pipe as they are, answers come
-/// back to stdout. The host decides nothing about pages; it only starts the wallet for a <c>request</c> or an
-/// <c>open</c>, and answers the fallback (null, <c>{ ok: false }</c>, "not running") when the wallet is not there.
+/// back to stdout. The host decides nothing about pages; it only starts the wallet for a <c>request</c>,
+/// <c>link</c>, or <c>open</c>, and answers the fallback (null, <c>{ ok: false }</c>, "not running") when the
+/// wallet is not there.
 /// </summary>
 public sealed class HostRelay
 {
@@ -46,7 +47,7 @@ public sealed class HostRelay
             if (!Wire.TryPeek(frame, out var id, out var type)) continue;
             if (!Wire.FromBrowser(type))
             {
-                // Only the extension's message types go to the wallet (a "link" comes only from the wallet's own exe).
+                // Only the extension's message types go to the wallet. Link activation is carried unchanged.
                 await AnswerAsync(id, Wire.Fallback(type), ct).ConfigureAwait(false);
                 continue;
             }
@@ -60,7 +61,7 @@ public sealed class HostRelay
 
     async Task ForwardAsync(byte[] frame, JsonNode? id, string? type, CancellationToken ct)
     {
-        var start = type is Wire.Request or Wire.Open;
+        var start = type is Wire.Request or Wire.Open or Wire.Link;
         var wallet = await EnsureWalletAsync(start, ct).ConfigureAwait(false);
         if (wallet is null)
         {
@@ -130,7 +131,7 @@ public sealed class HostRelay
                 await WriteBrowserAsync(frame, ct).ConfigureAwait(false);
             }
         }
-        catch (Exception e) when (e is IOException or InvalidDataException or ObjectDisposedException or OperationCanceledException)
+        catch (Exception e) when (e is not OutOfMemoryException)
         {
             // the wallet went away
         }

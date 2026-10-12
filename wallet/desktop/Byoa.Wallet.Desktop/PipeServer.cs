@@ -14,16 +14,20 @@ namespace Byoa.Wallet.Desktop;
 sealed class PipeServer : IDisposable
 {
     readonly WalletEngine _engine;
-    readonly Action<string?> _openLink;
+    readonly Action<string?, bool> _openLink;
     readonly CancellationTokenSource _stop = new();
 
-    public PipeServer(WalletEngine engine, Action<string?> openLink)
+    public PipeServer(WalletEngine engine, Action<string?, bool> openLink)
     {
         _engine = engine;
         _openLink = openLink;
     }
 
-    public void Start() => _ = Task.Run(AcceptLoopAsync);
+    public void Start() => _ = Task.Run(async () =>
+    {
+        try { await AcceptLoopAsync().ConfigureAwait(false); }
+        catch (Exception e) when (e is not OutOfMemoryException) { ErrorLog.Write(WalletPaths.Home, e); }
+    });
 
     async Task AcceptLoopAsync()
     {
@@ -48,7 +52,11 @@ sealed class PipeServer : IDisposable
                 continue;
             }
 
-            _ = Task.Run(() => ServeAsync(pipe));
+            _ = Task.Run(async () =>
+            {
+                try { await ServeAsync(pipe).ConfigureAwait(false); }
+                catch (Exception e) when (e is not OutOfMemoryException) { ErrorLog.Write(WalletPaths.Home, e); }
+            });
         }
     }
 
@@ -65,11 +73,11 @@ sealed class PipeServer : IDisposable
         }
     }
 
-    /// <summary>A link handed over by a second instance is acted on in the background; the sender only needs "accepted".</summary>
+    /// <summary>A link handed over by the browser or a second instance is acted on in the background; the sender only needs "accepted".</summary>
     Task<JsonNode?> HandleAsync(WireMessage message, CancellationToken ct)
     {
         if (message.Type != Wire.Link) return _engine.HandleAsync(message, ct);
-        _openLink(message.Payload["url"] is JsonValue v && v.TryGetValue<string>(out var url) ? url : null);
+        _openLink(message.Payload["url"] is JsonValue v && v.TryGetValue<string>(out var url) ? url : null, message.UserActivation);
         return Task.FromResult<JsonNode?>(new JsonObject { ["accepted"] = true });
     }
 

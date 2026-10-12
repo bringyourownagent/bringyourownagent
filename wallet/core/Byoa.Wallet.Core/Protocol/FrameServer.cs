@@ -51,7 +51,7 @@ public sealed class FrameServer
                     break;
                 }
 
-                running.RemoveAll(t => t.IsCompleted);
+                ObserveCompleted(running);
                 running.Add(Task.Run(async () =>
                 {
                     try
@@ -65,7 +65,7 @@ public sealed class FrameServer
                 }));
             }
         }
-        catch (Exception e) when (e is IOException or InvalidDataException or OperationCanceledException or ObjectDisposedException)
+        catch (Exception e) when (e is not OutOfMemoryException)
         {
             // the host closed the pipe or broke the framing
         }
@@ -76,17 +76,42 @@ public sealed class FrameServer
             {
                 await Task.WhenAll(running).ConfigureAwait(false);
             }
-            catch (Exception e) when (e is OperationCanceledException or IOException or ObjectDisposedException)
+            catch (Exception e) when (e is not OutOfMemoryException)
             {
-                // cancelled with the connection
+                // A malformed frame or a handler failure must not escape as an unobserved task. The per-frame
+                // handler has already tried to answer what it can; the connection is closing now.
             }
+        }
+    }
+
+    static void ObserveCompleted(List<Task> running)
+    {
+        for (var i = running.Count - 1; i >= 0; i--)
+        {
+            if (!running[i].IsCompleted) continue;
+            try { running[i].GetAwaiter().GetResult(); }
+            catch (Exception e) when (e is not OutOfMemoryException)
+            {
+                // A completed frame task must be observed before it leaves the list. Otherwise a late write
+                // failure becomes an UnobservedTaskException on the tray's finalizer thread.
+            }
+            running.RemoveAt(i);
         }
     }
 
     async Task AnswerAsync(Stream stream, byte[] frame, SemaphoreSlim write, CancellationToken ct)
     {
         byte[] response;
-        var message = WireMessage.Parse(frame);
+        WireMessage? message;
+        try { message = WireMessage.Parse(frame); }
+        catch (Exception e) when (e is not OutOfMemoryException)
+        {
+            // Parse failures are ordinary bad input. Try the bounded id peek so the sender still gets a fallback.
+            if (!Wire.TryPeek(frame, out var badId, out var badType)) return;
+            response = Wire.Response(badId, Wire.Fallback(badType));
+            await WriteAsync(stream, response, write).ConfigureAwait(false);
+            return;
+        }
         if (message is null)
         {
             // Not a message the wallet can read: still answer its id with the fallback, so nothing waits for nothing.
@@ -104,22 +129,36 @@ public sealed class FrameServer
             {
                 result = Wire.Fallback(message.Type);
             }
+            catch (Exception e) when (e is not OutOfMemoryException)
+            {
+                // A malformed or unexpected handler failure must answer this frame and must not become an
+                // unobserved Task.Run exception that takes down the tray process.
+                result = Wire.Fallback(message.Type);
+            }
 
             response = Wire.Response(message.Id, result);
         }
 
-        await write.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+        await WriteAsync(stream, response, write).ConfigureAwait(false);
+    }
+
+    static async Task WriteAsync(Stream stream, byte[] response, SemaphoreSlim write)
+    {
         try
         {
-            await Framing.WriteAsync(stream, response, CancellationToken.None).ConfigureAwait(false);
+            await write.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+            try
+            {
+                await Framing.WriteAsync(stream, response, CancellationToken.None).ConfigureAwait(false);
+            }
+            finally
+            {
+                write.Release();
+            }
         }
-        catch (Exception e) when (e is IOException or ObjectDisposedException)
+        catch (Exception e) when (e is not OutOfMemoryException)
         {
-            // the host went away
-        }
-        finally
-        {
-            write.Release();
+            // the host went away or the stream rejected a response; the frame task stays observed.
         }
     }
 }

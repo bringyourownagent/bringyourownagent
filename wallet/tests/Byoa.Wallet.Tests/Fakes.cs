@@ -20,6 +20,7 @@ class FakeSource : ISpeechSource
     {
         Id = id;
         Runs = runs;
+        ProviderKind = runs == Sources.Runs.ApiKey ? "api-key" : "local-model";
         Languages = languages;
         PricePerSecond = pricePerSecond;
     }
@@ -27,7 +28,7 @@ class FakeSource : ISpeechSource
     public string Id { get; }
     public string Name => "Fake " + Id;
     public string Runs { get; }
-    public string ProviderKind => Runs == Sources.Runs.ApiKey ? "api-key" : "local-model";
+    public string ProviderKind { get; set; } = "local-model";
     public IReadOnlyList<string>? Languages { get; }
     public int LanguageCount => Languages?.Count ?? 99;
     public decimal PricePerSecond { get; }
@@ -56,6 +57,40 @@ class FakeSource : ISpeechSource
     }
 }
 
+/// <summary>A local speech source whose model download is slow enough to prove that Allow waits and reports progress.</summary>
+sealed class SlowDownloadSource : FakeSource, IDownloadableSource, IWarmable
+{
+    public SlowDownloadSource(string id, IReadOnlyList<string>? languages = null, TimeSpan? delay = null)
+        : base(id, languages: languages)
+    {
+        Delay = delay ?? TimeSpan.FromMilliseconds(180);
+        State = SourceState.NeedsDownload;
+        DownloadSize = 100;
+    }
+
+    public TimeSpan Delay { get; }
+    public double? DownloadProgress { get; private set; }
+    public long? DownloadSize { get; }
+    public event Action? ProgressChanged;
+
+    public async Task EnsureDownloadedAsync(CancellationToken ct)
+    {
+        if (State == SourceState.Ready) return;
+        State = SourceState.Downloading;
+        DownloadProgress = 0;
+        ProgressChanged?.Invoke();
+        await Task.Delay(Delay, ct);
+        DownloadProgress = 0.41;
+        ProgressChanged?.Invoke();
+        await Task.Delay(Delay, ct);
+        DownloadProgress = 1;
+        State = SourceState.Ready;
+        ProgressChanged?.Invoke();
+    }
+
+    public Task WarmAsync(string? language) => Task.CompletedTask;
+}
+
 /// <summary>A fake source with a model to load: warming a language takes <see cref="WarmTime"/> the first time.</summary>
 sealed class WarmingSource(string id, IReadOnlyList<string>? languages = null) : FakeSource(id, languages: languages), IWarmable
 {
@@ -74,6 +109,68 @@ sealed class WarmingSource(string id, IReadOnlyList<string>? languages = null) :
     }
 }
 
+/// <summary>A text source with fixed answers (one per call, the last repeats) or failures.</summary>
+class FakeTextSource : ITextSource, ILiveness
+{
+    public FakeTextSource(string id, string runs = Sources.Runs.ThisDevice, decimal costPerCall = 0)
+    {
+        Id = id;
+        Runs = runs;
+        CostPerCall = costPerCall;
+        ProviderKind = runs == Sources.Runs.ApiKey ? "api-key" : "local-model";
+    }
+
+    public string Id { get; }
+    public string Name => "FakeText " + Id;
+    public string Runs { get; }
+    public string ProviderKind { get; set; } = "local-model";
+    public IReadOnlyList<string>? Languages { get; set; }
+    public bool Paid => CostPerCall > 0;
+    public SourceState State { get; set; } = SourceState.Ready;
+    public string StateText => State.ToString();
+    public decimal CostPerCall { get; }
+    public bool? Up { get; set; } = true;
+
+    public Queue<string> Answers { get; set; } = new();
+    /// <summary>Optional scripted provider outcomes, including typed paid failures.</summary>
+    public Queue<Func<TextRequest, TextAnswer>>? Outcomes { get; set; }
+    public bool Fail { get; set; }
+    int _calls;
+    public int Calls => Volatile.Read(ref _calls);
+    public TextRequest? LastRequest { get; private set; }
+
+    /// <summary>When set, calls wait for it before they answer: calls held in flight.</summary>
+    public TaskCompletionSource? Hold { get; set; }
+
+    public decimal EstimateCost(TextRequest request) => CostPerCall;
+
+    public Task<TextAnswer> GenerateAsync(TextRequest request, CancellationToken ct)
+    {
+        Interlocked.Increment(ref _calls);
+        LastRequest = request;
+        if (Hold is { } hold) return HeldAsync(hold, request, ct);
+        return Task.FromResult(Answer(request));
+    }
+
+    async Task<TextAnswer> HeldAsync(TaskCompletionSource hold, TextRequest request, CancellationToken ct)
+    {
+        await hold.Task.WaitAsync(ct);
+        return Answer(request);
+    }
+
+    TextAnswer Answer(TextRequest request)
+    {
+        if (Outcomes is { Count: > 0 })
+        {
+            var outcome = Outcomes.Count > 1 ? Outcomes.Dequeue() : Outcomes.Peek();
+            return outcome(request);
+        }
+        if (Fail) throw new InvalidOperationException("fake text failure");
+        var text = Answers.Count > 1 ? Answers.Dequeue() : Answers.Peek();
+        return new TextAnswer(text, CostPerCall, 1, 1, "fake");
+    }
+}
+
 /// <summary>A visitor who answers the wallet's windows with preset answers, and counts what was shown.</summary>
 sealed class ScriptedUi : IWalletUi
 {
@@ -83,6 +180,7 @@ sealed class ScriptedUi : IWalletUi
     public int Notices { get; private set; }
     public List<ConsentModel> Consents { get; } = [];
     public int PaidQuestions { get; private set; }
+    public List<PaidModel> PaidModels { get; } = [];
     public int Quiet { get; private set; }
     public List<InfoModel> Infos { get; } = [];
 
@@ -120,6 +218,7 @@ sealed class ScriptedUi : IWalletUi
     public Task<PaidAnswer> AskPaidAsync(PaidModel model, CancellationToken ct)
     {
         PaidQuestions++;
+        PaidModels.Add(model);
         return Task.FromResult(Paid);
     }
 
@@ -127,6 +226,7 @@ sealed class ScriptedUi : IWalletUi
 
     /// <summary>Every "Preparing your model…" shown, and whether it was closed again.</summary>
     public List<PreparingModel> Preparing { get; } = [];
+    public List<PreparingModel> PreparingUpdates { get; } = [];
     public int PreparingClosed;
 
     public IDisposable ShowPreparing(PreparingModel model)
@@ -141,6 +241,10 @@ sealed class ScriptedUi : IWalletUi
     }
 
     public void QuietRequest(string origin) => Quiet++;
+    public void UpdatePreparing(PreparingModel model)
+    {
+        lock (PreparingUpdates) PreparingUpdates.Add(model);
+    }
     public void DownloadStarted(ISpeechSource source) { }
     public void OpenSettings(string? page = null) { }
 }

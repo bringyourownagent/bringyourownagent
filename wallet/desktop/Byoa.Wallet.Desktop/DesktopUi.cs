@@ -4,6 +4,8 @@ using Avalonia.Controls;
 using Avalonia.Platform;
 using Avalonia.Threading;
 using Byoa.Wallet.Engine;
+using Byoa.Wallet.Protocol;
+using Byoa.Wallet.Registry;
 using Byoa.Wallet.Sources;
 
 namespace Byoa.Wallet.Desktop;
@@ -13,14 +15,16 @@ namespace Byoa.Wallet.Desktop;
 /// the consent window and the settings window. Called from any thread; everything runs on the UI thread.
 /// </summary>
 [SupportedOSPlatform("windows")]
-sealed class DesktopUi : IWalletUi
+sealed class DesktopUi : IWalletUi, IAgentConsentUi
 {
     readonly WalletServices _w;
     TrayIcon? _tray;
     WindowIcon? _icon;
     WindowIcon? _badgeIcon;
     SettingsWindow? _settings;
+    HelpWindow? _help;
     ToastWindow? _download;
+    PreparingHandle? _preparing;
 
     public DesktopUi(WalletServices services) => _w = services;
 
@@ -34,10 +38,16 @@ sealed class DesktopUi : IWalletUi
         open.Click += (_, _) => OpenSettings("sites");
         var activity = new NativeMenuItem("Activity");
         activity.Click += (_, _) => OpenSettings("activity");
+        var help = new NativeMenuItem("Help");
+        help.Click += (_, _) => OpenHelp();
+        var agent = new NativeMenuItem("Connect your AI agent");
+        agent.Click += (_, _) => OpenSettings("connect");
         var exit = new NativeMenuItem("Quit");
         exit.Click += (_, _) => quit();
         menu.Items.Add(open);
         menu.Items.Add(activity);
+        menu.Items.Add(help);
+        menu.Items.Add(agent);
         menu.Items.Add(new NativeMenuItemSeparator());
         menu.Items.Add(exit);
         _tray = new TrayIcon { Icon = _icon, ToolTipText = "Agent wallet", Menu = menu, IsVisible = true };
@@ -47,11 +57,12 @@ sealed class DesktopUi : IWalletUi
             OpenSettings("sites");
         };
         TrayIcon.SetIcons(app, [_tray]);
-        _w.Engine.SitesChanged += () => Dispatcher.UIThread.Post(UpdateBadge);
-        _w.Store.Changed += () => Dispatcher.UIThread.Post(() => _settings?.Invalidate());
-        _w.Activity.Added += _ => Dispatcher.UIThread.Post(() => _settings?.Invalidate());
-        _w.Secrets.Changed += () => Dispatcher.UIThread.Post(() => _settings?.Invalidate());
-        _w.Direct.Changed += () => Dispatcher.UIThread.Post(() => _settings?.Invalidate());
+        _w.Engine.SitesChanged += () => PostSafe(UpdateBadge);
+        _w.Store.Changed += () => PostSafe(() => _settings?.Invalidate());
+        _w.Activity.Added += _ => PostSafe(() => _settings?.Invalidate());
+        _w.Secrets.Changed += () => PostSafe(() => _settings?.Invalidate());
+        _w.Direct.Changed += () => PostSafe(() => _settings?.Invalidate());
+        _w.Registry.Changed += _ => PostSafe(() => _settings?.Invalidate());
         UpdateBadge();
     }
 
@@ -79,7 +90,11 @@ sealed class DesktopUi : IWalletUi
 
     public Task<ConsentAnswer> ShowConsentAsync(ConsentModel model, CancellationToken ct) => OnUi(async () =>
     {
-        var window = new ConsentWindow(model, page => OpenSettings(page));
+        var window = new ConsentWindow(model, page =>
+        {
+            if (page == "add-model") OpenAddModel();
+            else OpenSettings(page);
+        });
         window.CloseOn(ct);
         window.Show();
         return await window.Result;
@@ -98,12 +113,13 @@ sealed class DesktopUi : IWalletUi
         };
     });
 
-    public void ShowInfo(InfoModel model) => Dispatcher.UIThread.Post(() => ToastWindow.Info(model, page => OpenSettings(page)).Show());
+    public void ShowInfo(InfoModel model) => PostSafe(() => ToastWindow.Info(model, page => OpenSettings(page)).Show());
 
     public IDisposable ShowPreparing(PreparingModel model)
     {
         var handle = new PreparingHandle();
-        Dispatcher.UIThread.Post(() =>
+        _preparing = handle;
+        PostSafe(() =>
         {
             if (handle.Done) return;
             handle.Toast = ToastWindow.Preparing(model);
@@ -112,29 +128,59 @@ sealed class DesktopUi : IWalletUi
         return handle;
     }
 
+    public void UpdatePreparing(PreparingModel model) => PostSafe(() =>
+    {
+        if (_preparing is not null) _preparing.Update(model);
+    });
+
     /// <summary>Closes the "Preparing your model…" toast, also when it is disposed before it was shown.</summary>
     sealed class PreparingHandle : IDisposable
     {
         public volatile bool Done;
         public ToastWindow? Toast;
 
+        public void Update(PreparingModel model)
+        {
+            if (!Done) Toast?.SetPreparingProgress(model.Progress);
+        }
+
         public void Dispose()
         {
             Done = true;
-            Dispatcher.UIThread.Post(() => Toast?.Dismiss());
+            PostSafe(() => Toast?.Dismiss());
         }
     }
 
-    public void QuietRequest(string origin) => Dispatcher.UIThread.Post(UpdateBadge);
+    public void QuietRequest(string origin) => PostSafe(UpdateBadge);
 
-    public void DownloadStarted(ISpeechSource source) => Dispatcher.UIThread.Post(() =>
+    public Task<AgentConsentAnswer> AskAgentAsync(AgentConsentModel model, CancellationToken ct) => OnUi(async () =>
+    {
+        var window = new AgentConsentWindow(model);
+        window.Show();
+        using var registration = ct.Register(() => PostSafe(window.Close));
+        return await window.Result;
+    });
+
+    public Task<RegistryOperationResult> RequestApiKeyEntryAsync(ApiKeyEntryRequest request, CancellationToken ct) => OnUi(async () =>
+    {
+        var window = new ApiKeyEntryWindow(request.SourceName);
+        window.Show();
+        using var registration = ct.Register(() => PostSafe(window.Close));
+        var key = await window.Result;
+        if (key is null) return RegistryOperationResult.Failure("The visitor cancelled the API-key entry. Ask them to try again in the wallet.");
+        var result = await _w.Registry.SetApiKeyAsync(request.SourceId, key, request.Actor);
+        if (!result.Ok) ShowInfo(new InfoModel("API key", result.Message));
+        return result;
+    });
+
+    public void DownloadStarted(ISpeechSource source) => PostSafe(() =>
     {
         if (source is not IDownloadableSource download || _download is { IsVisible: true }) return;
         _download = ToastWindow.Download(source, download);
         _download.Show();
     });
 
-    public void OpenSettings(string? page = null) => Dispatcher.UIThread.Post(() =>
+    public void OpenSettings(string? page = null) => PostSafe(() =>
     {
         if (_settings is null)
         {
@@ -148,5 +194,45 @@ sealed class DesktopUi : IWalletUi
         _settings.Activate();
     });
 
-    static Task<T> OnUi<T>(Func<Task<T>> work) => Dispatcher.UIThread.InvokeAsync(work);
+    public void OpenHelp(string? topic = null) => PostSafe(() =>
+    {
+        if (_help is null)
+        {
+            _help = new HelpWindow(topic);
+            _help.Closed += (_, _) => _help = null;
+            _help.Show();
+        }
+        else
+        {
+            _help.Activate();
+        }
+    });
+
+    public void OpenAddModel(string? sourceId = null) => PostSafe(() => new AddModelWindow(_w, sourceId).Show());
+
+    internal static void PostSafe(Action action)
+    {
+        try
+        {
+            Dispatcher.UIThread.Post(() =>
+            {
+                try { action(); }
+                catch (Exception e) when (e is not OutOfMemoryException) { ErrorLog.Write(WalletPaths.Home, e); }
+            });
+        }
+        catch (Exception e) when (e is not OutOfMemoryException)
+        {
+            ErrorLog.Write(WalletPaths.Home, e);
+        }
+    }
+
+    static async Task<T> OnUi<T>(Func<Task<T>> work)
+    {
+        try { return await Dispatcher.UIThread.InvokeAsync(work).ConfigureAwait(false); }
+        catch (Exception e) when (e is not OutOfMemoryException)
+        {
+            ErrorLog.Write(WalletPaths.Home, e);
+            throw;
+        }
+    }
 }

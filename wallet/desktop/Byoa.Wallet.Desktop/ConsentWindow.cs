@@ -65,6 +65,8 @@ sealed class ConsentWindow : CornerWindow
             Content = Body(),
             MaxHeight = Math.Max(240, WorkingHeight - 170),
             HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            VerticalContentAlignment = VerticalAlignment.Top,
         };
         layout.Children.Add(scroll);
         card.Child = layout;
@@ -93,7 +95,7 @@ sealed class ConsentWindow : CornerWindow
 
     public Task<ConsentAnswer> Result => _answer.Task;
 
-    public void CloseOn(CancellationToken ct) => _timeout = ct.Register(() => Dispatcher.UIThread.Post(() =>
+    public void CloseOn(CancellationToken ct) => _timeout = ct.Register(() => DesktopUi.PostSafe(() =>
     {
         _answer.TrySetResult(ConsentAnswer.Declined);
         if (!_closed) Close();
@@ -134,15 +136,22 @@ sealed class ConsentWindow : CornerWindow
 
     Control Body()
     {
-        var body = new StackPanel { Spacing = 10, Margin = new Thickness(16, 14, 16, 14) };
+        var body = new StackPanel { Spacing = 10, Margin = new Thickness(16, 14, 16, 14), Width = 368 };
 
-        // The site, verified by the browser (the origin comes from Chrome, never from the page).
+        // The browser vouches for an extension origin. A direct link has no such proof until the visitor allows it.
         var host = Ui.Text(_model.Host, "host");
-        var verified = _model.Secure
+        var linkProof = Ui.Wrap("came by a link:\nconfirmed after you allow", "muted", "small");
+        linkProof.Width = 220;
+        linkProof.TextTrimming = TextTrimming.CharacterEllipsis;
+        var verified = _model.FromLink
+            ? Ui.Row(4, linkProof)
+            : _model.Secure
             ? Ui.Row(4, Ui.InkCheck(14), Ui.Text("verified", "small", "strong"))
             : Ui.Row(4, Ui.Text("local test page (http)", "muted", "small"));
-        if (_model.Secure) ((TextBlock)verified.Children[1]).Foreground = Ui.Brush("Sign");
-        var hostRow = Ui.Row(9, Ui.Tile(Ui.Globe, 28), host, verified);
+        if (_model.Secure && !_model.FromLink) ((TextBlock)verified.Children[1]).Foreground = Ui.Brush("Sign");
+        var hostInfo = Ui.Column(3, host, verified);
+        hostInfo.Width = 290;
+        var hostRow = Ui.Row(9, Ui.Tile(Ui.Globe, 28), hostInfo);
         if (_model.IsDifference) hostRow.Children.Add(Ui.Chip("updated", "outline"));
         if (_model.PausedNote is not null) hostRow.Children.Add(Ui.Chip("paused", "outline"));
         AutomationProperties.SetName(hostRow, _model.Host);
@@ -150,8 +159,12 @@ sealed class ConsentWindow : CornerWindow
 
         // The declared purpose, quoted as the site's own words.
         var purpose = Ui.Runs(("“" + _model.Summary + "”", false));
+        purpose.Width = 300;
+        purpose.TextTrimming = TextTrimming.CharacterEllipsis;
+        purpose.MaxLines = 2;
+        purpose.Inlines!.Clear();
+        purpose.Text = "\"" + _model.Summary + "\"  from the site";
         purpose.FontWeight = FontWeight.Medium;
-        purpose.Inlines!.Add(new Avalonia.Controls.Documents.Run("  from the site") { FontSize = 11.5, Foreground = Ui.Brush("Muted"), FontWeight = FontWeight.Normal });
         body.Children.Add(Ui.Box("field", purpose));
 
         if (_model.PausedNote is { } paused)
@@ -205,10 +218,13 @@ sealed class ConsentWindow : CornerWindow
 
         if (!row.CanServe)
         {
-            panel.Children.Add(Ui.Wrap(row.Required
+            var explanation = row.Why.StartsWith("No ", StringComparison.Ordinal)
+                ? row.Why
+                : row.Required
                 ? "None of your sources can do this, and the site needs it."
-                : "None of your sources can do this. It is optional: it will be left off.", "muted"));
-            panel.Children.Add(Ui.Link("Add a model or a key…", "ConsentFix", () => _openSettings("sources")));
+                : "None of your sources can do this. It is optional: it will be left off.";
+            panel.Children.Add(Ui.Wrap(explanation, "muted"));
+            panel.Children.Add(Ui.Link("Add a model or a key…", "ConsentFix", () => _openSettings("add-model")));
         }
         else
         {
@@ -219,10 +235,20 @@ sealed class ConsentWindow : CornerWindow
                     Ui.Glyph(Ui.Arrow, Ui.Brush("Muted"), 14, 2),
                     Ui.Glyph(route.Where == "API key" ? Ui.Key : Ui.Screen, Ui.Brush("Ink2"), 14, 2),
                     Ui.Text(route.SourceName, "strong"),
-                    Ui.Text("· " + route.Where + (multi && route.Language is not null ? " · " + Vocabulary.LanguageName(route.Language) : ""), "muted"));
+                    Ui.Text("· " + route.Where + " · " + (route.Paid ? "paid" : "free")
+                        + (multi && route.Language is not null ? " · " + Vocabulary.LanguageName(route.Language) : ""), "muted"));
                 if (route.Fits) line.Children.Add(Ui.InkCheck(15));
                 ((TextBlock)line.Children[2]).FontSize = 14;
-                panel.Children.Add(line);
+                if (route.Detail is { Length: > 0 } detail)
+                {
+                    // Keep download size and CPU latency on a second line: the source row remains readable at the
+                    // narrow consent width instead of clipping the explanation after the provider name.
+                    panel.Children.Add(Ui.Column(2, line, Ui.Text(detail, "muted", "small")));
+                }
+                else
+                {
+                    panel.Children.Add(line);
+                }
             }
         }
 

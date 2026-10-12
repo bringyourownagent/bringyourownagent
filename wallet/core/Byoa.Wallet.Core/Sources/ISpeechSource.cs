@@ -26,6 +26,9 @@ public enum SourceState
 
     /// <summary>It failed to load.</summary>
     Broken,
+
+    /// <summary>This source is deliberately not attempted on this processor.</summary>
+    Unavailable,
 }
 
 /// <summary>The result of one transcription.</summary>

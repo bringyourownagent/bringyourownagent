@@ -42,6 +42,29 @@ public sealed record TextRequest(
 /// <param name="Detail">A short note for the activity log, e.g. "LM Studio · qwen3.5-4b".</param>
 public sealed record TextAnswer(string Text, decimal Cost, int InputTokens, int OutputTokens, string? Detail = null);
 
+/// <summary>
+/// A text provider was called but could not produce a usable answer. A provider may still know what that attempt
+/// cost (for example, an empty or choice-mismatched paid response). The engine settles that cost before trying a
+/// fallback; a null cost means only the reservation is returned.
+/// </summary>
+public sealed class TextSourceException : InvalidOperationException
+{
+    public TextSourceException(string message, decimal? cost = null, bool providerCalled = true,
+        bool responseReceived = false, Exception? inner = null)
+        : base(message, inner)
+    {
+        Cost = cost;
+        ProviderCalled = providerCalled;
+        ResponseReceived = responseReceived;
+    }
+
+    public decimal? Cost { get; }
+    public bool ProviderCalled { get; }
+
+    /// <summary>True when an HTTP/provider response was received, even if it contained no usable answer or cost.</summary>
+    public bool ResponseReceived { get; }
+}
+
 /// <summary>A source of the skill <c>text.generate</c>: a model in a local runtime or behind an API key.</summary>
 public interface ITextSource
 {
@@ -51,10 +74,10 @@ public interface ITextSource
     /// <summary>The name people see.</summary>
     string Name { get; }
 
-    /// <summary><see cref="Runs.ThisDevice"/> or <see cref="Runs.ApiKey"/>.</summary>
+    /// <summary><see cref="Runs.ThisDevice"/>, a home server, or <see cref="Runs.ApiKey"/>.</summary>
     string Runs { get; }
 
-    /// <summary>The provider kind for the gate: "local-model" or "api-key".</summary>
+    /// <summary>The provider kind for the gate: "local-model", "home-server", or "api-key".</summary>
     string ProviderKind { get; }
 
     /// <summary>Languages it handles well (primary BCP 47 tags); null means many languages.</summary>
@@ -71,6 +94,13 @@ public interface ITextSource
     decimal EstimateCost(TextRequest request);
 
     Task<TextAnswer> GenerateAsync(TextRequest request, CancellationToken ct);
+}
+
+/// <summary>A local text source that can load its model before the first page call.</summary>
+public interface ITextSourceWarmable
+{
+    /// <summary>Loads the model for a language. The wallet never uses this for a paid source.</summary>
+    Task WarmAsync(string? language, CancellationToken ct);
 }
 
 /// <summary>A local runtime found on this computer.</summary>

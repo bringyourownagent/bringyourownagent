@@ -59,7 +59,7 @@ public sealed class DirectTransport : IDisposable
     /// Acts on a link: checks it and its manifest, asks the visitor (or grants silently under "decide on my own"),
     /// and after a grant starts the connection. Returns the connection, or null when nothing was opened.
     /// </summary>
-    public async Task<DirectConnection?> HandleLinkAsync(string? url, CancellationToken ct = default)
+    public async Task<DirectConnection?> HandleLinkAsync(string? url, CancellationToken ct = default, bool userActivation = true)
     {
         if (Interlocked.Increment(ref _pendingLinks) > Options.MaxPendingLinks)
         {
@@ -70,7 +70,7 @@ public sealed class DirectTransport : IDisposable
 
         try
         {
-            return await ActOnLinkAsync(url, ct).ConfigureAwait(false);
+            return await ActOnLinkAsync(url, userActivation, ct).ConfigureAwait(false);
         }
         finally
         {
@@ -78,7 +78,7 @@ public sealed class DirectTransport : IDisposable
         }
     }
 
-    async Task<DirectConnection?> ActOnLinkAsync(string? url, CancellationToken ct)
+    async Task<DirectConnection?> ActOnLinkAsync(string? url, bool userActivation, CancellationToken ct)
     {
         if (!DirectLink.TryParse(url, Options.DevLocal, out var link, out var why))
         {
@@ -105,9 +105,9 @@ public sealed class DirectTransport : IDisposable
             return null;
         }
 
-        // The browser launches a protocol link only after a click on the page, so this request counts as one with a
-        // click. The manifest is the link's own: nothing has been sent to the site so far.
-        var answer = await Engine.RequestViaLinkAsync(origin, link.ManifestJson, userActivation: true, ct).ConfigureAwait(false);
+        // Keep the browser's activation bit from the hand-off. The manifest is the link's own: nothing has been sent
+        // to the site so far, and a link with no click must stay a quiet request.
+        var answer = await Engine.RequestViaLinkAsync(origin, link.ManifestJson, userActivation, ct).ConfigureAwait(false);
         if (GrantOf(answer) is not { } grant) return null;
         var connection = new DirectConnection(this, origin, link.Endpoint, link.Manifest, link.Session, token: null, grant);
         Add(connection);
@@ -119,7 +119,8 @@ public sealed class DirectTransport : IDisposable
     {
         foreach (var pairing in Pairings.All())
         {
-            if (!Engine.DecidesOnItsOwn(pairing.Origin)
+            if (Engine.PauseSiteIfDue(pairing.Origin)
+                || !Engine.DecidesOnItsOwn(pairing.Origin)
                 || !DirectLink.TryTarget(pairing.Endpoint, Options.DevLocal, out var endpoint, out var origin, out _, out _)
                 || origin != pairing.Origin
                 || !DirectLink.TryManifest(pairing.Manifest, out _, out _))
@@ -136,6 +137,7 @@ public sealed class DirectTransport : IDisposable
     /// <summary>A new grant for a stored pairing, from the manifest stored with it, by the silent rule (no network).</summary>
     internal async Task<(GrantSession? Grant, bool Retry)> RenewGrantAsync(DirectConnection connection, CancellationToken ct)
     {
+        if (Engine.PauseSiteIfDue(connection.Origin)) return (null, false);
         if (!DirectLink.TryManifest(connection.Manifest, out var manifest, out _)) return (null, false);
         return (await GrantSilentlyAsync(connection.Origin, manifest!, ct).ConfigureAwait(false), false);
     }
