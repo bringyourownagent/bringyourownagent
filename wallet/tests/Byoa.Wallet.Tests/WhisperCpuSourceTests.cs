@@ -1,6 +1,7 @@
 using Byoa.Wallet.Providers;
 using Byoa.Wallet.Protocol;
 using Byoa.Wallet.Sources;
+using Byoa.Wallet.Settings;
 
 namespace Byoa.Wallet.Tests;
 
@@ -37,6 +38,27 @@ public class WhisperCpuSourceTests
         Assert.Equal("ggml-small-q5_1.bin", WhisperCpuSource.ModelFile);
         Assert.Equal("small-q5_1", WhisperSource.ModelLabel(WhisperCpuSource.ModelFile));
     }
+
+    [Fact]
+    public void WhisperSourcesAreUnavailableWithoutAvx()
+    {
+        var oldHome = Environment.GetEnvironmentVariable(WalletPaths.HomeVariable);
+        Environment.SetEnvironmentVariable(WalletPaths.HomeVariable, Path.Combine(AppContext.BaseDirectory, "no-avx-wallet"));
+        try
+        {
+            using var source = new WhisperCpuSource(() => [], new HttpClient(), CpuFeatures.ForTests(avx: false));
+            Assert.Equal(SourceState.Unavailable, source.State);
+            Assert.Equal("unavailable: this processor has no AVX (too slow)", source.StateText);
+            var plan = Router.Plan(new SkillChain { Skill = Vocabulary.Transcribe, Stops = [new ChainStop { SourceId = source.Id }] },
+                [source], _ => true, "en");
+            Assert.Empty(plan.Steps);
+            Assert.Contains("no AVX", Router.Explain(plan, "en"), StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(WalletPaths.HomeVariable, oldHome);
+        }
+    }
 }
 
 /// <summary>The answer hygiene the wallet applies to everything a model writes back.</summary>
@@ -45,6 +67,9 @@ public class TextsTests
     [Theory]
     [InlineData("<think>let me see…</think>Paris", "Paris")]
     [InlineData("<think>never closed, all of it is reasoning", "")]
+    [InlineData("<reasoning>private thoughts</reasoning>Paris", "Paris")]
+    [InlineData("<|channel|>thought<|message|>private<|channel|>final<|message|>Paris", "Paris")]
+    [InlineData("Thinking:\nprivate thoughts\nFinal answer: Paris", "Paris")]
     [InlineData("  Paris  ", "Paris")]
     [InlineData("", "")]
     public void CleanAnswerKeepsOnlyTheAnswer(string raw, string clean) => Assert.Equal(clean, Texts.CleanAnswer(raw));

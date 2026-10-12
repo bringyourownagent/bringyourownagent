@@ -17,14 +17,14 @@ public sealed class RegistryTests
         var registry = NewRegistry(store, Path.Combine(dir, "secrets.dat"));
         var added = registry.AddSource(new SourceDraft(SourceKinds.LmStudio, "qwen2.5:3b", "http://127.0.0.1:1234/v1", [Vocabulary.Generate], ["ru"], "Russian helper"), "agent: test");
         Assert.True(added.Ok, added.Message);
-        Assert.Equal("lmstudio:qwen2.5:3b", added.Id);
+        Assert.Equal("lmstudio:qwen2.5:3b@http://127.0.0.1:1234/v1", added.Id);
 
         Assert.True(registry.UpdateSource(added.Id!, new SourceUpdate(Label: "Edited helper", Languages: ["en"])).Ok);
         Assert.True(registry.EnableSource(added.Id!, false).Ok);
         Assert.False(registry.ListSources().Single(s => s.Id == added.Id).Enabled);
 
         Assert.True(registry.SetOrder(Vocabulary.Generate, "ru-RU", [added.Id!]).Ok);
-        var chain = Assert.Single(registry.ListChains(Vocabulary.Generate));
+        var chain = Assert.Single(registry.ListChains(Vocabulary.Generate), c => c.Language == "ru");
         Assert.Equal("ru", chain.Language);
         Assert.Equal([added.Id!], chain.OrderedSourceIds);
 
@@ -46,8 +46,8 @@ public sealed class RegistryTests
         var edited = registry.UpdateSource(added.Id!, new SourceUpdate(Model: "new-model"));
 
         Assert.True(edited.Ok, edited.Message);
-        Assert.Equal("lmstudio:new-model", edited.Id);
-        Assert.Equal(["lmstudio:new-model"], Assert.Single(registry.ListChains(Vocabulary.Generate)).OrderedSourceIds);
+        Assert.Equal("lmstudio:new-model@http://127.0.0.1:1234/v1", edited.Id);
+        Assert.Equal(["lmstudio:new-model@http://127.0.0.1:1234/v1"], Assert.Single(registry.ListChains(Vocabulary.Generate)).OrderedSourceIds);
         Assert.DoesNotContain(registry.ListSources(), source => source.Id == added.Id);
     }
 

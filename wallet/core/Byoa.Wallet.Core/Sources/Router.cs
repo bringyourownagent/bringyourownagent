@@ -77,6 +77,24 @@ public static class Router
         }
     }
 
+    /// <summary>Initialises a text route from persisted source settings without needing provider instances.</summary>
+    public static void EnsureTextChainFromSettings(WalletSettings settings)
+    {
+        var sources = settings.Sources
+            .Where(s => s.Kind is not null && (s.Skills.Count == 0 || s.Skills.Contains(Vocabulary.Generate)))
+            .Select(s => (s.Id, Paid: string.Equals(s.Kind, SourceKinds.OpenRouter, StringComparison.OrdinalIgnoreCase)))
+            .ToList();
+        var chain = settings.Chain(Vocabulary.Generate);
+        foreach (var (id, paid) in sources)
+        {
+            if (chain.Stops.Any(stop => stop.SourceId == id)) continue;
+            var before = paid ? chain.Stops.Count : chain.Stops.FindIndex(stop =>
+                sources.FirstOrDefault(source => source.Id == stop.SourceId).Paid);
+            if (before < 0) before = chain.Stops.Count;
+            chain.Stops.Insert(before, new ChainStop { SourceId = id });
+        }
+    }
+
     /// <summary>A source knows the language when it lists it, or when it is multilingual. A specialised source needs a known language.</summary>
     public static bool Knows(ISpeechSource source, string? language) =>
         source.Languages is null || (language is not null && source.Languages.Contains(language));
@@ -98,8 +116,9 @@ public static class Router
             else if (!Knows(source, language)) why = language is null ? "needs to know the language" : "does not know " + Vocabulary.LanguageName(language);
             else if (source.State is SourceState.Missing) why = "model not found";
             else if (source.State is SourceState.NoKey) why = "no API key";
+            else if (source.State is SourceState.Unavailable) why = source.StateText;
             else if (source.State is SourceState.Broken) why = "failed to load";
-            else if (stop.SourceId == CpuWhisperId && byId.TryGetValue(WhisperId, out var gpu) && gpu.State is SourceState.Ready or SourceState.Downloading)
+            else if (stop.SourceId == CpuWhisperId && byId.TryGetValue(WhisperId, out var gpu) && gpu.State is SourceState.Ready)
             {
                 why = "the big Whisper already works on this PC";
             }
@@ -130,6 +149,7 @@ public static class Router
             else if (source.State is SourceState.NeedsDownload or SourceState.Downloading) why = "model is still preparing";
             else if (source.State is SourceState.Missing) why = "model not found";
             else if (source.State is SourceState.NoKey) why = "no API key";
+            else if (source.State is SourceState.Unavailable) why = source.StateText;
             else if (source.State is SourceState.Broken) why = "failed to load";
 
             if (why is null) steps.Add(new TextRouteStep(source, source.Paid && stop.AskBeforePaid));
@@ -146,6 +166,8 @@ public static class Router
         var lang = language is null ? "" : " for " + Vocabulary.LanguageName(language);
         if (first is null)
         {
+            if (plan.Skipped.FirstOrDefault(k => k.Why.StartsWith("unavailable:", StringComparison.Ordinal)) is { } unavailable)
+                return "No source can do speech here: " + unavailable.Why + ".";
             return "None of your sources can do this" + lang + ". Add a model or a key in Detailed settings.";
         }
 
@@ -186,6 +208,8 @@ public static class Router
         var first = plan.First;
         if (first is null)
         {
+            if (plan.Skipped.FirstOrDefault(x => x.Why.StartsWith("unavailable:", StringComparison.Ordinal)) is { } unavailable)
+                return "No source can do text generation here: " + unavailable.Why + ".";
             if (plan.Skipped.Any(x => x.Why == "not running"))
                 return "No local text runtime is running. Start LM Studio or Ollama, or add a model.";
             if (plan.Skipped.Any(x => x.Why == "no API key"))

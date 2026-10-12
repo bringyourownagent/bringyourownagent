@@ -119,7 +119,8 @@ public sealed class DirectTransport : IDisposable
     {
         foreach (var pairing in Pairings.All())
         {
-            if (!Engine.DecidesOnItsOwn(pairing.Origin)
+            if (Engine.PauseSiteIfDue(pairing.Origin)
+                || !Engine.DecidesOnItsOwn(pairing.Origin)
                 || !DirectLink.TryTarget(pairing.Endpoint, Options.DevLocal, out var endpoint, out var origin, out _, out _)
                 || origin != pairing.Origin
                 || !DirectLink.TryManifest(pairing.Manifest, out _, out _))
@@ -136,6 +137,7 @@ public sealed class DirectTransport : IDisposable
     /// <summary>A new grant for a stored pairing, from the manifest stored with it, by the silent rule (no network).</summary>
     internal async Task<(GrantSession? Grant, bool Retry)> RenewGrantAsync(DirectConnection connection, CancellationToken ct)
     {
+        if (Engine.PauseSiteIfDue(connection.Origin)) return (null, false);
         if (!DirectLink.TryManifest(connection.Manifest, out var manifest, out _)) return (null, false);
         return (await GrantSilentlyAsync(connection.Origin, manifest!, ct).ConfigureAwait(false), false);
     }

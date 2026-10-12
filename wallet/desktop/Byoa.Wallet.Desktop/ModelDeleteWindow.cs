@@ -66,6 +66,6 @@ sealed class ModelDeleteWindow : Window
     void Answer(bool answer)
     {
         _result.TrySetResult(answer);
-        if (!_closed) Dispatcher.UIThread.Post(Close);
+        if (!_closed) DesktopUi.PostSafe(Close);
     }
 }

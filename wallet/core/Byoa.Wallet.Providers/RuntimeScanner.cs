@@ -61,9 +61,14 @@ public sealed class RuntimeScanner : IRuntimeScanner
             };
             return new RuntimeInfo(kind, endpoint, Running: true, models);
         }
-        catch (Exception e) when (e is HttpRequestException or TaskCanceledException or IOException
-            or InvalidOperationException or System.Text.Json.JsonException)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
+            throw;
+        }
+        catch (Exception e) when (e is not OutOfMemoryException)
+        {
+            // A malformed setting, an unexpected JSON shape, or a provider-specific exception means only this
+            // runtime is unavailable. It must not take down the scan loop or the settings window.
             return new RuntimeInfo(kind, endpoint, Running: false, Array.Empty<RuntimeModel>());
         }
     }
@@ -146,8 +151,8 @@ public sealed class RuntimeScanner : IRuntimeScanner
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeout.CancelAfter(ProbeTime);
-        using var response = await _http.GetAsync(url, timeout.Token).ConfigureAwait(false);
+        using var response = await _http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, timeout.Token).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode) return (null, false);
-        return (await response.Content.ReadAsStringAsync(timeout.Token).ConfigureAwait(false), true);
+        return (await BoundedHttp.ReadJsonAsync(response, timeout.Token, 512 * 1024).ConfigureAwait(false), true);
     }
 }

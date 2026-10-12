@@ -138,11 +138,11 @@ public class OpenAiCompatibleSourceTests
         Assert.Equal("LM Studio answered something that is not JSON", httpError.Message);
 
         server.Respond(200, """{"choices":[{"message":{"content":""}}]}""");
-        var empty = await Assert.ThrowsAsync<InvalidOperationException>(() => Source(server).GenerateAsync(Plain(), default));
+        var empty = await Assert.ThrowsAsync<TextSourceException>(() => Source(server).GenerateAsync(Plain(), default));
         Assert.Equal("LM Studio answered nothing", empty.Message);
 
         server.Respond(200, """{"choices":[{"message":{"content":"maybe"}}]}""");
-        var missed = await Assert.ThrowsAsync<InvalidOperationException>(() => Source(server).GenerateAsync(Quiz(), default));
+        var missed = await Assert.ThrowsAsync<TextSourceException>(() => Source(server).GenerateAsync(Quiz(), default));
         Assert.Equal("LM Studio did not answer with one of the choices", missed.Message);
     }
 
@@ -154,6 +154,15 @@ public class OpenAiCompatibleSourceTests
         var e = await Assert.ThrowsAsync<HttpRequestException>(() => Source(server).GenerateAsync(Plain(), default));
         Assert.Equal("LM Studio answered HTTP 302", e.Message);
         Assert.Single(server.Requests);
+    }
+
+    [Fact]
+    public async Task AResponseBodyOverTheCapIsRefusedBeforeJsonParsing()
+    {
+        using var server = new FakeHttp(Port);
+        server.Respond(200, new string('x', 4 * 1024 * 1024 + 1));
+        var e = await Assert.ThrowsAsync<HttpRequestException>(() => Source(server).GenerateAsync(Plain(), default));
+        Assert.Contains("larger than", e.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -175,7 +184,7 @@ public class OpenAiCompatibleSourceTests
     public void TheStateTextTellsPeopleWhatIsWrong()
     {
         var source = new OpenAiCompatibleSource(SourceKinds.LmStudio, "qwen/qwen3.5-4b", null, "http://127.0.0.1:5321/v1", NoRedirects());
-        Assert.Equal("lmstudio:qwen/qwen3.5-4b", source.Id);
+        Assert.Contains("lmstudio:qwen/qwen3.5-4b@http://127.0.0.1:5321/v1", source.Id);
         Assert.Equal("qwen/qwen3.5-4b in LM Studio", source.Name);
         Assert.Equal(SourceState.Ready, source.State);
         Assert.Equal("ready when LM Studio runs", source.StateText);          // not checked yet
@@ -190,7 +199,26 @@ public class OpenAiCompatibleSourceTests
         var labelled = new OpenAiCompatibleSource(SourceKinds.OpenAiCompatible, "mistral-7b", "Quiz model", "http://192.168.1.50:8000/v1", NoRedirects());
         Assert.Equal("Quiz model", labelled.Name);
         Assert.Equal("OpenAI-compatible server", labelled.RuntimeName);
-        Assert.Equal("another computer", labelled.Runs);          // not a loopback address
+        Assert.Equal("another computer (192.168.1.50)", labelled.Runs); // not a loopback address
+        Assert.Equal("home-server", labelled.ProviderKind);
         Assert.Equal(Runs.ThisDevice, source.Runs);
+    }
+
+    [Theory]
+    [InlineData("http://[::1]:5321/v1")]
+    [InlineData("http://[::ffff:127.0.0.1]:5321/v1")]
+    public void IPv6LoopbackAddressesAreLocal(string endpoint)
+    {
+        var source = new OpenAiCompatibleSource(SourceKinds.OpenAiCompatible, "model", null, endpoint, NoRedirects());
+        Assert.Equal("local-model", source.ProviderKind);
+        Assert.Equal(Runs.ThisDevice, source.Runs);
+    }
+
+    [Fact]
+    public void ARemoteEndpointIsAHomeServerNotAKey()
+    {
+        var source = new OpenAiCompatibleSource(SourceKinds.OpenAiCompatible, "model", null, "https://home.example.test/v1", NoRedirects());
+        Assert.Equal("home-server", source.ProviderKind);
+        Assert.Equal("another computer (home.example.test)", source.Runs);
     }
 }

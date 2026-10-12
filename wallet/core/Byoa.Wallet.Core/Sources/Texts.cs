@@ -14,11 +14,31 @@ public static partial class Texts
     [GeneratedRegex(@"<think>[\s\S]*?</think>|<think>[\s\S]*$", RegexOptions.IgnoreCase)]
     private static partial Regex Think();
 
+    [GeneratedRegex(@"<reasoning>[\s\S]*?</reasoning>|<reasoning>[\s\S]*$", RegexOptions.IgnoreCase)]
+    private static partial Regex Reasoning();
+
+    [GeneratedRegex(@"<\|channel\|>(?:thought|analysis|reasoning)(?:<\|message\|>)?[\s\S]*?(?=<\|channel\|>(?:final|answer)(?:<\|message\|>)?|$)", RegexOptions.IgnoreCase)]
+    private static partial Regex HiddenChannel();
+
+    [GeneratedRegex(@"^\s*(?:thinking|reasoning|thought process)\s*:?[^\r\n]*(?:\r?\n|$)[\s\S]*?\r?\n\s*(?:answer|final)\s*:\s*", RegexOptions.IgnoreCase)]
+    private static partial Regex LeadingReasoning();
+
+    [GeneratedRegex(@"^\s*(?:thinking|reasoning|thought process)\s*:?[^\r\n]*(?:\r?\n|$)[\s\S]*?\r?\n\s*final\s+answer\s*:\s*", RegexOptions.IgnoreCase)]
+    private static partial Regex LeadingFinalAnswerReasoning();
+
     /// <summary>The answer only: reasoning tags removed, trimmed. Never throws.</summary>
     public static string CleanAnswer(string text)
     {
         if (string.IsNullOrEmpty(text)) return "";
-        return Think().Replace(text, "").Trim();
+        var cleaned = Think().Replace(text, "");
+        cleaned = Reasoning().Replace(cleaned, "");
+        cleaned = HiddenChannel().Replace(cleaned, "");
+        cleaned = LeadingFinalAnswerReasoning().Replace(cleaned, "");
+        cleaned = LeadingReasoning().Replace(cleaned, "");
+        cleaned = cleaned.Replace("<|channel|>final", "", StringComparison.OrdinalIgnoreCase)
+            .Replace("<|channel|>answer", "", StringComparison.OrdinalIgnoreCase)
+            .Replace("<|message|>", "", StringComparison.OrdinalIgnoreCase);
+        return cleaned.Trim();
     }
 
     /// <summary>

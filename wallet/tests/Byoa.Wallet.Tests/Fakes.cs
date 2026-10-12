@@ -20,6 +20,7 @@ class FakeSource : ISpeechSource
     {
         Id = id;
         Runs = runs;
+        ProviderKind = runs == Sources.Runs.ApiKey ? "api-key" : "local-model";
         Languages = languages;
         PricePerSecond = pricePerSecond;
     }
@@ -27,7 +28,7 @@ class FakeSource : ISpeechSource
     public string Id { get; }
     public string Name => "Fake " + Id;
     public string Runs { get; }
-    public string ProviderKind => Runs == Sources.Runs.ApiKey ? "api-key" : "local-model";
+    public string ProviderKind { get; set; } = "local-model";
     public IReadOnlyList<string>? Languages { get; }
     public int LanguageCount => Languages?.Count ?? 99;
     public decimal PricePerSecond { get; }
@@ -116,12 +117,13 @@ class FakeTextSource : ITextSource, ILiveness
         Id = id;
         Runs = runs;
         CostPerCall = costPerCall;
+        ProviderKind = runs == Sources.Runs.ApiKey ? "api-key" : "local-model";
     }
 
     public string Id { get; }
     public string Name => "FakeText " + Id;
     public string Runs { get; }
-    public string ProviderKind => Runs == Sources.Runs.ApiKey ? "api-key" : "local-model";
+    public string ProviderKind { get; set; } = "local-model";
     public IReadOnlyList<string>? Languages { get; set; }
     public bool Paid => CostPerCall > 0;
     public SourceState State { get; set; } = SourceState.Ready;
@@ -130,6 +132,8 @@ class FakeTextSource : ITextSource, ILiveness
     public bool? Up { get; set; } = true;
 
     public Queue<string> Answers { get; set; } = new();
+    /// <summary>Optional scripted provider outcomes, including typed paid failures.</summary>
+    public Queue<Func<TextRequest, TextAnswer>>? Outcomes { get; set; }
     public bool Fail { get; set; }
     int _calls;
     public int Calls => Volatile.Read(ref _calls);
@@ -156,6 +160,11 @@ class FakeTextSource : ITextSource, ILiveness
 
     TextAnswer Answer(TextRequest request)
     {
+        if (Outcomes is { Count: > 0 })
+        {
+            var outcome = Outcomes.Count > 1 ? Outcomes.Dequeue() : Outcomes.Peek();
+            return outcome(request);
+        }
         if (Fail) throw new InvalidOperationException("fake text failure");
         var text = Answers.Count > 1 ? Answers.Dequeue() : Answers.Peek();
         return new TextAnswer(text, CostPerCall, 1, 1, "fake");
@@ -171,6 +180,7 @@ sealed class ScriptedUi : IWalletUi
     public int Notices { get; private set; }
     public List<ConsentModel> Consents { get; } = [];
     public int PaidQuestions { get; private set; }
+    public List<PaidModel> PaidModels { get; } = [];
     public int Quiet { get; private set; }
     public List<InfoModel> Infos { get; } = [];
 
@@ -208,6 +218,7 @@ sealed class ScriptedUi : IWalletUi
     public Task<PaidAnswer> AskPaidAsync(PaidModel model, CancellationToken ct)
     {
         PaidQuestions++;
+        PaidModels.Add(model);
         return Task.FromResult(Paid);
     }
 

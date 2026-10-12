@@ -1,17 +1,16 @@
 # BYOA agent wallet 0.1 (Windows)
 
-The first working agent wallet for [BYOA](../README.md): a tray app on your computer, a small native messaging host and a Chrome extension. A web page asks for your AI with `window.byoa`; the wallet shows a short notice, then a short consent window, and answers the page's calls with **your** models: local speech recognition on your own GPU or CPU, or your own API key as a paid fallback that asks first.
+The first working agent wallet for [BYOA](../README.md): a tray app on your computer, a small native messaging host and a Chrome extension. A web page asks for your AI with `window.byoa`; the wallet shows a short notice, then a short consent window, and answers the page's calls with **your** models: local speech recognition, local text generation, a compatible home server, or your own API key as a paid fallback that asks first.
 
-0.1 serves `audio.transcribe` (speech to text) from three built-in sources. `text.generate` is available when the
-other text provider is installed, and the same source registry manages both skills:
+0.1 serves `audio.transcribe` (speech to text) from built-in sources and `text.generate` from LM Studio, Ollama, another OpenAI-compatible endpoint, or OpenRouter. The same source registry manages both skills:
 
 | Source | Runs | Languages | Cost | Notes |
 |---|---|---|---|---|
 | GigaAM v3 (sherpa-onnx) | this PC, CPU | Russian only | no cloud bill | very fast and accurate for Russian; uses a model folder already on disk |
-| Whisper large-v3, q5_0 (Whisper.net / whisper.cpp) | this PC, GPU through Vulkan, CPU fallback | 100 | no cloud bill | downloads once (1.1 GB) into `%LOCALAPPDATA%\BYOA\wallet\models` on first use, with progress shown |
+| Whisper large-v3, q5_0 (Whisper.net / whisper.cpp) | this PC, GPU or CPU | 100 | no cloud bill | downloads once (1.1 GB) into the wallet's active `models\whisper` folder on first use, with progress shown |
 | ElevenLabs Scribe v2 through OpenRouter | your API key | 99 | paid, about $0.00004 a second | the last fallback; asks before it runs |
 
-The default route for a call: GigaAM when the page says the language is `ru`, Whisper for other languages and as the fallback, OpenRouter last. You can reorder the route, switch sources off and decide whether the paid one asks.
+The default route for speech is GigaAM for `ru`, Whisper for other languages and as the fallback, and OpenRouter last. Text sources are added to their own route when the visitor chooses them; local sources are tried before paid sources. You can reorder either route, switch sources off and decide whether the paid one asks.
 
 The design and the security notes are in [docs/wallet-0.1.md](../docs/wallet-0.1.md). The page API is the BYOA 0.1 contract: `window.byoa.request(manifest)`, `call(grantId, skill, input, params)`, `release(grantId)`.
 

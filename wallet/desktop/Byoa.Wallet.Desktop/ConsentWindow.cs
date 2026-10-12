@@ -95,7 +95,7 @@ sealed class ConsentWindow : CornerWindow
 
     public Task<ConsentAnswer> Result => _answer.Task;
 
-    public void CloseOn(CancellationToken ct) => _timeout = ct.Register(() => Dispatcher.UIThread.Post(() =>
+    public void CloseOn(CancellationToken ct) => _timeout = ct.Register(() => DesktopUi.PostSafe(() =>
     {
         _answer.TrySetResult(ConsentAnswer.Declined);
         if (!_closed) Close();

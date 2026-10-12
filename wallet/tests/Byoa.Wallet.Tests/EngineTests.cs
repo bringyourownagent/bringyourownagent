@@ -427,6 +427,21 @@ public class EngineTests
     }
 
     [Fact]
+    public async Task CoveredByGrantIsAQueryAndDoesNotPauseOrWrite()
+    {
+        await GrantAsync();
+        _time.Now = _time.Now.AddHours(25);
+        var before = System.Text.Json.JsonSerializer.Serialize(_store.Snapshot());
+        var closed = false;
+        _engine.SiteClosed += _ => closed = true;
+
+        var manifest = JsonNode.Parse(Clips.GeoManifest)!.AsObject();
+        Assert.True(_engine.CoveredByGrant(Site, manifest));
+        Assert.Equal(before, System.Text.Json.JsonSerializer.Serialize(_store.Snapshot()));
+        Assert.False(closed);
+    }
+
+    [Fact]
     public async Task OnlyAnAllowedSiteCanBePaused()
     {
         _ui.Notice = NoticeAnswer.Decline;

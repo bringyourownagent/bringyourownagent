@@ -36,6 +36,12 @@ public sealed class ActivityEntry
     /// <summary>The source that answered (calls).</summary>
     public string? Source { get; set; }
 
+    /// <summary>How many provider attempts this page call made, including paid retries and fallbacks.</summary>
+    public int ProviderCalls { get; set; }
+
+    /// <summary>True when at least one provider was actually called, even if none produced an answer.</summary>
+    public bool ProviderCalled { get; set; }
+
     /// <summary>The fallback route, when the first choice did not answer: "GigaAM v3: turned off → Whisper".</summary>
     public string? Fallback { get; set; }
 
@@ -130,10 +136,12 @@ public sealed class ActivityLog
 
     void Count(ActivityEntry e)
     {
-        if (e.Kind != "call" || e.Outcome != "ok") return;
+        if (e.Kind != "call") return;
+        var providerCalls = e.ProviderCalls > 0 ? e.ProviderCalls : e.Outcome == "ok" ? 1 : 0;
+        if (providerCalls == 0 && !e.ProviderCalled) return;
         var key = (e.At.ToLocalTime().Date, e.Origin);
         var (spent, calls) = _daily.TryGetValue(key, out var v) ? v : (0m, 0);
-        _daily[key] = (spent + e.CostValue, calls + 1);
+        _daily[key] = (spent + e.CostValue, calls + providerCalls);
     }
 
     string FileFor(DateTimeOffset at) => Path.Combine(_folder!, "activity-" + at.ToLocalTime().ToString("yyyy-MM-dd") + ".jsonl");

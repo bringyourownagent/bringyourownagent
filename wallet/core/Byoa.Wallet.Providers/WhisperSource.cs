@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Globalization;
-using System.Runtime.Intrinsics.X86;
 using System.Security.Cryptography;
 using System.Text.Json.Nodes;
 using Byoa.Wallet.Protocol;
@@ -34,12 +33,12 @@ public class WhisperSource : ISpeechSource, IDownloadableSource, IWarmable, IDis
         ["ggml-base-q5_1.bin"] = 59_707_625,
     };
 
-    static int _gpuRuntimeConfigured;
-    static int _cpuRuntimeConfigured;
+    static int _processRuntimeConfigured;
 
     readonly Func<string> _modelFile;
     readonly Func<IReadOnlyList<FoundModel>> _found;
     readonly HttpClient _http;
+    readonly CpuFeatureSet _cpuFeatures;
     readonly SemaphoreSlim _gate = new(1, 1);
     readonly Dictionary<string, WhisperProcessor> _processors = new(StringComparer.Ordinal);
     readonly object _downloadGate = new();
@@ -54,11 +53,12 @@ public class WhisperSource : ISpeechSource, IDownloadableSource, IWarmable, IDis
 
     /// <param name="modelFile">The ggml file name chosen in the settings.</param>
     /// <param name="found">The models found in the visitor's model folders.</param>
-    public WhisperSource(Func<string> modelFile, Func<IReadOnlyList<FoundModel>> found, HttpClient http)
+    public WhisperSource(Func<string> modelFile, Func<IReadOnlyList<FoundModel>> found, HttpClient http, CpuFeatureSet? cpuFeatures = null)
     {
         _modelFile = modelFile;
         _found = found;
         _http = http;
+        _cpuFeatures = cpuFeatures ?? CpuFeatures.Current;
     }
 
     public event Action? ProgressChanged;
@@ -96,13 +96,15 @@ public class WhisperSource : ISpeechSource, IDownloadableSource, IWarmable, IDis
     }
 
     public SourceState State =>
-        _download is { IsCompleted: false } ? SourceState.Downloading
+        !_cpuFeatures.Avx ? SourceState.Unavailable
+        : _download is { IsCompleted: false } ? SourceState.Downloading
         : _error is not null ? SourceState.Broken
         : ModelPath is null ? SourceState.NeedsDownload
         : SourceState.Ready;
 
     public string StateText => State switch
     {
+        SourceState.Unavailable => "unavailable: this processor has no AVX (too slow)",
         SourceState.Downloading => "downloading " + (_progress ?? 0).ToString("P0", CultureInfo.InvariantCulture),
         SourceState.Broken => "failed: " + _error,
         SourceState.NeedsDownload => "not downloaded yet (" + Mb(DownloadSize) + "), downloads on first use",
@@ -220,10 +222,14 @@ public class WhisperSource : ISpeechSource, IDownloadableSource, IWarmable, IDis
     // ------------------------------------------------------------------------------------------------
     // transcription
 
-    static void ConfigureRuntime(bool useGpu)
+    /// <summary>
+    /// Whisper.net's library order is process-global. Decide it once before either the GPU or CPU factory exists;
+    /// the CPU fallback is present in the source set, so Vulkan is never allowed to win that decision.
+    /// </summary>
+    public static void ConfigureProcessRuntime(CpuFeatureSet features, bool cpuSourceEnabled)
     {
-        if (Interlocked.Exchange(ref useGpu ? ref _gpuRuntimeConfigured : ref _cpuRuntimeConfigured, 1) == 1) return;
-        RuntimeOptions.RuntimeLibraryOrder = RuntimeOrderFor(useGpu, Avx.IsSupported);
+        if (Interlocked.Exchange(ref _processRuntimeConfigured, 1) == 1) return;
+        RuntimeOptions.RuntimeLibraryOrder = RuntimeOrderFor(!cpuSourceEnabled, features.Avx);
     }
 
     /// <summary>
@@ -254,9 +260,9 @@ public class WhisperSource : ISpeechSource, IDownloadableSource, IWarmable, IDis
         var path = ModelPath ?? throw new InvalidOperationException("the Whisper model is not downloaded yet");
         if (_factory is not null && _factoryPath == path) return _factory;
         DisposeFactory();
-        ConfigureRuntime(UseGpu);
-        // Without AVX the no-AVX build runs on the CPU only, so the GPU is switched off for it.
-        var useGpu = UseGpu && Avx.IsSupported;
+        ConfigureProcessRuntime(_cpuFeatures, cpuSourceEnabled: true);
+        if (!_cpuFeatures.Avx) throw new InvalidOperationException("unavailable: this processor has no AVX (too slow)");
+        var useGpu = UseGpu;
         try
         {
             _factory = WhisperFactory.FromPath(path, new WhisperFactoryOptions { UseGpu = useGpu });

@@ -57,6 +57,6 @@ sealed class AgentConsentWindow : Window
     void Answer(AgentConsentDecision decision)
     {
         _answer.TrySetResult(new AgentConsentAnswer(decision, decision == AgentConsentDecision.Allow && _full.IsChecked == true));
-        if (!_closed) Dispatcher.UIThread.Post(Close);
+        if (!_closed) DesktopUi.PostSafe(Close);
     }
 }

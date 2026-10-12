@@ -10,6 +10,9 @@ namespace Byoa.Wallet.Providers;
 /// </summary>
 static class ChatCompletions
 {
+    /// <summary>A broken price must not overflow the wallet's money arithmetic.</summary>
+    public const decimal MaxCost = 1000m;
+
     /// <summary>The response_format that pins the answer to exactly one of the choices.</summary>
     public static JsonObject ChoiceSchema(IReadOnlyList<string> choices) => new()
     {
@@ -71,9 +74,11 @@ static class ChatCompletions
     public static decimal? Cost(JsonNode? usage)
     {
         if (usage?["cost"] is not JsonValue v) return null;
-        if (v.TryGetValue<decimal>(out var d)) return d;
-        if (v.TryGetValue<double>(out var f) && double.IsFinite(f)) return (decimal)f;
-        if (v.TryGetValue<string>(out var s) && decimal.TryParse(s, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var p)) return p;
+        if (v.TryGetValue<decimal>(out var d)) return d is >= 0 and <= MaxCost ? d : null;
+        if (v.TryGetValue<double>(out var f) && double.IsFinite(f) && f is >= 0 and <= (double)MaxCost)
+            return (decimal)f;
+        if (v.TryGetValue<string>(out var s) && decimal.TryParse(s, System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture, out var p) && p is >= 0 and <= MaxCost) return p;
         return null;
     }
 

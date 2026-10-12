@@ -5,6 +5,7 @@ using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Threading;
+using Byoa.Wallet.Protocol;
 using Byoa.Wallet.Registry;
 using Byoa.Wallet.Settings;
 using Byoa.Wallet.Sources;
@@ -85,7 +86,7 @@ sealed class AddModelWindow : Window
         Content = scroll;
         Opened += (_, _) =>
         {
-            if (_local) DispatcherTimer.RunOnce(() => _ = ScanAsync(), TimeSpan.FromMilliseconds(100));
+            if (_local) DispatcherTimer.RunOnce(StartScan, TimeSpan.FromMilliseconds(100));
         };
         LoadExisting();
         Render();
@@ -145,7 +146,7 @@ sealed class AddModelWindow : Window
         var stopped = _runtimes.Where(r => !r.Running).ToList();
         if (_runtimes.Count == 0 && !_scanning) _body.Children.Add(Ui.Wrap("No runtimes answered. Start LM Studio or Ollama, then scan again.", "muted"));
         if (stopped.Count > 0) _body.Children.Add(Ui.Wrap("Not running — start it or download it. A stopped runtime cannot be tested.", "muted", "small"));
-        _body.Children.Add(Ui.Button(_scanning ? "Scanning…" : "Scan again", "deny", "RuntimeScan", () => _ = ScanAsync(), "small"));
+        _body.Children.Add(Ui.Button(_scanning ? "Scanning…" : "Scan again", "deny", "RuntimeScan", StartScan, "small"));
     }
 
     static string RuntimeName(string kind) => kind switch
@@ -185,13 +186,33 @@ sealed class AddModelWindow : Window
             runtimes = winner == scan ? await scan : [];
         }
         catch { runtimes = []; }
-        Dispatcher.UIThread.Post(() =>
+        DesktopUi.PostSafe(() =>
         {
             if (scanNumber != _scanNumber) return;
             _runtimes = runtimes.ToList();
             _scanning = false;
             Render();
         });
+    }
+
+    void StartScan() => _ = ScanObservedAsync();
+
+    async Task ScanObservedAsync()
+    {
+        try
+        {
+            await ScanAsync().ConfigureAwait(true);
+        }
+        catch (Exception e) when (e is not OutOfMemoryException)
+        {
+            ErrorLog.Write(WalletPaths.Home, e);
+            DesktopUi.PostSafe(() =>
+            {
+                _scanning = false;
+                _result.Text = "The runtime scan failed. Try again.";
+                Render();
+            });
+        }
     }
 
     void PopulateModels()

@@ -2,8 +2,12 @@ using Byoa.Wallet.Protocol;
 using Byoa.Wallet.Secrets;
 using Byoa.Wallet.Settings;
 using Byoa.Wallet.Sources;
+using System.Collections.ObjectModel;
 
 namespace Byoa.Wallet.Providers;
+
+/// <summary>An added text source setting that the provider set could not construct.</summary>
+public sealed record InvalidTextSource(string Id, string Label, string Message);
 
 /// <summary>The models found in the visitor's model folders, rescanned at most once a minute (or on demand).</summary>
 public sealed class ModelCatalog
@@ -52,6 +56,11 @@ public sealed class SourceSet : IDisposable
     readonly CancellationTokenSource _scans = new();
     readonly SourceList _text = new();
     int _rebuilding;
+    int _rebuildPending;
+    Task? _scanLoop;
+    readonly object _sourceGate = new();
+    Dictionary<string, ITextSource> _lastGood = new(StringComparer.Ordinal);
+    IReadOnlyList<InvalidTextSource> _invalid = [];
 
     public SourceSet(SettingsStore store, SecretStore secrets, HttpClient http)
     {
@@ -64,7 +73,10 @@ public sealed class SourceSet : IDisposable
             AllowAutoRedirect = false,
             ConnectTimeout = TimeSpan.FromSeconds(15),
         })
-        { Timeout = TimeSpan.FromSeconds(150) };
+        {
+            Timeout = TimeSpan.FromSeconds(150),
+            MaxResponseContentBufferSize = BoundedHttp.MaxJsonBytes,
+        };
 
         // A new wallet looks in its own models folder and the usual model folders on this computer.
         if (store.Read(s => s.ModelFolders.Count == 0))
@@ -75,15 +87,20 @@ public sealed class SourceSet : IDisposable
         }
 
         Catalog = new ModelCatalog(() => store.Read(s => s.ModelFolders.ToList()));
+        // The Whisper loader's order is process-global. Pin it before any source can create a native factory.
+        WhisperSource.ConfigureProcessRuntime(CpuFeatures.Current, cpuSourceEnabled: true);
         GigaAm = new GigaAmSource(() => Catalog.Found.FirstOrDefault(m => m.Kind == "gigaam")?.Path);
         Whisper = new WhisperSource(() => store.Read(s => s.WhisperModel), () => Catalog.Found, http);
         WhisperCpu = new WhisperCpuSource(() => Catalog.Found, http);
         OpenRouter = new OpenRouterSource(http, () => secrets.Get(OpenRouterSource.SecretName), () => secrets.Has(OpenRouterSource.SecretName));
         All = [GigaAm, Whisper, WhisperCpu, OpenRouter];
         Scanner = new RuntimeScanner(TextHttp, AddedEndpoints);
+        // The registry normally adds the route in the same settings update as the source. For older settings,
+        // repair the route once before subscribing to Changed; a rebuild must never write settings.json again.
+        _store.Update(Router.EnsureTextChainFromSettings);
         RebuildText();
         store.Changed += RebuildText;
-        _ = Task.Run(() => ScanLoop(_scans.Token));
+        _scanLoop = Task.Run(() => ScanLoop(_scans.Token));
     }
 
     public ModelCatalog Catalog { get; }
@@ -105,32 +122,80 @@ public sealed class SourceSet : IDisposable
     /// <summary>The text source with this id ("lmstudio:qwen/qwen3.5-4b"), or null.</summary>
     public ITextSource? FindText(string id) => _text.FirstOrDefault(s => s.Id == id);
 
+    /// <summary>Added source settings that could not be materialised; the Sources page can show the readable reason.</summary>
+    public IReadOnlyList<InvalidTextSource> InvalidTextSources
+    {
+        get { lock (_sourceGate) return new ReadOnlyCollection<InvalidTextSource>(_invalid.ToList()); }
+    }
+
     // ------------------------------------------------------------------------------------------------
     // the text sources follow the settings
 
     void RebuildText()
     {
+        Interlocked.Exchange(ref _rebuildPending, 1);
         if (Interlocked.CompareExchange(ref _rebuilding, 1, 0) == 1) return;
         try
         {
-            var settings = _store.Snapshot();
-            var list = new List<ITextSource>();
-            foreach (var setting in settings.Sources)
+            while (Interlocked.Exchange(ref _rebuildPending, 0) == 1)
             {
-                // Keep disabled sources materialised so the registry and the Skills page can show them and
-                // Router.PlanText can explain "turned off". The route, not this list, owns the enabled check.
-                if (setting.Skills.Count > 0 && !setting.Skills.Contains(Vocabulary.Generate)) continue;
-                var source = CreateTextSource(setting);
-                if (source is not null && !list.Any(s => s.Id == source.Id)) list.Add(source);
-            }
+                var settings = _store.Snapshot();
+                var list = new List<ITextSource>();
+                var invalid = new List<InvalidTextSource>();
+                foreach (var setting in settings.Sources)
+                {
+                    // Keep disabled sources materialised so the registry and the Skills page can show them and
+                    // Router.PlanText can explain "turned off". The route, not this list, owns the enabled check.
+                    if (setting.Skills.Count > 0 && !setting.Skills.Contains(Vocabulary.Generate)) continue;
+                    try
+                    {
+                        var source = CreateTextSource(setting);
+                        if (source is null)
+                        {
+                            invalid.Add(new InvalidTextSource(setting.Id, setting.Label ?? setting.Model ?? setting.Id,
+                                "This source setting is incomplete."));
+                            continue;
+                        }
 
-            _text.Replace(list);
-            // The chain for text.generate grows with the sources: every one gets a stop, before the first paid one.
-            _store.Update(s => Router.EnsureTextChain(s, list));
+                        if (list.Any(s => s.Id == source.Id))
+                        {
+                            invalid.Add(new InvalidTextSource(setting.Id, setting.Label ?? setting.Model ?? setting.Id,
+                                "This source has the same id as another source."));
+                            continue;
+                        }
+
+                        list.Add(source);
+                    }
+                    catch (Exception e) when (e is not OutOfMemoryException)
+                    {
+                        invalid.Add(new InvalidTextSource(setting.Id, setting.Label ?? setting.Model ?? setting.Id,
+                            e.Message));
+                        lock (_sourceGate)
+                        {
+                            if (_lastGood.TryGetValue(setting.Id, out var old) && !list.Any(s => s.Id == old.Id)) list.Add(old);
+                        }
+                    }
+                }
+
+                _text.Replace(list);
+                lock (_sourceGate)
+                {
+                    _lastGood = list.ToDictionary(s => s.Id, StringComparer.Ordinal);
+                    _invalid = invalid;
+                }
+
+            }
+        }
+        catch (Exception e) when (e is not OutOfMemoryException)
+        {
+            // A malformed setting, serializer problem, or a provider constructor must never escape SettingsStore.Update.
+            lock (_sourceGate)
+                _invalid = [new InvalidTextSource("settings", "Text sources", e.Message)];
         }
         finally
         {
             Interlocked.Exchange(ref _rebuilding, 0);
+            if (Volatile.Read(ref _rebuildPending) == 1) RebuildText();
         }
     }
 
@@ -178,7 +243,7 @@ public sealed class SourceSet : IDisposable
             _ => "",
         };
         var address = given.Trim().TrimEnd('/');
-        if (kind == SourceKinds.LmStudio && address.EndsWith("/v1", StringComparison.OrdinalIgnoreCase))
+        if ((kind is SourceKinds.LmStudio or SourceKinds.Ollama) && address.EndsWith("/v1", StringComparison.OrdinalIgnoreCase))
         {
             address = address[..^3];
         }
@@ -197,7 +262,8 @@ public sealed class SourceSet : IDisposable
         foreach (var setting in settings.Sources)
         {
             if (setting is not { Enabled: true, Kind: not null, Model: { Length: > 0 } }) continue;
-            if (_text.FirstOrDefault(t => t.Id == setting.Kind + ":" + setting.Model) is not OpenAiCompatibleSource source) continue;
+            var sourceId = OpenAiCompatibleSource.MakeId(setting.Kind, setting.Model, setting.Endpoint);
+            if (_text.FirstOrDefault(t => t.Id == sourceId || t.Id == setting.Id) is not OpenAiCompatibleSource source) continue;
             var address = ScannerEndpoint(setting.Kind, setting.Endpoint);
             var info = infos.FirstOrDefault(i => i.Kind == setting.Kind && i.Endpoint.Equals(address, StringComparison.OrdinalIgnoreCase));
             if (info is null || !info.Running)
@@ -211,7 +277,15 @@ public sealed class SourceSet : IDisposable
             source.Listed = info.Models.Any(m => m.Id == setting.Model);
         }
 
-        foreach (var source in _text.OfType<OpenRouterTextSource>()) _ = source.PrimePricesAsync(ct);
+        var priceTasks = _text.OfType<OpenRouterTextSource>().Select(source => source.PrimePricesAsync(ct)).ToArray();
+        if (priceTasks.Length > 0)
+        {
+            try { await Task.WhenAll(priceTasks).ConfigureAwait(false); }
+            catch (Exception e) when (e is not OutOfMemoryException and not OperationCanceledException)
+            {
+                // Price refresh is advisory. A provider keeps its flat estimate when the public list is unavailable.
+            }
+        }
     }
 
     async Task ScanLoop(CancellationToken ct)
@@ -231,7 +305,7 @@ public sealed class SourceSet : IDisposable
             {
                 // a failed scan must not stop the loop; the next one starts in half a minute
                 try { await Task.Delay(TimeSpan.FromSeconds(30), ct).ConfigureAwait(false); }
-                catch (OperationCanceledException) { return; }
+                catch (Exception) { return; }
             }
         }
     }
@@ -240,6 +314,8 @@ public sealed class SourceSet : IDisposable
     {
         _store.Changed -= RebuildText;
         _scans.Cancel();
+        try { _scanLoop?.Wait(TimeSpan.FromSeconds(2)); }
+        catch (Exception) { /* disposal must not bring down the tray */ }
         _scans.Dispose();
         GigaAm.Dispose();
         Whisper.Dispose();

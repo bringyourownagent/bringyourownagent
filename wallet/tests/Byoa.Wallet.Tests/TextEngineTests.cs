@@ -124,6 +124,26 @@ public class TextEngineTests
     }
 
     [Fact]
+    public async Task ARemoteCompatibleSourceIsShownAsAHomeServerInConsent()
+    {
+        var remote = new FakeTextSource("remote", "another computer (home.example)") { ProviderKind = "home-server" };
+        var log = new ActivityLog(null, _time.Now);
+        var engine = new WalletEngine(_store, [], log, _ui, _time, [remote]);
+        _store.Update(s => s.Chain(Vocabulary.Generate).Stops = [new ChainStop { SourceId = remote.Id }]);
+        const string manifest = """
+            {"byoa":"0.1-draft","purpose":{"summary":"Remote model test","limits":{"maxTextChars":8000,"maxCallsPerMinute":40}},
+            "skills":{"text.generate":{"required":true}},"privacy":"local-only","expectedCost":{"perSession":"0.05 USD"}}
+            """;
+
+        var result = await engine.HandleAsync(Clips.Request(Site, click: true, manifest));
+        Assert.NotNull(result);
+        var row = Assert.Single(_ui.Consents[^1].Rows);
+        var route = Assert.Single(row.Routes);
+        Assert.Equal("another computer (home.example)", route.Where);
+        Assert.True(row.CanServe);
+    }
+
+    [Fact]
     public async Task ThePageParamsReachTheSource()
     {
         var grant = await GrantAsync();
@@ -259,6 +279,98 @@ public class TextEngineTests
     }
 
     [Fact]
+    public async Task AChoiceMissChargesBothPaidAttemptsAndMovesTheDailyTotals()
+    {
+        _store.Update(s => s.Chain(Vocabulary.Generate).Stops = [new ChainStop { SourceId = _paid.Id, AskBeforePaid = false }]);
+        _paid.Answers = new Queue<string>(["maybe", "still maybe"]);
+        var grant = await GrantAsync();
+
+        var result = await _engine.HandleAsync(TextCall(Site, grant, new JsonObject
+        {
+            ["choices"] = new JsonArray("yes", "no"),
+        }));
+
+        Assert.False(Ok(result));
+        Assert.Equal(2, _paid.Calls);
+        var session = _engine.FindGrant(grant)!;
+        Assert.Equal(0.008m, session.Spent);
+        Assert.Equal(2, session.CallTimes.Count);
+        var entry = _log.Recent().Single(e => e.Kind == "call");
+        Assert.Equal(2, entry.ProviderCalls);
+        Assert.Equal("0.008 USD", entry.Cost);
+        Assert.Equal((0.008m, 2), _log.Today(_time.Now, Site));
+    }
+
+    [Fact]
+    public async Task AChoiceRetryIsIncludedInThePaidQuestionQuote()
+    {
+        _store.Update(s => s.Chain(Vocabulary.Generate).Stops = [new ChainStop { SourceId = _paid.Id, AskBeforePaid = true }]);
+        _paid.Answers = new Queue<string>(["maybe", "yes"]);
+        _ui.Paid = PaidAnswer.Once;
+        var grant = await GrantAsync();
+
+        var result = await _engine.HandleAsync(TextCall(Site, grant, new JsonObject
+        {
+            ["choices"] = new JsonArray("yes", "no"),
+        }));
+
+        Assert.True(Ok(result));
+        Assert.Equal(2, _paid.Calls);
+        Assert.Equal(0.008m, _ui.PaidModels.Single().Estimate);
+    }
+
+    [Fact]
+    public async Task AReportedCostOnAnEmptyPaidAnswerIsSettled()
+    {
+        _store.Update(s => s.Chain(Vocabulary.Generate).Stops = [new ChainStop { SourceId = _paid.Id, AskBeforePaid = false }]);
+        _paid.Outcomes = new Queue<Func<TextRequest, TextAnswer>>([_ => throw new TextSourceException(
+            "provider returned an empty answer", cost: 0.006m, responseReceived: true)]);
+        var grant = await GrantAsync();
+
+        Assert.False(Ok(await _engine.HandleAsync(TextCall(Site, grant))));
+        Assert.Equal(0.006m, _engine.FindGrant(grant)!.Spent);
+        Assert.Equal("0.006 USD", _log.Recent().Single(e => e.Kind == "call").Cost);
+        Assert.Equal((0.006m, 1), _log.Today(_time.Now, Site));
+    }
+
+    [Fact]
+    public async Task AnUnknownPaidFailureReturnsMoneyButKeepsItsRateCall()
+    {
+        _store.Update(s => s.Chain(Vocabulary.Generate).Stops = [new ChainStop { SourceId = _paid.Id, AskBeforePaid = false }]);
+        _paid.Outcomes = new Queue<Func<TextRequest, TextAnswer>>([_ => throw new InvalidOperationException("connection failed")]);
+        var grant = await GrantAsync();
+
+        Assert.False(Ok(await _engine.HandleAsync(TextCall(Site, grant))));
+        var session = _engine.FindGrant(grant)!;
+        Assert.Equal(0, session.Spent);
+        Assert.Single(session.CallTimes);
+        var entry = _log.Recent().Single(e => e.Kind == "call");
+        Assert.Equal(1, entry.ProviderCalls);
+        Assert.Equal("0 USD", entry.Cost);
+        Assert.Equal((0m, 1), _log.Today(_time.Now, Site));
+    }
+
+    [Fact]
+    public async Task ASettledFailedCallClosesTheDailyMoneyCapBeforeTheNextAttempt()
+    {
+        _store.Update(s =>
+        {
+            s.Limits.SitePerDay = "0.005 USD";
+            s.Limits.WalletPerDay = "0.005 USD";
+            s.Chain(Vocabulary.Generate).Stops = [new ChainStop { SourceId = _paid.Id, AskBeforePaid = false }];
+        });
+        _paid.Outcomes = new Queue<Func<TextRequest, TextAnswer>>([_ => throw new TextSourceException(
+            "empty", cost: 0.006m, responseReceived: true)]);
+        var grant = await GrantAsync();
+
+        Assert.False(Ok(await _engine.HandleAsync(TextCall(Site, grant))));
+        Assert.False(Ok(await _engine.HandleAsync(TextCall(Site, grant))));
+        Assert.Equal(1, _paid.Calls);
+        Assert.Equal((0.006m, 1), _log.Today(_time.Now, Site));
+        Assert.Equal("money per day", _log.Recent()[0].Note);
+    }
+
+    [Fact]
     public async Task NoSourceMatchingTheChoicesIsAPlainError()
     {
         _first.Answers = new Queue<string>(["maybe", "perhaps"]);
@@ -374,6 +486,26 @@ public class TextEngineTests
         {
             WalletEngine.TextSourceTimeout = old;
         }
+    }
+
+    [Fact]
+    public async Task CancellingATextCallReturnsItsMoneyAndReleasesTheBusySource()
+    {
+        _first.Hold = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var grant = await GrantAsync();
+        using var cancelled = new CancellationTokenSource();
+        var call = _engine.HandleAsync(TextCall(Site, grant), cancelled.Token);
+        while (_first.Calls == 0) await Task.Delay(10);
+
+        cancelled.Cancel();
+        Assert.False(Ok(await call));
+        var session = _engine.FindGrant(grant)!;
+        Assert.Equal(0, session.Spent);
+        Assert.Single(session.CallTimes);                         // the provider was called, so rate limiting remains honest
+
+        _first.Hold = null;
+        Assert.True(Ok(await _engine.HandleAsync(TextCall(Site, grant))));
+        Assert.Equal(2, _first.Calls);
     }
 
     // ------------------------------------------------------------------ money

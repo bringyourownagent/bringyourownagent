@@ -77,6 +77,6 @@ sealed class ApiKeyEntryWindow : Window
 
     void CloseIfOpen()
     {
-        if (!_closed) Dispatcher.UIThread.Post(Close);
+        if (!_closed) DesktopUi.PostSafe(Close);
     }
 }

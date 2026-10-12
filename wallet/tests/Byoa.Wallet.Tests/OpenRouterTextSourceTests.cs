@@ -71,6 +71,18 @@ public class OpenRouterTextSourceTests
         var last = retry["messages"]!.AsArray()[^1]!.AsObject();
         Assert.Equal("system", last["role"]!.GetValue<string>());
         Assert.Contains("\"yes\" | \"no\"", last["content"]!.GetValue<string>());
+        Assert.DoesNotContain("sk-test", calls[1].Body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ARedirectIsNotFollowedWithTheApiKey()
+    {
+        using var server = new FakeHttp(Port);
+        server.Respond(302, "{\"location\":\"https://elsewhere.example/\"}");
+        var e = await Assert.ThrowsAsync<HttpRequestException>(() => Source(server).GenerateAsync(Plain(), default));
+        Assert.Equal("OpenRouter answered HTTP 302", e.Message);
+        Assert.Single(server.Requests);
+        Assert.Equal("Bearer sk-test", server.Requests[0].Headers["Authorization"]);
     }
 
     [Fact]
@@ -107,16 +119,34 @@ public class OpenRouterTextSourceTests
     {
         using var server = new FakeHttp(Port);
         server.Respond(200, """{"choices":[{"message":{"content":""}}]}""");
-        var empty = await Assert.ThrowsAsync<InvalidOperationException>(() => Source(server).GenerateAsync(Plain(), default));
+        var empty = await Assert.ThrowsAsync<TextSourceException>(() => Source(server).GenerateAsync(Plain(), default));
         Assert.Equal("OpenRouter answered nothing", empty.Message);
+        Assert.Equal(OpenRouterTextSource.FlatEstimate, empty.Cost);
 
         server.Respond(200, """{"choices":[{"message":{"content":"maybe"}}]}""");
-        var missed = await Assert.ThrowsAsync<InvalidOperationException>(() => Source(server).GenerateAsync(Quiz(), default));
+        var missed = await Assert.ThrowsAsync<TextSourceException>(() => Source(server).GenerateAsync(Quiz(), default));
         Assert.Equal("OpenRouter did not answer with one of the choices", missed.Message);
 
         server.Respond(200, "hello, not JSON");
         var httpError = await Assert.ThrowsAsync<HttpRequestException>(() => Source(server).GenerateAsync(Plain(), default));
         Assert.Equal("OpenRouter answered something that is not JSON", httpError.Message);
+    }
+
+    [Fact]
+    public async Task MissingOrZeroUsageCostUsesTheShortAnswerEstimate()
+    {
+        using var server = new FakeHttp(Port);
+        var source = Source(server);
+        server.Respond(200, """{"choices":[{"message":{"content":"Paris"}}],"usage":{"prompt_tokens":2}}""");
+        var missing = await source.GenerateAsync(Plain(), default);
+        Assert.Equal(OpenRouterTextSource.FlatEstimate, missing.Cost);
+
+        server.Respond(200, """{"choices":[{"message":{"content":"Paris"}}],"usage":{"cost":0}}""");
+        var zero = await source.GenerateAsync(Plain(), default);
+        Assert.Equal(OpenRouterTextSource.FlatEstimate, zero.Cost);
+
+        server.Respond(200, """{"choices":[{"message":{"content":"Paris"}}],"usage":{"cost":"0.0003"}}""");
+        Assert.Equal(0.0003m, (await source.GenerateAsync(Plain(), default)).Cost);
     }
 
     [Fact]
@@ -152,5 +182,15 @@ public class OpenRouterTextSourceTests
         server.Respond(500, "no");
         await source.PrimePricesAsync();                          // a dead list never breaks the source
         Assert.Equal(OpenRouterTextSource.FlatEstimate, source.EstimateCost(Plain()));
+    }
+
+    [Theory]
+    [InlineData("-1")]
+    [InlineData("1e300")]
+    [InlineData("1001")]
+    public void AbsurdReportedCostsAreIgnored(string value)
+    {
+        var usage = JsonNode.Parse("{\"cost\":" + value + "}");
+        Assert.Null(ChatCompletions.Cost(usage));
     }
 }

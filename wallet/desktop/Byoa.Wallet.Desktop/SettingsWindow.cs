@@ -9,6 +9,7 @@ using Avalonia.Threading;
 using Byoa.Wallet.Activity;
 using Byoa.Wallet.Engine;
 using Byoa.Wallet.Providers;
+using Byoa.Wallet.Protocol;
 using Byoa.Wallet.Registry;
 using Byoa.Wallet.Settings;
 using Byoa.Wallet.Sources;
@@ -411,6 +412,8 @@ sealed class SettingsWindow : Window
             _w.Registry.RemoveSource(source.Id);
             Render();
         }, "small");
+        var invalid = _w.Sources.InvalidTextSources.FirstOrDefault(x => x.Id == source.Id);
+        if (invalid is not null && info is not null) info = info with { StateText = "invalid: " + invalid.Message };
         var detail = (info?.StateText ?? "configured") + " · " + string.Join(", ", source.Skills.Count == 0 ? ["text.generate"] : source.Skills)
             + (source.Languages.Count == 0 ? " · any language" : " · " + string.Join(", ", source.Languages));
         var buttons = Ui.Row(8, enabled, edit, remove);
@@ -488,11 +491,11 @@ sealed class SettingsWindow : Window
                             try
                             {
                                 var result = await _w.Registry.DownloadModelAsync(model.Id);
-                                Dispatcher.UIThread.Post(() => { _w.Ui.ShowInfo(new InfoModel(result.Ok ? "Model downloaded" : "Model download", result.Message)); Render(); });
+                                DesktopUi.PostSafe(() => { _w.Ui.ShowInfo(new InfoModel(result.Ok ? "Model downloaded" : "Model download", result.Message)); Render(); });
                             }
                             catch (Exception e) when (e is not OutOfMemoryException)
                             {
-                                Dispatcher.UIThread.Post(() => _w.Ui.ShowInfo(new InfoModel("Model download", "The wallet could not download that model: " + e.Message)));
+                                DesktopUi.PostSafe(() => _w.Ui.ShowInfo(new InfoModel("Model download", "The wallet could not download that model: " + e.Message)));
                             }
                         });
                     }, "small")
@@ -507,12 +510,20 @@ sealed class SettingsWindow : Window
 
     async Task DeleteModelAsync(DownloadableModelInfo model)
     {
-        var confirmation = new ModelDeleteWindow(model.Name, model.SizeBytes);
-        confirmation.Show();
-        if (!await confirmation.Result.ConfigureAwait(true)) return;
-        var result = await _w.Registry.RemoveDownloadedModelAsync(model.Id).ConfigureAwait(true);
-        _w.Ui.ShowInfo(new InfoModel(result.Ok ? "Model removed" : "Model removal", result.Message));
-        Render();
+        try
+        {
+            var confirmation = new ModelDeleteWindow(model.Name, model.SizeBytes);
+            confirmation.Show();
+            if (!await confirmation.Result.ConfigureAwait(true)) return;
+            var result = await _w.Registry.RemoveDownloadedModelAsync(model.Id).ConfigureAwait(true);
+            _w.Ui.ShowInfo(new InfoModel(result.Ok ? "Model removed" : "Model removal", result.Message));
+            Render();
+        }
+        catch (Exception e) when (e is not OutOfMemoryException)
+        {
+            ErrorLog.Write(WalletPaths.Home, e);
+            _w.Ui.ShowInfo(new InfoModel("Model removal", "The wallet could not remove that model."));
+        }
     }
 
     Control SourceCard(ISpeechSource source, WalletSettings settings, string description, Control? extras)
@@ -546,6 +557,7 @@ sealed class SettingsWindow : Window
             SourceState.Downloading => Ui.Chip("Downloading", "orange"),
             SourceState.NeedsDownload => Ui.Chip("Not downloaded", "outline"),
             SourceState.NoKey => Ui.Chip("No key", "outline"),
+            SourceState.Unavailable => Ui.Chip("Unavailable", "outline"),
             _ => Ui.Chip(source.State == SourceState.Missing ? "Not found" : "Failed", "ink"),
         };
         var panel = Ui.Column(6,

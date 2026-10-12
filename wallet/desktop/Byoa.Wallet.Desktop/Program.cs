@@ -28,18 +28,18 @@ static class Program
     {
         if (!OperatingSystem.IsWindows()) return 1;
         if (WalletPaths.IsCustomHome) Native.SetErrorMode(0x8003);
-        if (args.Length >= 3 && args[0] == "--import-key")
-        {
-            var secrets = new SecretStore(Path.Combine(WalletPaths.Home, "secrets.dat"));
-            return secrets.ImportFromFile(args[1], args[2]) ? 0 : 2;
-        }
-
         AppDomain.CurrentDomain.UnhandledException += (_, e) => LogError(e.ExceptionObject as Exception);
         TaskScheduler.UnobservedTaskException += (_, e) =>
         {
             LogError(e.Exception);
             e.SetObserved();
         };
+
+        if (args.Length >= 3 && args[0] == "--import-key")
+        {
+            var secrets = new SecretStore(Path.Combine(WalletPaths.Home, "secrets.dat"));
+            return secrets.ImportFromFile(args[1], args[2]) ? 0 : 2;
+        }
 
         if (WalletPaths.IsCustomHome && Environment.GetEnvironmentVariable("BYOA_WALLET_TEST_CRASH") == "1"
             && args.Contains("--crash-test"))

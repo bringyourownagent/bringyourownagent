@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Net;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -27,7 +28,7 @@ public sealed class OpenAiCompatibleSource : ITextSource, ILiveness, ITextSource
     volatile bool _schemaBlocked;
 
     /// <param name="endpoint">The runtime's base URL from the settings; null means the kind's default.</param>
-    public OpenAiCompatibleSource(string kind, string model, string? label, string? endpoint, HttpClient http)
+    public OpenAiCompatibleSource(string kind, string model, string? label, string? endpoint, HttpClient http, string? sourceId = null)
     {
         _kind = kind;
         Model = model;
@@ -35,8 +36,9 @@ public sealed class OpenAiCompatibleSource : ITextSource, ILiveness, ITextSource
         var address = endpoint?.Trim() is { Length: > 0 } given ? given : DefaultEndpoint(kind);
         // Ollama speaks the OpenAI protocol under /v1; the others give the /v1 in their endpoint already.
         if (kind == SourceKinds.Ollama && !address.EndsWith("/v1", StringComparison.Ordinal)) address = address.TrimEnd('/') + "/v1";
-        _loopback = Uri.TryCreate(address, UriKind.Absolute, out var uri) &&
-            uri.Host is "127.0.0.1" or "localhost" or "[::1]" or "::1";
+        if (!Uri.TryCreate(address, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https") || string.IsNullOrWhiteSpace(uri.Host))
+            throw new ArgumentException("The endpoint must be an absolute http or https URL.", nameof(endpoint));
+        _loopback = IsLoopback(uri.Host);
         _base = new Uri(address.TrimEnd('/') + "/", UriKind.Absolute);
         Label = label;
     }
@@ -50,7 +52,27 @@ public sealed class OpenAiCompatibleSource : ITextSource, ILiveness, ITextSource
 
     public string Model { get; }
     public string? Label { get; }
-    public string Id => _kind + ":" + Model;
+    public string Endpoint => _base.ToString().TrimEnd('/');
+    // The endpoint is part of the identity. Do not trust an old/custom setting id here: two servers may offer
+    // the same model, and the route and scanner must still keep them apart.
+    public string Id => MakeId(_kind, Model, Endpoint);
+
+    /// <summary>Stable id for two settings that offer the same model at different endpoints.</summary>
+    public static string MakeId(string kind, string model, string? endpoint)
+    {
+        var address = endpoint?.Trim().TrimEnd('/') ?? DefaultEndpoint(kind);
+        if (kind == SourceKinds.Ollama && !address.EndsWith("/v1", StringComparison.OrdinalIgnoreCase))
+            address += "/v1";
+        return kind.Trim().ToLowerInvariant() + ":" + model.Trim() + "@" + address.ToLowerInvariant();
+    }
+
+    public static bool IsLoopback(string host)
+    {
+        if (!IPAddress.TryParse(host, out var address)) return false;
+        if (IPAddress.IsLoopback(address)) return true;
+        // IsLoopback has not treated every IPv4-mapped IPv6 spelling consistently across supported Windows builds.
+        return address.IsIPv4MappedToIPv6 && IPAddress.IsLoopback(address.MapToIPv4());
+    }
     public string RuntimeName => _kind switch
     {
         SourceKinds.LmStudio => "LM Studio",
@@ -59,8 +81,8 @@ public sealed class OpenAiCompatibleSource : ITextSource, ILiveness, ITextSource
     };
     public string Name => Label is { Length: > 0 } ? Label : Model + " in " + RuntimeName;
 
-    public string Runs => _loopback ? Sources.Runs.ThisDevice : "another computer";
-    public string ProviderKind => "local-model";
+    public string Runs => _loopback ? Sources.Runs.ThisDevice : "another computer (" + _base.Host + ")";
+    public string ProviderKind => _loopback ? "local-model" : "home-server";
     public IReadOnlyList<string>? Languages => null;
     public bool Paid => false;
 
@@ -75,7 +97,8 @@ public sealed class OpenAiCompatibleSource : ITextSource, ILiveness, ITextSource
 
     public string StateText => State == SourceState.Missing
         ? string.IsNullOrWhiteSpace(Model) ? "no model chosen yet" : RuntimeName + " does not offer " + Model
-        : Up == false ? RuntimeName + " is not running"
+        : Up == false ? (_loopback ? RuntimeName : "another computer (" + _base.Host + ")") + " is not running"
+        : !_loopback && Up == true ? "ready on another computer (" + _base.Host + ")"
         : Up == true ? "ready · " + RuntimeName
         : "ready when " + RuntimeName + " runs";
 
@@ -118,9 +141,10 @@ public sealed class OpenAiCompatibleSource : ITextSource, ILiveness, ITextSource
 
         if (text.Length == 0)
         {
-            throw new InvalidOperationException(request.Choices is null
+            throw new TextSourceException(request.Choices is null
                 ? RuntimeName + " answered nothing"
-                : RuntimeName + " did not answer with one of the choices");
+                : RuntimeName + " did not answer with one of the choices",
+                cost: 0, providerCalled: true, responseReceived: true);
         }
 
         var seconds = watch.Elapsed.TotalSeconds;
@@ -140,8 +164,8 @@ public sealed class OpenAiCompatibleSource : ITextSource, ILiveness, ITextSource
         {
             Content = new StringContent(Body(request, useSchema, tokenFactor).ToJsonString(), Encoding.UTF8, "application/json"),
         };
-        using var response = await _http.SendAsync(message, ct).ConfigureAwait(false);
-        var text = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+        using var response = await _http.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+        var text = await BoundedHttp.ReadJsonAsync(response, ct).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
         {
             if (request.Choices is not null && useSchema && (int)response.StatusCode == 400 && attempt == 0)

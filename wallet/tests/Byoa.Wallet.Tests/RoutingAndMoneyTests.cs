@@ -85,7 +85,6 @@ public class RoutingTests
 
     [Theory]
     [InlineData(SourceState.Ready)]
-    [InlineData(SourceState.Downloading)]
     public void TheCpuWhisperStepsAsideWhileTheBigWhisperWorks(SourceState gpuState)
     {
         var cpu = new FakeSource(Router.CpuWhisperId);

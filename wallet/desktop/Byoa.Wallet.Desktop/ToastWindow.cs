@@ -54,7 +54,7 @@ sealed class ToastWindow : CornerWindow
 
     /// <summary>Closes the toast when <paramref name="ct"/> is cancelled (no answer in time).</summary>
     public void CloseOn(CancellationToken ct) =>
-        _timeout = ct.Register(() => Dispatcher.UIThread.Post(() => Answer(null)));
+        _timeout = ct.Register(() => DesktopUi.PostSafe(() => Answer(null)));
 
     Control Header(Control icon, Control text, bool closable = true)
     {
@@ -195,7 +195,7 @@ sealed class ToastWindow : CornerWindow
             }
         }
 
-        void OnProgress() => Dispatcher.UIThread.Post(Update);
+        void OnProgress() => DesktopUi.PostSafe(Update);
         download.ProgressChanged += OnProgress;
         t.Closed += (_, _) => download.ProgressChanged -= OnProgress;
         Update();

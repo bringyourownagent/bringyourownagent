@@ -69,12 +69,23 @@ public sealed class OpenRouterTextSource : ITextSource
         {
             if (_promptPerToken is not { } prompt || _completionPerToken is not { } completion) return FlatEstimate;
             var input = request.Messages.Sum(m => m.Content.Length) / 4m;   // rough: four characters to a token
-            var answer = Estimate(input, prompt) + Estimate(request.MaxTokens, completion);
-            return Math.Max(0.000001m, Math.Ceiling(answer * 1_000_000) / 1_000_000);
+            try
+            {
+                var answer = Estimate(input, prompt) + Estimate(request.MaxTokens, completion);
+                return Math.Max(0.000001m, Math.Ceiling(answer * 1_000_000) / 1_000_000);
+            }
+            catch (OverflowException)
+            {
+                return FlatEstimate;
+            }
         }
     }
 
-    static decimal Estimate(decimal tokens, decimal perToken) => Math.Ceiling(tokens * perToken * 1_000_000) / 1_000_000;
+    static decimal Estimate(decimal tokens, decimal perToken)
+    {
+        try { return Math.Ceiling(tokens * perToken * 1_000_000) / 1_000_000; }
+        catch (OverflowException) { return FlatEstimate; }
+    }
 
     /// <summary>Reads the public price list for this model once an hour. Never throws; the estimate stays flat until it succeeds.</summary>
     public async Task PrimePricesAsync(CancellationToken ct = default)
@@ -89,9 +100,10 @@ public sealed class OpenRouterTextSource : ITextSource
         {
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
             timeout.CancelAfter(TimeSpan.FromSeconds(15));
-            using var response = await _http.GetAsync(new Uri(_baseUrl, ModelEndpoint), timeout.Token).ConfigureAwait(false);
+            using var response = await _http.GetAsync(new Uri(_baseUrl, ModelEndpoint),
+                HttpCompletionOption.ResponseHeadersRead, timeout.Token).ConfigureAwait(false);
             response.EnsureSuccessStatusCode();
-            var json = await response.Content.ReadAsStringAsync(timeout.Token).ConfigureAwait(false);
+            var json = await BoundedHttp.ReadJsonAsync(response, timeout.Token).ConfigureAwait(false);
             if (JsonNode.Parse(json)?["data"] is not JsonArray models) return;
             foreach (var entry in models)
             {
@@ -115,9 +127,19 @@ public sealed class OpenRouterTextSource : ITextSource
     }
 
     /// <summary>Dollars per token, from the price list's string ("0.0000015").</summary>
-    static decimal? Price(JsonNode? node) =>
-        node is JsonValue v && v.TryGetValue<string>(out var s) &&
-        decimal.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out var p) && p >= 0 ? p : null;
+    static decimal? Price(JsonNode? node)
+    {
+        if (node is not JsonValue value) return null;
+        if (value.TryGetValue<decimal>(out var decimalPrice))
+            return decimalPrice is >= 0 and <= 1m ? decimalPrice : null;
+        if (value.TryGetValue<double>(out var doublePrice) && double.IsFinite(doublePrice)
+            && doublePrice is >= 0 and <= 1d)
+            return (decimal)doublePrice;
+        if (value.TryGetValue<string>(out var text) && decimal.TryParse(text, NumberStyles.Float,
+            CultureInfo.InvariantCulture, out var parsed) && parsed is >= 0 and <= 1m)
+            return parsed;
+        return null;
+    }
 
     public async Task<TextAnswer> GenerateAsync(TextRequest request, CancellationToken ct)
     {
@@ -157,8 +179,8 @@ public sealed class OpenRouterTextSource : ITextSource
         message.Headers.Add("X-Title", "BYOA agent wallet");
         key = null;
 
-        using var response = await _http.SendAsync(message, ct).ConfigureAwait(false);
-        var text = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+        using var response = await _http.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+        var text = await BoundedHttp.ReadJsonAsync(response, ct).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
         {
             // The body may echo the request; only the status goes into the error.
@@ -184,20 +206,27 @@ public sealed class OpenRouterTextSource : ITextSource
         }
 
         _lastError = null;
+        var usage = json?["usage"];
+        // A missing or zero usage cost is not proof that the call was free. The estimate is the conservative floor
+        // used by the engine and is also returned here so callers outside the engine cannot accidentally erase it.
+        var estimate = EstimateCost(request);
+        var reported = ChatCompletions.Cost(usage);
+        // OpenRouter occasionally returns a literal zero when it omitted billing details. Treat that the same as
+        // missing usage; a real positive usage value is the amount the visitor was actually charged.
+        var cost = reported is > 0 ? reported.Value : estimate;
+        var (input, output) = ChatCompletions.Tokens(usage);
         var reply = json?["choices"]?[0]?["message"];
         var answer = request.Choices is null
             ? Texts.CleanAnswer(ChatCompletions.Str(reply?["content"]) ?? "")
             : ChatCompletions.ExtractChoice(reply, request.Choices) ?? "";
         if (answer.Length == 0)
         {
-            throw new InvalidOperationException(request.Choices is null
+            throw new TextSourceException(request.Choices is null
                 ? "OpenRouter answered nothing"
-                : "OpenRouter did not answer with one of the choices");
+                : "OpenRouter did not answer with one of the choices", cost, providerCalled: true, responseReceived: true);
         }
 
-        var usage = json?["usage"];
-        var cost = ChatCompletions.Cost(usage) ?? 0;
-        var (input, output) = ChatCompletions.Tokens(usage);
+        // Usage and cost were read before checking the answer above. Missing cost is settled by the engine's estimate floor.
         return new TextAnswer(answer, cost, input, output, Model + " · OpenRouter");
     }
 

@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Runtime.Versioning;
+using System.Net;
 using System.Text.Json.Nodes;
 using Byoa.Wallet.Activity;
 using Byoa.Wallet.Engine;
@@ -139,16 +140,20 @@ public sealed class WalletRegistry
             if (KnownSourceIds().Contains(id, StringComparer.Ordinal))
                 return RegistryOperationResult.Failure("A source with id '" + id + "' already exists.");
 
-            _store.Update(s => s.Sources.Add(new SourceSetting
+            _store.Update(s =>
             {
-                Id = id,
-                Kind = draft.Kind.Trim().ToLowerInvariant(),
-                Model = Clean(draft.Model),
-                Endpoint = Endpoint(draft.Kind, draft.Endpoint),
-                Label = Clean(draft.Label),
-                Skills = CleanList(draft.Skills),
-                Languages = CleanList(draft.Languages),
-            }));
+                s.Sources.Add(new SourceSetting
+                {
+                    Id = id,
+                    Kind = draft.Kind.Trim().ToLowerInvariant(),
+                    Model = Clean(draft.Model),
+                    Endpoint = Endpoint(draft.Kind, draft.Endpoint),
+                    Label = Clean(draft.Label),
+                    Skills = CleanList(draft.Skills),
+                    Languages = CleanList(draft.Languages),
+                });
+                AddTextStop(s, id, string.Equals(draft.Kind.Trim(), SourceKinds.OpenRouter, StringComparison.OrdinalIgnoreCase));
+            });
         }
 
         Change("source-added", id, actor, "Added source " + DisplayId(id));
@@ -166,6 +171,9 @@ public sealed class WalletRegistry
         if (!Kinds.Contains(kind))
             return RegistryOperationResult.Failure("Unknown source kind. Use lmstudio, ollama, openai-compatible, or openrouter.");
         if (model is null) return RegistryOperationResult.Failure("Tell the wallet the model id before saving this source.");
+        var endpoint = Endpoint(kind, update.Endpoint ?? setting.Endpoint);
+        if (endpoint is null || !Uri.TryCreate(endpoint, UriKind.Absolute, out var endpointUri) || endpointUri.Scheme is not ("http" or "https"))
+            return RegistryOperationResult.Failure("The endpoint must be a complete http or https URL, for example http://127.0.0.1:1234/v1.");
 
         var newId = MakeId(kind, model, update.Endpoint ?? setting.Endpoint);
         if (!string.Equals(newId, id, StringComparison.Ordinal) && KnownSourceIds().Any(x => x == newId))
@@ -190,6 +198,7 @@ public sealed class WalletRegistry
                 foreach (var chain in s.Chains)
                     foreach (var stop in chain.Stops.Where(stop => stop.SourceId == id)) stop.SourceId = newId;
             }
+            AddTextStop(s, newId, kind == SourceKinds.OpenRouter);
         });
         Change("source-updated", newId, actor, "Updated source " + DisplayId(newId));
         return RegistryOperationResult.Success("Source updated: " + newId + ".", newId);
@@ -434,7 +443,7 @@ public sealed class WalletRegistry
 
     RegistrySourceInfo FromText(ITextSource source, IReadOnlyList<string> skills, WalletSettings settings)
     {
-        var setting = settings.Sources.FirstOrDefault(s => s.Id == source.Id);
+        var setting = settings.Sources.FirstOrDefault(s => s.Id == source.Id || AddedSourceId(s) == source.Id);
         return new RegistrySourceInfo(source.Id, source.Name, null, null, null, skills, source.Languages ?? [], source.Runs,
             source.ProviderKind, source.Paid, setting?.Enabled ?? true, true, HasKey(source.Id, setting), source.State.ToString().ToLowerInvariant(), source.StateText);
     }
@@ -444,12 +453,15 @@ public sealed class WalletRegistry
         var kind = source.Kind!.ToLowerInvariant();
         var skills = source.Skills.Count == 0 ? [Vocabulary.Generate] : source.Skills.ToArray();
         var paid = kind == SourceKinds.OpenRouter;
-        var runs = paid ? Runs.ApiKey : Runs.ThisDevice;
-        var state = paid && !HasKey(source.Id, source) ? SourceState.NoKey : SourceState.Ready;
+        var validEndpoint = Uri.TryCreate(source.Endpoint, UriKind.Absolute, out var endpoint)
+            && endpoint.Scheme is "http" or "https";
+        var loopback = validEndpoint && OpenAiLoopback(endpoint!.Host);
+        var runs = paid ? Runs.ApiKey : loopback ? Runs.ThisDevice : "another computer (" + (endpoint?.Host ?? "unknown host") + ")";
+        var state = paid && !HasKey(source.Id, source) ? SourceState.NoKey : validEndpoint ? SourceState.Ready : SourceState.Broken;
         var name = string.IsNullOrWhiteSpace(source.Label) ? (source.Model ?? kind) : source.Label!;
         return new RegistrySourceInfo(source.Id, name, kind, source.Model, source.Endpoint, skills, source.Languages.ToArray(), runs,
-            paid ? "api-key" : "local-model", paid, source.Enabled, false, HasKey(source.Id, source), state.ToString().ToLowerInvariant(),
-            paid && !HasKey(source.Id, source) ? "no API key added" : "configured; test before use");
+            paid ? "api-key" : loopback ? "local-model" : "home-server", paid, source.Enabled, false, HasKey(source.Id, source), state.ToString().ToLowerInvariant(),
+            paid && !HasKey(source.Id, source) ? "no API key added" : validEndpoint ? "configured; test before use" : "invalid endpoint: use a complete http or https URL");
     }
 
     bool HasKey(string id, SourceSetting? setting)
@@ -468,15 +480,38 @@ public sealed class WalletRegistry
         var kind = draft.Kind?.Trim().ToLowerInvariant();
         if (kind is null || !Kinds.Contains(kind)) return "Unknown source kind. Use lmstudio, ollama, openai-compatible, or openrouter.";
         if (string.IsNullOrWhiteSpace(draft.Model)) return "Tell the wallet the model id before adding the source.";
+        var endpoint = Endpoint(kind, draft.Endpoint);
+        if (endpoint is null || !Uri.TryCreate(endpoint, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https"))
+            return "The endpoint must be a complete http or https URL, for example http://127.0.0.1:1234/v1.";
         if (draft.Skills is { Count: > 0 } && draft.Skills.Any(string.IsNullOrWhiteSpace)) return "Every skill name must be non-empty.";
         if (draft.Skills is { Count: > 0 } && draft.Skills.Any(skill => !string.Equals(skill, Vocabulary.Generate, StringComparison.Ordinal)))
             return "Added model sources currently serve text.generate; choose Text generation.";
         return null;
     }
 
-    static string MakeId(string kind, string? model, string? endpoint) => kind.Trim().ToLowerInvariant() + ":" + model!.Trim();
+    static string MakeId(string kind, string? model, string? endpoint)
+    {
+        var normalizedKind = kind.Trim().ToLowerInvariant();
+        var normalizedModel = model!.Trim();
+        if (normalizedKind == SourceKinds.OpenRouter) return normalizedKind + ":" + normalizedModel;
+        var address = Endpoint(normalizedKind, endpoint)!.TrimEnd('/').ToLowerInvariant();
+        return normalizedKind + ":" + normalizedModel + "@" + address;
+    }
+
+    static string? AddedSourceId(SourceSetting setting) => setting.Kind is null || string.IsNullOrWhiteSpace(setting.Model)
+        ? null
+        : setting.Kind.ToLowerInvariant() == SourceKinds.OpenRouter
+            ? SourceKinds.OpenRouter + ":" + setting.Model.Trim()
+            : MakeId(setting.Kind, setting.Model, setting.Endpoint);
     static string DisplayId(string id) => id.Length > 80 ? id[..77] + "..." : id;
     static string? Clean(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    static bool OpenAiLoopback(string host)
+    {
+        if (!IPAddress.TryParse(host, out var address)) return false;
+        if (IPAddress.IsLoopback(address)) return true;
+        return address.IsIPv4MappedToIPv6 && IPAddress.IsLoopback(address.MapToIPv4());
+    }
     static string? Endpoint(string kind, string? value)
     {
         var clean = Clean(value)?.TrimEnd('/');
@@ -491,6 +526,17 @@ public sealed class WalletRegistry
     }
     static List<string> CleanList(IReadOnlyList<string>? values) => values?.Where(v => !string.IsNullOrWhiteSpace(v)).Select(v => v.Trim().ToLowerInvariant()).Distinct(StringComparer.Ordinal).ToList() ?? [];
     static string? Primary(string? language) => Vocabulary.PrimaryLanguage(language);
+
+    /// <summary>Adds an added model to the default text route in the same settings write as the source.</summary>
+    static void AddTextStop(WalletSettings settings, string sourceId, bool paid)
+    {
+        var chain = settings.Chain(Vocabulary.Generate);
+        if (chain.Stops.Any(stop => stop.SourceId == sourceId)) return;
+        var before = paid ? chain.Stops.Count : chain.Stops.FindIndex(stop =>
+            settings.Sources.FirstOrDefault(source => source.Id == stop.SourceId)?.Kind == SourceKinds.OpenRouter);
+        if (before < 0) before = chain.Stops.Count;
+        chain.Stops.Insert(before, new ChainStop { SourceId = sourceId });
+    }
 
     static RegistryTestResult FromEngine(JsonNode? result)
     {
