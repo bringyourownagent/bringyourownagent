@@ -289,21 +289,36 @@
     <Style Selector="ListBox.sidebar">
       <Setter Property="Background" Value="Transparent" />
     </Style>
+    <!-- a menu item answers the mouse: a grey wash under the pointer, darker while pressed; the open page is sign-blue -->
     <Style Selector="ListBox.sidebar ListBoxItem">
       <Setter Property="Padding" Value="12,9" />
       <Setter Property="Margin" Value="8,2" />
       <Setter Property="CornerRadius" Value="8" />
       <Setter Property="FontSize" Value="14.5" />
+      <Setter Property="Cursor" Value="Hand" />
     </Style>
-    <Style Selector="ListBox.sidebar ListBoxItem:selected /template/ ContentPresenter#PART_ContentPresenter">
-      <Setter Property="Background" Value="White" />
-      <Setter Property="BoxShadow" Value="0 0 0 1 #dde1e8, 0 1 3 0 #2E13151B" />
+    <Style Selector="ListBox.sidebar ListBoxItem /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Transitions">
+        <Transitions>
+          <BrushTransition Property="Background" Duration="0:0:0.12" />
+        </Transitions>
+      </Setter>
     </Style>
     <Style Selector="ListBox.sidebar ListBoxItem:pointerover /template/ ContentPresenter#PART_ContentPresenter">
-      <Setter Property="Background" Value="#ebedf1" />
+      <Setter Property="Background" Value="#e1e5ee" />
+      <Setter Property="Foreground" Value="{StaticResource Ink}" />
+    </Style>
+    <Style Selector="ListBox.sidebar ListBoxItem:pressed /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="#d3d8e4" />
+    </Style>
+    <Style Selector="ListBox.sidebar ListBoxItem:selected /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="#dbe2f7" />
+      <Setter Property="Foreground" Value="{StaticResource Sign}" />
+      <Setter Property="FontWeight" Value="SemiBold" />
     </Style>
     <Style Selector="ListBox.sidebar ListBoxItem:selected:pointerover /template/ ContentPresenter#PART_ContentPresenter">
-      <Setter Property="Background" Value="White" />
+      <Setter Property="Background" Value="#cdd7f4" />
+      <Setter Property="Foreground" Value="{StaticResource Sign}" />
     </Style>
 
     <Style Selector="ProgressBar.meter">

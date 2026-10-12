@@ -31,6 +31,7 @@ sealed class SettingsWindow : Window
 
     readonly WalletServices _w;
     readonly ListBox _tabs;
+    readonly Dictionary<string, Avalonia.Controls.Shapes.Path> _tabGlyphs = [];
     readonly ScrollViewer _content = new() { HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled };
     readonly TextBlock _todayText = new() { FontFamily = Ui.SignFace, FontWeight = FontWeight.Bold, FontSize = 17 };
     readonly ProgressBar _todayBar = new() { Minimum = 0, Maximum = 1 };
@@ -55,7 +56,9 @@ sealed class SettingsWindow : Window
         AutomationProperties.SetAutomationId(_tabs, "SettingsTabs");
         foreach (var (id, name, glyph) in Pages)
         {
-            var item = new ListBoxItem { Content = Ui.Row(10, Ui.Glyph(glyph, Ui.Brush("Ink2"), 16, 2), Ui.Text(name)), Tag = id };
+            var icon = Ui.Glyph(glyph, Ui.Brush("Ink2"), 16, 2);
+            _tabGlyphs[id] = (Avalonia.Controls.Shapes.Path)((Canvas)((Viewbox)icon).Child!).Children[0];
+            var item = new ListBoxItem { Content = Ui.Row(10, icon, Ui.Text(name)), Tag = id };
             AutomationProperties.SetAutomationId(item, "Tab-" + id);
             AutomationProperties.SetName(item, name);
             _tabs.Items.Add(item);
@@ -66,6 +69,8 @@ sealed class SettingsWindow : Window
             if (_tabs.SelectedItem is ListBoxItem { Tag: string id } && id != _page)
             {
                 _page = id;
+                if (id == "activity") _activityPage = 0;        // back to the newest entries
+                PaintTabs();
                 Render();
                 if (id == "sites") _w.Engine.ClearBadge();
             }
@@ -100,6 +105,12 @@ sealed class SettingsWindow : Window
         Show("sites");
     }
 
+    /// <summary>The drawing of the open page's menu item takes the sign colour, like its text (App.axaml, ListBox.sidebar).</summary>
+    void PaintTabs()
+    {
+        foreach (var (id, path) in _tabGlyphs) path.Stroke = Ui.Brush(id == _page ? "Sign" : "Ink2");
+    }
+
     /// <summary>Something changed in the wallet: redraw the current page soon (not while the visitor types).</summary>
     public void Invalidate() => _dirty = true;
 
@@ -107,6 +118,7 @@ sealed class SettingsWindow : Window
     {
         _page = Pages.Any(p => p.Id == page) ? page! : _page;
         _tabs.SelectedIndex = Array.FindIndex(Pages, p => p.Id == _page);
+        PaintTabs();
         Render();
         if (_page == "sites") _w.Engine.ClearBadge();
     }
@@ -577,24 +589,103 @@ sealed class SettingsWindow : Window
     // ------------------------------------------------------------------------------------------------
     // Activity
 
+    static readonly int[] PageSizes = [50, 100, 200];
+    static int _activitySize = 50;          // kept while the wallet runs, for every settings window
+    int _activityPage;                      // 0 = the newest entries
+
     void ActivityPage(StackPanel page)
     {
         Head(page, "Activity", "Every request and call: when, which site, which source answered, the cost, and the fallback when one happened. The audio and the text are never stored.");
-        var entries = _w.Activity.Recent(300);
-        var calls = entries.Where(e => e.Kind == "call" && e.Outcome == "ok").ToList();
+        var all = _w.Activity.Recent(int.MaxValue);
+        var calls = all.Where(e => e.Kind == "call" && e.Outcome == "ok").ToList();
         page.Children.Add(Ui.Text(
             calls.Count.ToString(CultureInfo.InvariantCulture) + " calls · " + Money.Show(calls.Sum(e => e.CostValue)) + " · "
-            + calls.Count(e => e.Fallback is not null).ToString(CultureInfo.InvariantCulture) + " with a fallback (last 300 entries)", "muted"));
-        if (entries.Count == 0)
+            + calls.Count(e => e.Fallback is not null).ToString(CultureInfo.InvariantCulture) + " with a fallback (" + Entries(all.Count) + ")", "muted"));
+        if (all.Count == 0)
         {
             page.Children.Add(Ui.Wrap("Nothing yet.", "muted"));
             return;
         }
 
+        var pages = (all.Count + _activitySize - 1) / _activitySize;
+        _activityPage = Math.Clamp(_activityPage, 0, pages - 1);
+        var first = _activityPage * _activitySize;
+        var shown = all.Skip(first).Take(_activitySize).ToList();
+
+        page.Children.Add(ActivityPager(pages, first, shown.Count, all.Count, withSize: true, "Top"));
         var list = new StackPanel();
         list.Children.Add(Ui.Rule(0, 0));
-        foreach (var e in entries) list.Children.Add(ActivityRow(e));
+        DateTime? day = null;
+        foreach (var e in shown)
+        {
+            var local = e.At.ToLocalTime().Date;
+            if (local != day) list.Children.Add(DayHeading(local));      // the times say nothing without the day
+            day = local;
+            list.Children.Add(ActivityRow(e));
+        }
+
         page.Children.Add(list);
+        if (pages > 1 && shown.Count > 10) page.Children.Add(ActivityPager(pages, first, shown.Count, all.Count, withSize: false, "Bottom"));
+    }
+
+    static Control DayHeading(DateTime day)
+    {
+        var today = DateTime.Now.Date;
+        var text = day == today ? "Today" : day == today.AddDays(-1) ? "Yesterday" : day.ToString("dddd, d MMMM yyyy", CultureInfo.InvariantCulture);
+        var t = Ui.Text(text, "strong", "small");
+        return new Border { Child = t, Padding = new Thickness(0, 12, 0, 6), BorderBrush = Ui.Brush("WinRule"), BorderThickness = new Thickness(0, 0, 0, 1) };
+    }
+
+    static string Entries(int n) => n.ToString(CultureInfo.InvariantCulture) + (n == 1 ? " entry" : " entries");
+
+    /// <summary>«Show 50 ▾  ·  ‹ Newer · 51–100 of 312 · page 2 of 7 · Older ›», newest first.</summary>
+    Control ActivityPager(int pages, int first, int count, int total, bool withSize, string where)
+    {
+        var row = new DockPanel { LastChildFill = false };
+        if (withSize)
+        {
+            var size = new ComboBox { MinWidth = 76 };
+            AutomationProperties.SetAutomationId(size, "ActivityPageSize");
+            AutomationProperties.SetName(size, "Entries per page");
+            foreach (var n in PageSizes) size.Items.Add(new ComboBoxItem { Content = n.ToString(CultureInfo.InvariantCulture), Tag = n });
+            size.SelectedIndex = Math.Max(0, Array.IndexOf(PageSizes, _activitySize));
+            size.SelectionChanged += (_, _) =>
+            {
+                if (size.SelectedItem is not ComboBoxItem { Tag: int n } || n == _activitySize) return;
+                var top = _activityPage * _activitySize;            // stay on the entries that were on top
+                _activitySize = n;
+                _activityPage = top / n;
+                Render();
+            };
+            var label = Ui.Row(8, Ui.Text("Show", "muted"), size, Ui.Text("per page", "muted"));
+            DockPanel.SetDock(label, Dock.Left);
+            row.Children.Add(label);
+        }
+
+        void Go(int to)
+        {
+            _activityPage = Math.Clamp(to, 0, pages - 1);
+            Render();
+            // after Render has put the old scroll position back (it posts that at Loaded): another page starts at its top
+            Dispatcher.UIThread.Post(() => _content.Offset = new Vector(_content.Offset.X, 0), DispatcherPriority.Background);
+        }
+
+        var newest = Ui.Button("« Newest", "deny", "ActivityNewest" + where, () => Go(0), "small");
+        var newer = Ui.Button("‹ Newer", "deny", "ActivityNewer" + where, () => Go(_activityPage - 1), "small");
+        var older = Ui.Button("Older ›", "deny", "ActivityOlder" + where, () => Go(_activityPage + 1), "small");
+        var oldest = Ui.Button("Oldest »", "deny", "ActivityOldest" + where, () => Go(pages - 1), "small");
+        newest.IsEnabled = newer.IsEnabled = _activityPage > 0;
+        older.IsEnabled = oldest.IsEnabled = _activityPage < pages - 1;
+        var place = Ui.Text(
+            (first + 1).ToString(CultureInfo.InvariantCulture) + "–" + (first + count).ToString(CultureInfo.InvariantCulture)
+            + " of " + total.ToString(CultureInfo.InvariantCulture) + " · page " + (_activityPage + 1).ToString(CultureInfo.InvariantCulture)
+            + " of " + pages.ToString(CultureInfo.InvariantCulture), "muted");
+        AutomationProperties.SetAutomationId(place, "ActivityPlace" + where);
+        place.Margin = new Thickness(6, 0);
+        var nav = Ui.Row(6, newest, newer, place, older, oldest);
+        DockPanel.SetDock(nav, Dock.Right);
+        row.Children.Add(nav);
+        return row;
     }
 
     static Control ActivityRow(ActivityEntry e)

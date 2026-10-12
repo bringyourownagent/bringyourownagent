@@ -368,3 +368,33 @@ public class EngineTests
         Assert.Equal("{\"running\":true,\"version\":\"0.1.0\",\"quiet\":1}", status!.ToJsonString());
     }
 }
+
+/// <summary>The Activity page shows the days before today too; the daily limits still count today only.</summary>
+public class ActivityLogTests
+{
+    static ActivityEntry Call(DateTimeOffset at, string cost = "0.01 USD") =>
+        new() { At = at, Origin = "https://geo.example.org", Kind = "call", Skill = "audio.transcribe", Outcome = "ok", Cost = cost };
+
+    [Fact]
+    public void EarlierDaysAreReadBackNewestFirstButOnlyTodayCountsForTheLimits()
+    {
+        var folder = Path.Combine(Path.GetTempPath(), "byoa-activity-" + Guid.NewGuid().ToString("N"));
+        var today = new DateTimeOffset(2026, 10, 12, 12, 0, 0, TimeSpan.Zero);
+        var writer = new ActivityLog(folder, today.AddDays(-2));
+        writer.Add(Call(today.AddDays(-2)));
+        writer.Add(Call(today.AddDays(-1)));
+        writer.Add(Call(today.AddDays(-1).AddMinutes(1)));
+        writer.Add(Call(today.AddMinutes(-5), "0.02 USD"));
+        writer.Add(Call(today.AddDays(1), "0.50 USD"));        // a file dated after today (a clock that was wrong) is not read back
+
+        var log = new ActivityLog(folder, today);
+
+        var all = log.Recent(int.MaxValue);
+        Assert.Equal(4, all.Count);
+        Assert.Equal(today.AddMinutes(-5), all[0].At);
+        Assert.Equal(today.AddDays(-2), all[^1].At);
+        var (spent, calls) = log.Today(today);
+        Assert.Equal(0.02m, spent);
+        Assert.Equal(1, calls);
+    }
+}

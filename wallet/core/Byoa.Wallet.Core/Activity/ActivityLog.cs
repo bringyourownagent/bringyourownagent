@@ -54,7 +54,7 @@ public sealed class ActivityEntry
 public sealed class ActivityLog
 {
     static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull };
-    const int Keep = 2000;
+    const int Keep = 5000;
 
     readonly string? _folder;
     readonly object _gate = new();
@@ -69,25 +69,57 @@ public sealed class ActivityLog
     public ActivityLog(string? folder, DateTimeOffset now)
     {
         _folder = folder;
-        if (folder is null) return;
-        // Today's file is read back so that the daily limits survive a restart of the wallet.
-        var today = FileFor(now);
-        if (!File.Exists(today)) return;
-        foreach (var line in File.ReadLines(today))
+        if (folder is null || !Directory.Exists(folder)) return;
+        // The files are read back, newest day first, until the list is full: today's file always whole, so that the daily
+        // limits survive a restart of the wallet, and the days before it for the Activity page.
+        var today = Path.GetFileName(FileFor(now));
+        var days = new List<List<ActivityEntry>>();
+        var read = 0;
+        foreach (var file in Directory.GetFiles(folder, "activity-*.jsonl")
+                     .Where(f => string.CompareOrdinal(Path.GetFileName(f), today) <= 0)
+                     .OrderByDescending(f => Path.GetFileName(f), StringComparer.Ordinal))
         {
-            try
+            if (read >= Keep) break;
+            var day = ReadFile(file);
+            days.Add(day);
+            read += day.Count;
+        }
+
+        for (var i = days.Count - 1; i >= 0; i--)
+        {
+            foreach (var e in days[i])
             {
-                if (JsonSerializer.Deserialize<ActivityEntry>(line, Json) is { } e)
-                {
-                    _entries.Add(e);
-                    Count(e);
-                }
-            }
-            catch (JsonException)
-            {
-                // skip a damaged line
+                _entries.Add(e);
+                Count(e);
             }
         }
+
+        if (_entries.Count > Keep) _entries.RemoveRange(0, _entries.Count - Keep);
+    }
+
+    static List<ActivityEntry> ReadFile(string file)
+    {
+        var entries = new List<ActivityEntry>();
+        try
+        {
+            foreach (var line in File.ReadLines(file))
+            {
+                try
+                {
+                    if (JsonSerializer.Deserialize<ActivityEntry>(line, Json) is { } e) entries.Add(e);
+                }
+                catch (JsonException)
+                {
+                    // skip a damaged line
+                }
+            }
+        }
+        catch (IOException)
+        {
+            // a file another program holds open: its day is simply not shown
+        }
+
+        return entries;
     }
 
     void Count(ActivityEntry e)
