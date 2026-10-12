@@ -81,15 +81,6 @@ static class Program
     /// <summary>Crashes go to errors.log in the data folder (types and stack only; no content, no secrets).</summary>
     static void LogError(Exception? e)
     {
-        if (e is null) return;
-        try
-        {
-            Directory.CreateDirectory(WalletPaths.Home);
-            File.AppendAllText(Path.Combine(WalletPaths.Home, "errors.log"), DateTimeOffset.Now.ToString("O") + " " + e.GetType().FullName + "\n" + e.StackTrace + "\n\n");
-        }
-        catch (IOException)
-        {
-            // nothing more to do
-        }
+        if (e is not null) ErrorLog.Write(WalletPaths.Home, e);
     }
 }

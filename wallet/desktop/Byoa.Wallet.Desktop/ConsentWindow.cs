@@ -65,6 +65,8 @@ sealed class ConsentWindow : CornerWindow
             Content = Body(),
             MaxHeight = Math.Max(240, WorkingHeight - 170),
             HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            VerticalContentAlignment = VerticalAlignment.Top,
         };
         layout.Children.Add(scroll);
         card.Child = layout;
@@ -134,15 +136,22 @@ sealed class ConsentWindow : CornerWindow
 
     Control Body()
     {
-        var body = new StackPanel { Spacing = 10, Margin = new Thickness(16, 14, 16, 14) };
+        var body = new StackPanel { Spacing = 10, Margin = new Thickness(16, 14, 16, 14), Width = 368 };
 
-        // The site, verified by the browser (the origin comes from Chrome, never from the page).
+        // The browser vouches for an extension origin. A direct link has no such proof until the visitor allows it.
         var host = Ui.Text(_model.Host, "host");
-        var verified = _model.Secure
+        var linkProof = Ui.Wrap("came by a link:\nconfirmed after you allow", "muted", "small");
+        linkProof.Width = 220;
+        linkProof.TextTrimming = TextTrimming.CharacterEllipsis;
+        var verified = _model.FromLink
+            ? Ui.Row(4, linkProof)
+            : _model.Secure
             ? Ui.Row(4, Ui.InkCheck(14), Ui.Text("verified", "small", "strong"))
             : Ui.Row(4, Ui.Text("local test page (http)", "muted", "small"));
-        if (_model.Secure) ((TextBlock)verified.Children[1]).Foreground = Ui.Brush("Sign");
-        var hostRow = Ui.Row(9, Ui.Tile(Ui.Globe, 28), host, verified);
+        if (_model.Secure && !_model.FromLink) ((TextBlock)verified.Children[1]).Foreground = Ui.Brush("Sign");
+        var hostInfo = Ui.Column(3, host, verified);
+        hostInfo.Width = 290;
+        var hostRow = Ui.Row(9, Ui.Tile(Ui.Globe, 28), hostInfo);
         if (_model.IsDifference) hostRow.Children.Add(Ui.Chip("updated", "outline"));
         if (_model.PausedNote is not null) hostRow.Children.Add(Ui.Chip("paused", "outline"));
         AutomationProperties.SetName(hostRow, _model.Host);
@@ -150,8 +159,12 @@ sealed class ConsentWindow : CornerWindow
 
         // The declared purpose, quoted as the site's own words.
         var purpose = Ui.Runs(("“" + _model.Summary + "”", false));
+        purpose.Width = 300;
+        purpose.TextTrimming = TextTrimming.CharacterEllipsis;
+        purpose.MaxLines = 2;
+        purpose.Inlines!.Clear();
+        purpose.Text = "\"" + _model.Summary + "\"  from the site";
         purpose.FontWeight = FontWeight.Medium;
-        purpose.Inlines!.Add(new Avalonia.Controls.Documents.Run("  from the site") { FontSize = 11.5, Foreground = Ui.Brush("Muted"), FontWeight = FontWeight.Normal });
         body.Children.Add(Ui.Box("field", purpose));
 
         if (_model.PausedNote is { } paused)

@@ -9,6 +9,7 @@ using Avalonia.Threading;
 using Byoa.Wallet.Activity;
 using Byoa.Wallet.Engine;
 using Byoa.Wallet.Providers;
+using Byoa.Wallet.Registry;
 using Byoa.Wallet.Settings;
 using Byoa.Wallet.Sources;
 
@@ -488,11 +489,23 @@ sealed class SettingsWindow : Window
                             Dispatcher.UIThread.Post(() => { _w.Ui.ShowInfo(new InfoModel(result.Ok ? "Model downloaded" : "Model download", result.Message)); Render(); });
                         });
                     }, "small")
+                    : model.Downloaded
+                    ? Ui.Button("Delete", "deny", "DeleteModel-" + model.Id, () => _ = DeleteModelAsync(model), "small")
                     : Ui.Text(model.Downloaded ? "Ready" : "Not available automatically", "muted", "small"));
             list.Children.Add(row);
         }
         if (list.Children.Count == 0) list.Children.Add(Ui.Wrap("No model downloads are available.", "muted"));
         return Ui.Box("card", list);
+    }
+
+    async Task DeleteModelAsync(DownloadableModelInfo model)
+    {
+        var confirmation = new ModelDeleteWindow(model.Name, model.SizeBytes);
+        confirmation.Show();
+        if (!await confirmation.Result.ConfigureAwait(true)) return;
+        var result = await _w.Registry.RemoveDownloadedModelAsync(model.Id).ConfigureAwait(true);
+        _w.Ui.ShowInfo(new InfoModel(result.Ok ? "Model removed" : "Model removal", result.Message));
+        Render();
     }
 
     Control SourceCard(ISpeechSource source, WalletSettings settings, string description, Control? extras)

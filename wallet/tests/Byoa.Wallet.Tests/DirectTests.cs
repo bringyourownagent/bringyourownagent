@@ -138,6 +138,13 @@ public class DirectLinkTests
     public void ASessionCodeHasAtLeast128BitsOfUrlSafeCharacters(string code, bool ok) => Assert.Equal(ok, DirectLink.IsSessionCode(code));
 
     [Theory]
+    [InlineData("0123456789abcdefABCDEF", true)]
+    [InlineData("0123456789abcdefABCDE", false)]
+    [InlineData("0123456789abcdefABCDEF+", false)]
+    [InlineData("0123456789abcdefABCDEF ", false)]
+    public void APairingTokenHasAtLeast22UrlSafeCharacters(string token, bool ok) => Assert.Equal(ok, DirectConnection.IsToken(token));
+
+    [Theory]
     [InlineData("8.8.8.8", true)]
     [InlineData("1.1.1.1", true)]
     [InlineData("172.32.0.1", true)]
@@ -219,12 +226,13 @@ public class LinkHandOffTests
             return await Framing.ReadAsync(server);                                 // reads the link, never answers
         });
         var watch = Stopwatch.StartNew();
-        var ok = await Task.Run(() => LinkHandOff.Send(name, "bringyourownagent://connect?v=0.1", TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(1)))
+        var ok = await Task.Run(() => LinkHandOff.Send(name, "bringyourownagent://connect?v=0.1", TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(1), userActivation: false))
             .WaitAsync(TimeSpan.FromSeconds(10));                                   // a hang fails the test instead of stopping it
         Assert.False(ok);
         Assert.InRange(watch.Elapsed.TotalSeconds, 0.9, 4);
         var frame = JsonNode.Parse((await accepted.WaitAsync(TimeSpan.FromSeconds(5)))!)!;
         Assert.Equal("link", frame["type"]!.GetValue<string>());
+        Assert.False(frame["userActivation"]!.GetValue<bool>());
         Assert.Equal("bringyourownagent://connect?v=0.1", frame["payload"]!["url"]!.GetValue<string>());
     }
 
@@ -233,13 +241,18 @@ public class LinkHandOffTests
     {
         var name = PipeName();
         await using var server = new NamedPipeServerStream(name, PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
-        _ = Task.Run(async () =>
+        var received = Task.Run(async () =>
         {
             await server.WaitForConnectionAsync();
-            await Framing.ReadAsync(server);
+            return JsonNode.Parse((await Framing.ReadAsync(server))!)!;
+        });
+        _ = Task.Run(async () =>
+        {
+            await received;
             await Framing.WriteAsync(server, Encoding.UTF8.GetBytes("{\"id\":1,\"result\":{\"accepted\":true}}"));
         });
         Assert.True(await Task.Run(() => LinkHandOff.Send(name, "bringyourownagent://connect", TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(3))));
+        Assert.True((await received).AsObject()["userActivation"]!.GetValue<bool>());
     }
 
     [Fact]
@@ -495,6 +508,7 @@ public class DirectTransportTests : IDisposable
         var (_, connection, socket, hello) = await PairAsync(auto: false);
         Assert.Equal(1, _ui.Notices);                                              // the same notice and consent
         Assert.Equal("Family geography game: recognise country names spoken aloud", Assert.Single(_ui.Consents).Summary);   // from the link's manifest
+        Assert.True(Assert.Single(_ui.Consents).FromLink);
         Assert.Equal(1, _site.Accepts);                                            // the one connection, after Allow
         Assert.Equal("hello", hello["type"]!.GetValue<string>());
         Assert.Equal("0.1", hello["v"]!.GetValue<string>());
@@ -529,6 +543,17 @@ public class DirectTransportTests : IDisposable
         Assert.NotNull(await link.WaitAsync(TimeSpan.FromSeconds(10)));
         await _site.NextSocketAsync();
         Assert.Equal(1, _site.Accepts);
+    }
+
+    [Fact]
+    public async Task ALinkWithoutBrowserActivationIsHeldAsAQuietRequest()
+    {
+        Assert.Null(await Transport().HandleLinkAsync(_site.Link(), userActivation: false));
+        Assert.Equal(0, _ui.Notices);
+        Assert.Equal(1, _ui.Quiet);
+        Assert.Equal(1, _engine.UnseenQuiet);
+        Assert.Contains(_log.Recent(), entry => entry.Kind == "request" && entry.Note == "without a click: quiet badge only");
+        Assert.Equal(0, _site.Accepts);
     }
 
     [Fact]
@@ -894,15 +919,20 @@ public class DirectTransportTests : IDisposable
     }
 
     [Fact]
-    public async Task TheNativeHostNeverForwardsALinkFromTheBrowser()
+    public async Task TheNativeHostForwardsALinkAndKeepsItsActivationBit()
     {
         var (browser, host) = HostRelayTests.Pair();
-        var connector = new HostRelayTests.Connector(_ => throw new InvalidOperationException("must not connect"));
+        var (hostSide, walletSide) = HostRelayTests.Pair();
+        var connector = new HostRelayTests.Connector(_ => hostSide);
         var relay = Task.Run(() => new HostRelay(host, host, connector).RunAsync());
-        await Framing.WriteAsync(browser, Encoding.UTF8.GetBytes("{\"id\":4,\"type\":\"link\",\"origin\":\"https://a.example\",\"payload\":{\"url\":\"bringyourownagent://connect\"}}"));
-        Assert.Equal("{\"id\":4,\"result\":null}", (await HostRelayTests.ReadAsync(browser)).ToJsonString());
-        Assert.Empty(connector.Starts);
+        await Framing.WriteAsync(browser, Encoding.UTF8.GetBytes("{\"id\":4,\"type\":\"link\",\"origin\":\"https://a.example\",\"userActivation\":false,\"payload\":{\"url\":\"bringyourownagent://connect\"}}"));
+        var atWallet = (JsonObject)JsonNode.Parse((await Framing.ReadAsync(walletSide))!)!;
+        Assert.False(atWallet["userActivation"]!.GetValue<bool>());
+        Assert.Equal([true], connector.Starts);
+        await Framing.WriteAsync(walletSide, Encoding.UTF8.GetBytes("{\"id\":4,\"result\":{\"accepted\":true}}"));
+        Assert.True((await HostRelayTests.ReadAsync(browser))["result"]!["accepted"]!.GetValue<bool>());
         browser.Dispose();
+        walletSide.Dispose();
         await relay.WaitAsync(TimeSpan.FromSeconds(10));
     }
 }

@@ -38,11 +38,11 @@ sealed class WalletServices : IDisposable
     }
 
     /// <summary>Acts on a bringyourownagent:// link (from the command line or handed over by a second instance).</summary>
-    public void OpenLink(string? url) => _ = Task.Run(async () =>
+    public void OpenLink(string? url, bool userActivation = true) => _ = Task.Run(async () =>
     {
         try
         {
-            await Direct.HandleLinkAsync(url).ConfigureAwait(false);
+            await Direct.HandleLinkAsync(url, userActivation: userActivation).ConfigureAwait(false);
         }
         catch (Exception e) when (e is not OutOfMemoryException)
         {

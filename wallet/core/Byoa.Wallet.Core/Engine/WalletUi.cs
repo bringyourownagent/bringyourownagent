@@ -41,6 +41,7 @@ public sealed record ConsentRow(
 /// <param name="IsDifference">The site already has a grant and asks for more: only the new parts are shown.</param>
 /// <param name="BudgetBefore">With <paramref name="IsDifference"/>, the budget the visitor allowed before.</param>
 /// <param name="PausedNote">The site was allowed before and is paused ("Paused after a day without use"): Allow resumes it.</param>
+/// <param name="FromLink">The request came from a direct link, so the browser has not vouched for the origin yet.</param>
 public sealed record ConsentModel(
     string Origin,
     string Host,
@@ -51,7 +52,8 @@ public sealed record ConsentModel(
     decimal? BudgetBefore,
     bool AutoDecide,
     bool IsDifference,
-    string? PausedNote = null)
+    string? PausedNote = null,
+    bool FromLink = false)
 {
     /// <summary>A required skill no source can serve: Allow is not offered.</summary>
     public bool MissingRequired => Rows.Any(r => r.Required && !r.CanServe);

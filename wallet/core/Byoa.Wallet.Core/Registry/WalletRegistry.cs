@@ -249,8 +249,8 @@ public sealed class WalletRegistry
     }
 
     /// <summary>
-    /// Validates confinement before calling the model manager. The default manager deliberately refuses deletion;
-    /// callers may inject a wallet-owned manager in a controlled host or test.
+    /// Validates confinement before calling the model manager. The model manager performs the second ownership
+    /// check immediately before deleting the file.
     /// </summary>
     public async Task<RegistryOperationResult> RemoveDownloadedModelAsync(string modelId, string actor = "you in the window", CancellationToken ct = default)
     {

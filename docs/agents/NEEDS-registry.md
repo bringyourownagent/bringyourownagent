@@ -28,4 +28,14 @@ or a constructor/factory that accepts `IReadOnlyList<ISpeechSource>` and `IReadO
 
 ## Model removal
 
-The registry validates a downloaded model path against `WalletPaths.Models` before it calls `IWalletModelManager.RemoveAsync`. The desktop adapter refuses to delete files because the owner-level agent rule forbids automatic deletion. A future owner-approved adapter can implement the exact deletion after this boundary; no path outside the active wallet home may ever reach it.
+The registry validates a downloaded model path against the active wallet home before it calls `IWalletModelManager.RemoveAsync`. The desktop adapter now deletes only a file recorded in the wallet's download ledger and inside its wallet-created model folder; no path outside the active wallet home may ever reach it.
+
+## Direct-link consent integration
+
+The direct transport needs the consent window to distinguish a link-origin request from an extension request. The smallest engine integration is the optional source parameter already used by this branch:
+
+```csharp
+ConsentModel BuildConsent(string origin, string host, bool secure, RequestedManifest manifest, SiteRecord site, string? via);
+```
+
+It sets `ConsentModel.FromLink` when `via == WalletEngine.ViaLink`; the desktop window then shows the link-origin wording and reserves `verified` for the extension path. This is a six-line engine change and should be carried when the engine branch is merged.

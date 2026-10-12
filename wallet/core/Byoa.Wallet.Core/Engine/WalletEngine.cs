@@ -293,7 +293,7 @@ public sealed class WalletEngine
             // The site may have been blocked or changed from the settings while the notice was up.
             var site = _store.Read(s => s.Site(origin) is { } r ? Copy(r) : null) ?? new SiteRecord { Origin = origin };
             if (site.Status == SiteStatus.Blocked) return Done(entry, "blocked", "blocked while asking");
-            var model = BuildConsent(origin, host, secure, manifest, site);
+            var model = BuildConsent(origin, host, secure, manifest, site, via);
             var answer = await _ui.ShowConsentAsync(model, timeout.Token).ConfigureAwait(false);
             if (!answer.Allow || model.MissingRequired)
             {
@@ -361,7 +361,7 @@ public sealed class WalletEngine
         return (newSkills, missing, costRaised);
     }
 
-    ConsentModel BuildConsent(string origin, string host, bool secure, RequestedManifest manifest, SiteRecord site)
+    ConsentModel BuildConsent(string origin, string host, bool secure, RequestedManifest manifest, SiteRecord site, string? via)
     {
         var (newSkills, missingRequired, costRaised) = Difference(site, manifest);
         var isDifference = site.Status == SiteStatus.Allowed && (newSkills.Count > 0 || missingRequired.Count > 0 || costRaised);
@@ -389,7 +389,7 @@ public sealed class WalletEngine
         }
 
         return new ConsentModel(origin, host, secure, manifest.Summary, rows, budget, before, site.AutoDecide, isDifference,
-            site.Status == SiteStatus.Allowed && site.Paused ? PauseText(site) : null);
+            site.Status == SiteStatus.Allowed && site.Paused ? PauseText(site) : null, via == ViaLink);
     }
 
     ConsentRow Row(RequestedSkill skill, WalletSettings settings, bool isNew)

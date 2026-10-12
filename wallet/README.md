@@ -25,6 +25,10 @@ On the first connection the wallet shows the agent's announced name and executab
 
 The MCP entry point is `help`; it returns the same embedded articles shown by the wallet's Help page. `status`, `list_runtimes`, `add_source`, `test_source`, `set_order`, and `activity` cover the normal “add my local model” path. If the wallet is not running, the bridge says so and never starts it.
 
+`remove_model` is also available after Allow. It removes immediately on the visitor's request, without another prompt, but only a model that this wallet downloaded into its own active `models` folder. A model found in another folder, or a path outside the wallet home, is never removed. The action appears in Activity with the agent's name.
+
+The same registry backs Sources, Help, and MCP. API keys are write-only: the preferred `request_api_key_entry` tool opens a field in the wallet so the visitor enters the key himself; the agent receives only a saved confirmation.
+
 ## Install from the ready package
 
 Needs Windows 10 or 11, 64-bit; nothing else (the package carries its own .NET runtime). Chrome or another Chromium browser only for sites that use the extension: sites that start the wallet with a `bringyourownagent://` link need no extension.
@@ -67,14 +71,17 @@ To remove it: `powershell -ExecutionPolicy Bypass -File wallet\uninstall.ps1` re
 | Pairings of direct links | `%LOCALAPPDATA%\BYOA\wallet\pairings.dat` (DPAPI, current user; only for sites with "decide on my own") |
 | Activity | `%LOCALAPPDATA%\BYOA\wallet\activity-YYYY-MM-DD.jsonl` (no audio, no text) |
 | Downloaded models | `%LOCALAPPDATA%\BYOA\wallet\models` (under the active `BYOA_WALLET_HOME`) |
+| Error log | `%LOCALAPPDATA%\BYOA\wallet\errors.log` (exception types and stacks only) |
 | Model folders searched | the models folder above, plus `<drive>:\AI-MODELS`, `<drive>:\models` and `%USERPROFILE%\models` when they exist; add more in **Sources** |
 
 `BYOA_WALLET_HOME` points the wallet (and the host it is started by) at a separate data folder and pipe; the tests use it so that they never touch your own settings.
 
 ## The windows
 
+An extension request is marked verified because the browser vouches for its origin. A direct-link request says "came by a link: confirmed after you allow". A link frame without browser activation is held quietly, just like a page request without a click; a normal browser click keeps the notice and consent flow.
+
 - **The notice**, above the tray, only after a click on the page: "*site* wants to use your AI" with **Show**, **Decline** and **Block this site**. It does not take the focus from the browser.
-- **The consent window**: the site (verified by the browser), its purpose in its own words, one row per skill with the source the manager suggests for each language (and **why?**), the budget per session (**change**), "Next time, decide on my own within these limits", **Decline**, **Allow** and **Detailed settings…**. It takes the focus; Tab moves through it and Esc declines. When an allowed site asks for more, only the difference is shown.
+- **The consent window**: the site (verified by the browser for extension requests; direct links are marked as links until Allow), its purpose in its own words, one row per skill with the source the manager suggests for each language (and **why?**), the budget per session (**change**), "Next time, decide on my own within these limits", **Decline**, **Allow** and **Detailed settings…**. It takes the focus; Tab moves through it and Esc declines. When an allowed site asks for more, only the difference is shown.
 - **Settings**, from the tray icon or **Detailed settings…**: Sites (grants, pause, revoke, block or unblock, decide on its own; a dot per site: green when it used the wallet in the last 3 minutes, yellow within a day, grey before that), Sources (local models found, model folders, the Whisper model and its download, API keys), Skills & fallbacks (the route, ask before paid, the manager's reasons), Limits (per session, per site per day in money and calls, the whole wallet per day), Activity (every request and call: time, site, skill, the source that answered, the fallback route, cost; grouped by day, today and the days before it, 50, 100 or 200 entries a page).
 - **Pause.** A site can be paused in Sites, and an allowed site that goes unused for a day (the time is set at the top of Sites: never, an hour, a day or a week) is paused by the wallet. A paused site keeps what you allowed, but nothing runs for it on its own: its open sessions end, it does not reconnect by itself, calls on its old grants are refused. Its next request, after your click, shows the notice and then the consent window with "You allowed this site before. Paused ... Resume it?" and **Resume**.
 - **Paid fallback question**: "Use Scribe v2 (OpenRouter) for this clip? About $0.0001": **Allow once**, **Always for this site**, **No**.

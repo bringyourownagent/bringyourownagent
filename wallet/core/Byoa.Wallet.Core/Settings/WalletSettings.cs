@@ -29,6 +29,9 @@ public sealed class WalletSettings
     /// <summary>The ggml Whisper model the wallet downloads and uses.</summary>
     public string WhisperModel { get; set; } = "ggml-large-v3-q5_0.bin";
 
+    /// <summary>Model files downloaded by this wallet, not files merely found on the computer.</summary>
+    public List<string> DownloadedModelFiles { get; set; } = [];
+
     public SiteRecord? Site(string origin) => Sites.FirstOrDefault(s => s.Origin == origin);
 
     public SourceSetting Source(string id)

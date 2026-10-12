@@ -610,8 +610,9 @@ public sealed class DirectConnection
         _ => "a broken connection",
     };
 
-    /// <summary>A pairing token: 16 to 1024 printable ASCII characters (opaque to the wallet).</summary>
-    internal static bool IsToken(string token) => token.Length is >= 16 and <= 1024 && token.All(c => c is > ' ' and < '\u007f');
+    /// <summary>A pairing token: 22 to 1024 URL-safe characters (opaque to the wallet).</summary>
+    internal static bool IsToken(string? token) => token is not null && token.Length is >= 22 and <= 1024
+        && token.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_');
 
     static string Code(JsonNode? node)
     {
