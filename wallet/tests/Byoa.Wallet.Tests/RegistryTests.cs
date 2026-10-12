@@ -87,6 +87,21 @@ public sealed class RegistryTests
     }
 
     [Fact]
+    public async Task AgentSuppliedApiKeyAlwaysNeedsFullAccess()
+    {
+        var dir = TestFolder.New();
+        var registry = NewRegistry(new SettingsStore(null), Path.Combine(dir, "secrets.dat"));
+        var added = registry.AddSource(new SourceDraft(SourceKinds.OpenRouter, "test/model", Skills: [Vocabulary.Generate]));
+        Assert.True(added.Ok, added.Message);
+
+        var result = await registry.SetApiKeyAsync(added.Id!, "visitor-supplied-through-agent", fullAccess: false,
+            visitorInitiated: false);
+
+        Assert.False(result.Ok);
+        Assert.Contains("Full access", result.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void OpenRouterAlwaysUsesItsRealEndpoint()
     {
         var dir = TestFolder.New();

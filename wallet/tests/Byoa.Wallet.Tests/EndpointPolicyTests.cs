@@ -1,3 +1,5 @@
+using System.Net;
+using Byoa.Wallet.Desktop;
 using Byoa.Wallet.Registry;
 
 namespace Byoa.Wallet.Tests;
@@ -54,6 +56,40 @@ public sealed class EndpointPolicyTests
         Assert.Equal("not encrypted", result.Warning);
     }
 
+    [Fact]
+    public void VisitorMayKeepAnExistingSingleLabelHomeServer()
+    {
+        var result = EndpointPolicy.Check("http://nas:11434/v1", agentSupplied: false);
+
+        Assert.True(result.Allowed);
+        Assert.False(result.NeedsConfirmation);
+    }
+
+    [Fact]
+    public async Task ConfirmationCanonicalisesIdnAndRecordsTheResolvedClass()
+    {
+        var result = await EndpointPolicy.CheckForConfirmationAsync("https://bücher.example:443/v1", resolver:
+            (_, _) => Task.FromResult(new[] { IPAddress.Parse("203.0.113.10") }));
+
+        Assert.True(result.Allowed);
+        Assert.Contains("xn--", result.CanonicalEndpoint, StringComparison.Ordinal);
+        Assert.Equal(["203.0.113.10"], result.ResolvedAddresses);
+        Assert.Equal("public", result.AddressClass);
+    }
+
+    [Fact]
+    public async Task ConfirmationRejectsUnsafeDnsAndUseTimeRejectsDriftToLoopback()
+    {
+        var refused = await EndpointPolicy.CheckForConfirmationAsync("https://model.example:443/v1",
+            resolver: (_, _) => Task.FromResult(new[] { IPAddress.Loopback }));
+        Assert.False(refused.Allowed);
+
+        Assert.False(EndpointPolicy.IsAllowedAtUse(IPAddress.Loopback, "public", ["203.0.113.10"]));
+        Assert.False(EndpointPolicy.IsAllowedAtUse(IPAddress.Parse("192.168.1.4"), "public", ["203.0.113.10"]));
+        Assert.True(EndpointPolicy.IsAllowedAtUse(IPAddress.Parse("192.168.1.4"), "private", ["192.168.1.3"]));
+        Assert.True(EndpointPolicy.IsAllowedAtUse(IPAddress.Loopback, "loopback", []));
+    }
+
     [Theory]
     [InlineData("http://[::ffff:169.254.169.254]:1234")]
     [InlineData("http://[ff02::1]:1234")]
@@ -88,11 +124,53 @@ public sealed class AgentIdentityTests
     }
 
     [Fact]
+    public void MissingParentIdentityIsFreshAndCannotBecomeAStoredApproval()
+    {
+        var first = Byoa.Wallet.Registry.AgentIdentity.CreateObserved("agent", "C:\\wallet\\byoa-mcp.exe", null, 42,
+            DateTimeOffset.UnixEpoch);
+        var second = Byoa.Wallet.Registry.AgentIdentity.CreateObserved("agent", "C:\\wallet\\byoa-mcp.exe", null, 42,
+            DateTimeOffset.UnixEpoch);
+
+        Assert.NotEqual(first.Id, second.Id);
+        Assert.True(first.SessionOnly);
+        Assert.True(first.FullAccessAllowed);
+    }
+
+    [Theory]
+    [InlineData("cmd.exe")]
+    [InlineData("node.exe")]
+    [InlineData("python.exe")]
+    [InlineData("pwsh.exe")]
+    public void GeneralPurposeParentsDoNotGetFirstConnectionFullAccess(string image)
+    {
+        var identity = Byoa.Wallet.Registry.AgentIdentity.CreateObserved("agent", "C:\\wallet\\byoa-mcp.exe", "C:\\Windows\\" + image);
+
+        Assert.True(identity.ParentIsInterpreter);
+        Assert.False(identity.FullAccessAllowed);
+    }
+
+    [Fact]
     public void DisplayNameIsBoundedAndHasNoControlCharacters()
     {
         var identity = Byoa.Wallet.Registry.AgentIdentity.CreateObserved("  Agent\n\t" + new string('x', 100), "C:\\wallet\\byoa-mcp.exe", "C:\\agent.exe");
 
         Assert.True(identity.Name.Length <= 60);
         Assert.DoesNotContain(identity.Name, char.IsControl);
+    }
+
+    [Fact]
+    public void RedactedSiteLabelsUseAnOpaquePerWalletKey()
+    {
+        var firstKey = Enumerable.Range(0, 32).Select(i => (byte)i).ToArray();
+        var secondKey = Enumerable.Repeat((byte)7, 32).ToArray();
+        var alpha = AgentPipeServer.HmacSiteLabel("https://alpha.example", firstKey);
+        var alphaAgain = AgentPipeServer.HmacSiteLabel("https://alpha.example", firstKey);
+        var beta = AgentPipeServer.HmacSiteLabel("https://beta.example", firstKey);
+
+        Assert.Equal(alpha, alphaAgain);
+        Assert.NotEqual(alpha, beta);
+        Assert.NotEqual(alpha, AgentPipeServer.HmacSiteLabel("https://alpha.example", secondKey));
+        Assert.StartsWith("site-", alpha, StringComparison.Ordinal);
+        Assert.DoesNotContain("alpha.example", alpha, StringComparison.Ordinal);
     }
 }

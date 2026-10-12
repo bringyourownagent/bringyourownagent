@@ -3,11 +3,18 @@ using System.Text.Json.Nodes;
 using Byoa.Wallet.Desktop;
 using Byoa.Wallet.Protocol;
 using Byoa.Wallet.Registry;
+using Byoa.Wallet.Settings;
 
 namespace Byoa.Wallet.Tests;
 
 public sealed class AgentPipeTests
 {
+    [Fact]
+    public void AuthorizedConnectionIdleTimeoutIsOneHour()
+    {
+        Assert.Equal(TimeSpan.FromHours(1), AgentPipeServer.AuthorizedIdleTimeout);
+    }
+
     [Fact]
     public async Task UnapprovedClientIsRefusedAndFullAccessIsGated()
     {
@@ -136,13 +143,221 @@ public sealed class AgentPipeTests
         }
     }
 
+    [Fact]
+    public async Task AnUnresolvedParentIsConnectionOnlyAndCannotBorrowFullAccess()
+    {
+        var oldHome = Environment.GetEnvironmentVariable(WalletPaths.HomeVariable);
+        var oldMcp = Environment.GetEnvironmentVariable("BYOA_WALLET_MCP_PATH");
+        var home = TestFolder.New();
+        var bridgeFolder = Path.Combine(home, "bridge");
+        Directory.CreateDirectory(bridgeFolder);
+        Environment.SetEnvironmentVariable(WalletPaths.HomeVariable, home);
+        Environment.SetEnvironmentVariable("BYOA_WALLET_MCP_PATH", bridgeFolder);
+        try
+        {
+            using var wallet = new WalletServices();
+            var consent = new FakeConsentUi(new AgentConsentAnswer(AgentConsentDecision.Allow, true));
+            using var process = new FakeProcessInfo(
+                new ObservedAgentProcess(Path.Combine(bridgeFolder, "byoa-mcp.exe"), null, 42, DateTimeOffset.UnixEpoch),
+                new ObservedAgentProcess(Path.Combine(bridgeFolder, "byoa-mcp.exe"), null, 42, DateTimeOffset.UnixEpoch));
+            using var server = new AgentPipeServer(wallet, consent, process);
+            server.Start();
+
+            await using (var first = await FakePipeClient.ConnectAsync("unresolved parent"))
+            {
+                var hello = await first.HelloAsync();
+                Assert.True(hello["ok"]!.GetValue<bool>());
+                Assert.True(hello["fullAccess"]!.GetValue<bool>());
+            }
+            await using (var second = await FakePipeClient.ConnectAsync("unresolved parent"))
+            {
+                var hello = await second.HelloAsync();
+                Assert.True(hello["ok"]!.GetValue<bool>());
+                Assert.True(hello["fullAccess"]!.GetValue<bool>());
+            }
+
+            Assert.Equal(2, consent.Calls);
+            Assert.Empty(wallet.Store.Snapshot().Agents);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(WalletPaths.HomeVariable, oldHome);
+            Environment.SetEnvironmentVariable("BYOA_WALLET_MCP_PATH", oldMcp);
+        }
+    }
+
+    [Fact]
+    public async Task InterpreterParentHidesFullAccessOnTheFirstConnection()
+    {
+        var oldHome = Environment.GetEnvironmentVariable(WalletPaths.HomeVariable);
+        var oldMcp = Environment.GetEnvironmentVariable("BYOA_WALLET_MCP_PATH");
+        var home = TestFolder.New();
+        var bridgeFolder = Path.Combine(home, "bridge");
+        Directory.CreateDirectory(bridgeFolder);
+        Environment.SetEnvironmentVariable(WalletPaths.HomeVariable, home);
+        Environment.SetEnvironmentVariable("BYOA_WALLET_MCP_PATH", bridgeFolder);
+        try
+        {
+            using var wallet = new WalletServices();
+            var consent = new FakeConsentUi(new AgentConsentAnswer(AgentConsentDecision.Allow, true));
+            using var process = new FakeProcessInfo(new ObservedAgentProcess(
+                Path.Combine(bridgeFolder, "byoa-mcp.exe"), "C:\\Windows\\System32\\cmd.exe"));
+            using var server = new AgentPipeServer(wallet, consent, process);
+            server.Start();
+
+            await using var client = await FakePipeClient.ConnectAsync("shell host");
+            var hello = await client.HelloAsync();
+
+            Assert.True(hello["ok"]!.GetValue<bool>());
+            Assert.False(hello["fullAccess"]!.GetValue<bool>());
+            Assert.True(consent.LastModel?.Identity.ParentIsInterpreter == true);
+            Assert.False(consent.LastModel?.FullAccessAllowed == true);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(WalletPaths.HomeVariable, oldHome);
+            Environment.SetEnvironmentVariable("BYOA_WALLET_MCP_PATH", oldMcp);
+        }
+    }
+
+    [Fact]
+    public async Task EveryFullAccessToolIsRefusedForANormalSession()
+    {
+        var oldHome = Environment.GetEnvironmentVariable(WalletPaths.HomeVariable);
+        var oldMcp = Environment.GetEnvironmentVariable("BYOA_WALLET_MCP_PATH");
+        var home = TestFolder.New();
+        var bridgeFolder = Path.Combine(home, "bridge");
+        Directory.CreateDirectory(bridgeFolder);
+        Environment.SetEnvironmentVariable(WalletPaths.HomeVariable, home);
+        Environment.SetEnvironmentVariable("BYOA_WALLET_MCP_PATH", bridgeFolder);
+        try
+        {
+            using var wallet = new WalletServices();
+            using var process = new FakeProcessInfo(new ObservedAgentProcess(
+                Path.Combine(bridgeFolder, "byoa-mcp.exe"), "C:\\agents\\normal.exe"));
+            using var server = new AgentPipeServer(wallet,
+                new FakeConsentUi(new AgentConsentAnswer(AgentConsentDecision.Allow, false)), process);
+            server.Start();
+
+            await using var client = await FakePipeClient.ConnectAsync("normal session");
+            Assert.True((await client.HelloAsync())["ok"]!.GetValue<bool>());
+            foreach (var operation in new[] { "list_sites", "set_site_access", "set_limits", "set_api_key" })
+            {
+                var response = await client.CallAsync(operation);
+                Assert.False(response["ok"]!.GetValue<bool>(), operation);
+                Assert.Contains("Full access", response["error"]!.GetValue<string>(), StringComparison.Ordinal);
+            }
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(WalletPaths.HomeVariable, oldHome);
+            Environment.SetEnvironmentVariable("BYOA_WALLET_MCP_PATH", oldMcp);
+        }
+    }
+
+    [Fact]
+    public async Task ARequestWithNonObjectArgumentsGetsAnErrorWithoutChangingState()
+    {
+        var oldHome = Environment.GetEnvironmentVariable(WalletPaths.HomeVariable);
+        var oldMcp = Environment.GetEnvironmentVariable("BYOA_WALLET_MCP_PATH");
+        var home = TestFolder.New();
+        var bridgeFolder = Path.Combine(home, "bridge");
+        Directory.CreateDirectory(bridgeFolder);
+        Environment.SetEnvironmentVariable(WalletPaths.HomeVariable, home);
+        Environment.SetEnvironmentVariable("BYOA_WALLET_MCP_PATH", bridgeFolder);
+        try
+        {
+            using var wallet = new WalletServices();
+            using var process = new FakeProcessInfo(new ObservedAgentProcess(
+                Path.Combine(bridgeFolder, "byoa-mcp.exe"), "C:\\agents\\normal.exe"));
+            using var server = new AgentPipeServer(wallet,
+                new FakeConsentUi(new AgentConsentAnswer(AgentConsentDecision.Allow, false)), process);
+            server.Start();
+
+            await using var client = await FakePipeClient.ConnectAsync("bad arguments");
+            Assert.True((await client.HelloAsync())["ok"]!.GetValue<bool>());
+            var response = await client.CallRawAsync(new JsonArray());
+
+            Assert.False(response["ok"]!.GetValue<bool>());
+            Assert.Contains("arguments", response["error"]!.GetValue<string>(), StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(WalletPaths.HomeVariable, oldHome);
+            Environment.SetEnvironmentVariable("BYOA_WALLET_MCP_PATH", oldMcp);
+        }
+    }
+
+    [Fact]
+    public async Task NormalStatusAndActivityDoNotReturnSiteOriginsOrFreeText()
+    {
+        var oldHome = Environment.GetEnvironmentVariable(WalletPaths.HomeVariable);
+        var oldMcp = Environment.GetEnvironmentVariable("BYOA_WALLET_MCP_PATH");
+        var home = TestFolder.New();
+        var bridgeFolder = Path.Combine(home, "bridge");
+        Directory.CreateDirectory(bridgeFolder);
+        Environment.SetEnvironmentVariable(WalletPaths.HomeVariable, home);
+        Environment.SetEnvironmentVariable("BYOA_WALLET_MCP_PATH", bridgeFolder);
+        try
+        {
+            using var wallet = new WalletServices();
+            wallet.Store.Update(settings =>
+            {
+                settings.Sites.Add(new SiteRecord { Origin = "https://alpha.example", Status = SiteStatus.Allowed });
+                settings.Sites.Add(new SiteRecord { Origin = "https://beta.example", Status = SiteStatus.Declined });
+            });
+            wallet.Activity.Add(new Byoa.Wallet.Activity.ActivityEntry
+            {
+                At = DateTimeOffset.UtcNow,
+                Origin = "https://alpha.example",
+                Kind = "call",
+                Outcome = "ok",
+                Actor = "agent: alpha.example",
+                Source = "alpha.example source",
+                Fallback = "alpha.example fallback",
+                Change = "free text mentioning alpha.example must stay private",
+                Note = "alpha.example note",
+            });
+            using var process = new FakeProcessInfo(new ObservedAgentProcess(
+                Path.Combine(bridgeFolder, "byoa-mcp.exe"), "C:\\agents\\normal.exe"));
+            using var server = new AgentPipeServer(wallet,
+                new FakeConsentUi(new AgentConsentAnswer(AgentConsentDecision.Allow, false)), process);
+            server.Start();
+
+            await using var client = await FakePipeClient.ConnectAsync("redaction test");
+            Assert.True((await client.HelloAsync())["ok"]!.GetValue<bool>());
+            var activity = await client.CallAsync("activity", new JsonObject { ["limit"] = 50 });
+            var status = await client.CallAsync("status");
+            var activityText = activity.ToJsonString();
+            var statusText = status.ToJsonString();
+
+            Assert.DoesNotContain("alpha.example", activityText, StringComparison.Ordinal);
+            Assert.DoesNotContain("beta.example", activityText, StringComparison.Ordinal);
+            Assert.DoesNotContain("alpha.example", statusText, StringComparison.Ordinal);
+            Assert.DoesNotContain("beta.example", statusText, StringComparison.Ordinal);
+            var labels = activity["entries"]!.AsArray().Select(entry => entry!["origin"]!.GetValue<string>()).ToArray();
+            Assert.Contains(labels, label => label.StartsWith("site-", StringComparison.Ordinal));
+            var redacted = activity["entries"]!.AsArray().Single(entry => entry!["kind"]!.GetValue<string>() == "call");
+            Assert.Null(redacted!["actor"]);
+            Assert.Null(redacted["source"]);
+            Assert.Null(redacted["fallback"]);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(WalletPaths.HomeVariable, oldHome);
+            Environment.SetEnvironmentVariable("BYOA_WALLET_MCP_PATH", oldMcp);
+        }
+    }
+
     sealed class FakeConsentUi(AgentConsentAnswer answer) : IAgentConsentUi
     {
         public AgentConsentAnswer Answer { get; set; } = answer;
         public int Calls { get; private set; }
+        public AgentConsentModel? LastModel { get; private set; }
         public Task<AgentConsentAnswer> AskAgentAsync(AgentConsentModel model, CancellationToken ct)
         {
             Calls++;
+            LastModel = model;
             return Task.FromResult(Answer);
         }
     }
@@ -186,13 +401,28 @@ public sealed class AgentPipeTests
         }
 
         public async Task<JsonObject> CallAsync(string operation)
+            => await CallAsync(operation, new JsonObject());
+
+        public async Task<JsonObject> CallAsync(string operation, JsonObject arguments)
         {
             await Framing.WriteAsync(_pipe, AgentPipeProtocol.Serialize(new JsonObject
             {
                 ["type"] = AgentPipeProtocol.Request,
                 ["id"] = Guid.NewGuid().ToString("N"),
                 ["operation"] = operation,
-                ["arguments"] = new JsonObject(),
+                ["arguments"] = arguments,
+            }));
+            return await ReadAsync();
+        }
+
+        public async Task<JsonObject> CallRawAsync(JsonNode arguments)
+        {
+            await Framing.WriteAsync(_pipe, AgentPipeProtocol.Serialize(new JsonObject
+            {
+                ["type"] = AgentPipeProtocol.Request,
+                ["id"] = "bad-arguments",
+                ["operation"] = "status",
+                ["arguments"] = arguments,
             }));
             return await ReadAsync();
         }

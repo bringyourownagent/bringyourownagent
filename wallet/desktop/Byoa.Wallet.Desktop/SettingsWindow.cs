@@ -911,9 +911,13 @@ sealed class SettingsWindow : Window
             }, "small");
             var last = agent.LastUsed is { } at ? at.ToLocalTime().ToString("g", CultureInfo.InvariantCulture) : "never";
             var state = agent.Status == "blocked" ? "Blocked" : "Allowed";
+            var interpreter = AgentIdentity.IsInterpreterPath(agent.ExecutablePath)
+                ? Ui.Wrap("This program runs other programs; anything started through it will share this approval.", "muted", "small")
+                : Ui.Text("", "small");
             page.Children.Add(Ui.Box("card", Ui.Column(8,
                 Ui.Columns("*,Auto", Ui.Column(3, Ui.Text(agent.Name, "h2"), Ui.Chip(state, agent.Status == "blocked" ? "ink" : "")), Ui.Row(10, full, revoke)),
                 Ui.Wrap("Observed parent (wallet observed): " + agent.ExecutablePath, "mono", "small"),
+                interpreter,
                 Ui.Text("Last used " + last, "muted", "small"))));
         }
     }
@@ -963,10 +967,10 @@ sealed class SettingsWindow : Window
         Head(page, "Help", "Short articles for people who are not developers. The same articles are available to your AI agent through the help tool.");
         foreach (var topic in Byoa.Wallet.Help.HelpCatalog.Topics)
         {
-            var name = topic.Replace('-', ' ');
+            var name = Byoa.Wallet.Help.HelpCatalog.Title(topic);
             var button = Ui.Button("Read", "deny", "HelpRead-" + topic, () => _w.Ui.OpenHelp(topic), "small");
-            var preview = Byoa.Wallet.Help.HelpCatalog.Get(topic).Split('\n')
-                .FirstOrDefault(line => line.Length > 0 && !line.StartsWith('#')) ?? "";
+            var preview = (Byoa.Wallet.Help.HelpCatalog.Get(topic).Split('\n')
+                .FirstOrDefault(line => line.Length > 0 && !line.StartsWith('#')) ?? "").Replace("`", "", StringComparison.Ordinal);
             page.Children.Add(Ui.Box("card", Ui.Columns("*,Auto", Ui.Column(3, Ui.Text(name, "h2"), Ui.Wrap(preview, "muted", "small")), button)));
         }
     }

@@ -56,6 +56,23 @@ public sealed class SettingsStore
         Changed?.Invoke();
     }
 
+    /// <summary>Applies a migration without touching settings.json when it made no change.</summary>
+    public bool UpdateIfChanged(Action<WalletSettings> change)
+    {
+        bool changed;
+        lock (_gate)
+        {
+            var before = JsonSerializer.Serialize(_settings, Json);
+            change(_settings);
+            var after = JsonSerializer.Serialize(_settings, Json);
+            changed = !string.Equals(before, after, StringComparison.Ordinal);
+            if (changed) Save();
+        }
+
+        if (changed) Changed?.Invoke();
+        return changed;
+    }
+
     /// <summary>A deep copy, for showing in the UI without holding the lock.</summary>
     public WalletSettings Snapshot()
     {

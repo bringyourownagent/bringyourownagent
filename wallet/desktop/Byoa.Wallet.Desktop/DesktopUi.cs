@@ -25,8 +25,10 @@ sealed class DesktopUi : IWalletUi, IAgentConsentUi, IEndpointConfirmationUi, IS
     HelpWindow? _help;
     ToastWindow? _download;
     PreparingHandle? _preparing;
-    readonly SemaphoreSlim _promptQueue = new(1, 1);
-    int _waitingPrompts;
+    readonly SemaphoreSlim _agentPromptQueue = new(1, 1);
+    readonly SemaphoreSlim _visitorPromptQueue = new(1, 1);
+    int _waitingAgentPrompts;
+    int _waitingVisitorPrompts;
     readonly object _keyGate = new();
     readonly HashSet<string> _keyWindows = new(StringComparer.Ordinal);
     readonly Dictionary<string, Queue<DateTimeOffset>> _keyHistory = new(StringComparer.Ordinal);
@@ -79,44 +81,47 @@ sealed class DesktopUi : IWalletUi, IAgentConsentUi, IEndpointConfirmationUi, IS
         _tray.ToolTipText = quiet > 0 ? "Agent wallet: a site asked without a click" : "Agent wallet";
     }
 
-    public Task<NoticeAnswer> ShowNoticeAsync(NoticeModel model, CancellationToken ct) => OnUi(async () =>
-    {
-        var toast = ToastWindow.Request(model);
-        toast.CloseOn(ct);
-        toast.Show();
-        return await toast.Result switch
+    public Task<NoticeAnswer> ShowNoticeAsync(NoticeModel model, CancellationToken ct) =>
+        PromptAsync(ct, agentInitiated: false, async () =>
         {
-            "show" => NoticeAnswer.Show,
-            "decline" => NoticeAnswer.Decline,
-            "block" => NoticeAnswer.Block,
-            _ => NoticeAnswer.Closed,
-        };
-    });
+            var toast = ToastWindow.Request(model);
+            toast.CloseOn(ct);
+            toast.Show();
+            return await toast.Result switch
+            {
+                "show" => NoticeAnswer.Show,
+                "decline" => NoticeAnswer.Decline,
+                "block" => NoticeAnswer.Block,
+                _ => NoticeAnswer.Closed,
+            };
+        }, NoticeAnswer.Closed);
 
-    public Task<ConsentAnswer> ShowConsentAsync(ConsentModel model, CancellationToken ct) => OnUi(async () =>
-    {
-        var window = new ConsentWindow(model, page =>
+    public Task<ConsentAnswer> ShowConsentAsync(ConsentModel model, CancellationToken ct) =>
+        PromptAsync(ct, agentInitiated: false, async () =>
         {
-            if (page == "add-model") OpenAddModel();
-            else OpenSettings(page);
-        });
-        window.CloseOn(ct);
-        window.Show();
-        return await window.Result;
-    });
+            var window = new ConsentWindow(model, page =>
+            {
+                if (page == "add-model") OpenAddModel();
+                else OpenSettings(page);
+            });
+            window.CloseOn(ct);
+            window.Show();
+            return await window.Result;
+        }, ConsentAnswer.Declined);
 
-    public Task<PaidAnswer> AskPaidAsync(PaidModel model, CancellationToken ct) => OnUi(async () =>
-    {
-        var toast = ToastWindow.Paid(model);
-        toast.CloseOn(ct);
-        toast.Show();
-        return await toast.Result switch
+    public Task<PaidAnswer> AskPaidAsync(PaidModel model, CancellationToken ct) =>
+        PromptAsync(ct, agentInitiated: false, async () =>
         {
-            "once" => PaidAnswer.Once,
-            "always" => PaidAnswer.Always,
-            _ => PaidAnswer.No,
-        };
-    });
+            var toast = ToastWindow.Paid(model);
+            toast.CloseOn(ct);
+            toast.Show();
+            return await toast.Result switch
+            {
+                "once" => PaidAnswer.Once,
+                "always" => PaidAnswer.Always,
+                _ => PaidAnswer.No,
+            };
+        }, PaidAnswer.No);
 
     public void ShowInfo(InfoModel model) => PostSafe(() => ToastWindow.Info(model, page => OpenSettings(page)).Show());
 
@@ -158,17 +163,32 @@ sealed class DesktopUi : IWalletUi, IAgentConsentUi, IEndpointConfirmationUi, IS
 
     public void QuietRequest(string origin) => PostSafe(UpdateBadge);
 
-    public Task<AgentConsentAnswer> AskAgentAsync(AgentConsentModel model, CancellationToken ct) =>
-        PromptAsync(ct, async () =>
+    public async Task<AgentConsentAnswer> AskAgentAsync(AgentConsentModel model, CancellationToken ct)
+    {
+        try
         {
-            var window = new AgentConsentWindow(model, () => Volatile.Read(ref _waitingPrompts));
-            window.Show();
-            using var registration = ct.Register(() => PostSafe(window.Close));
-            return await window.Result;
-        }, new AgentConsentAnswer(AgentConsentDecision.NotNow, false)
+            var answer = await PromptAsync(ct, agentInitiated: true, async () =>
+            {
+                var window = new AgentConsentWindow(model, () => Volatile.Read(ref _waitingAgentPrompts));
+                window.Show();
+                using var registration = ct.Register(() => PostSafe(window.Close));
+                return await window.Result;
+            }, new AgentConsentAnswer(AgentConsentDecision.NotNow, false)
+            {
+                Error = "The visitor was busy answering another request; try again later."
+            });
+            if (ct.IsCancellationRequested)
+                return new AgentConsentAnswer(AgentConsentDecision.NotNow, false)
+                {
+                    Error = "The agent connection closed before the visitor answered."
+                };
+            return answer;
+        }
+        catch (RegistryPromptBusyException e)
         {
-            Error = "The visitor is busy answering another request. Try again later."
-        });
+            return new AgentConsentAnswer(AgentConsentDecision.NotNow, false) { Error = e.Message };
+        }
+    }
 
     public async Task<RegistryOperationResult> RequestApiKeyEntryAsync(ApiKeyEntryRequest request, CancellationToken ct)
     {
@@ -192,18 +212,27 @@ sealed class DesktopUi : IWalletUi, IAgentConsentUi, IEndpointConfirmationUi, IS
 
         try
         {
-            return await PromptAsync(ct, async () =>
+            try
             {
-                var window = new ApiKeyEntryWindow(request.SourceName);
-                window.Show();
-                using var registration = ct.Register(() => PostSafe(window.Close));
-                var entered = await window.Result;
-                if (entered is null) return RegistryOperationResult.Failure("The visitor cancelled the API-key entry. Ask them to try again in the wallet.");
-                var result = await _w.Registry.SetApiKeyAsync(request.SourceId, entered, request.Actor,
-                    fullAccess: request.FullAccess, visitorInitiated: !request.AgentInitiated);
-                if (!result.Ok) ShowInfo(new InfoModel("API key", result.Message));
-                return result;
-            }, RegistryOperationResult.Failure("The visitor is busy answering another request. Try again later."));
+                return await PromptAsync(ct, request.AgentInitiated, async () =>
+                {
+                    var window = new ApiKeyEntryWindow(request.SourceName, () => Volatile.Read(ref _waitingAgentPrompts));
+                    window.Show();
+                    using var registration = ct.Register(() => PostSafe(window.Close));
+                    var entered = await window.Result;
+                    if (entered is null) return RegistryOperationResult.Failure("The visitor cancelled the API-key entry. Ask them to try again in the wallet.");
+                    // The visitor typed this value in the wallet, so this is the visitor's write path even when
+                    // an agent opened the field. The agent-supplied set_api_key path remains Full-access only.
+                    var result = await _w.Registry.SetApiKeyAsync(request.SourceId, entered, request.Actor,
+                        fullAccess: request.FullAccess, visitorInitiated: true);
+                    if (!result.Ok) ShowInfo(new InfoModel("API key", result.Message));
+                    return result;
+                }, RegistryOperationResult.Failure("The visitor was busy answering another request; try again later."));
+            }
+            catch (RegistryPromptBusyException e)
+            {
+                return RegistryOperationResult.Failure(e.Message);
+            }
         }
         finally
         {
@@ -213,27 +242,28 @@ sealed class DesktopUi : IWalletUi, IAgentConsentUi, IEndpointConfirmationUi, IS
     }
 
     public Task<bool> ConfirmEndpointAsync(EndpointConfirmationRequest request, CancellationToken ct) =>
-        PromptAsync(ct, async () =>
+        PromptAsync(ct, agentInitiated: true, async () =>
         {
-            var window = new EndpointConfirmationWindow(request);
+            var window = new EndpointConfirmationWindow(request, () => Volatile.Read(ref _waitingAgentPrompts));
             window.Show();
             using var registration = ct.Register(() => PostSafe(window.Close));
             return await window.Result;
         }, false);
 
-    public Task<bool> ConfirmModelDeleteAsync(DownloadableModelInfo model, string? note, CancellationToken ct) =>
-        PromptAsync(ct, async () =>
+    public Task<bool> ConfirmModelDeleteAsync(DownloadableModelInfo model, string? note, CancellationToken ct, bool agentInitiated = false) =>
+        PromptAsync(ct, agentInitiated, async () =>
         {
-            var window = new ModelDeleteWindow(model.Name, model.SizeBytes, note);
+            var window = new ModelDeleteWindow(model.Name, model.SizeBytes, note,
+                agentInitiated ? () => Volatile.Read(ref _waitingAgentPrompts) : null);
             window.Show();
             using var registration = ct.Register(() => PostSafe(window.Close));
             return await window.Result;
         }, false);
 
     public Task<bool> ConfirmSecretDeletionAsync(SecretDeletionRequest request, CancellationToken ct) =>
-        PromptAsync(ct, async () =>
+        PromptAsync(ct, agentInitiated: true, async () =>
         {
-            var window = new SecretDeleteWindow(request.SourceName);
+            var window = new SecretDeleteWindow(request.SourceName, () => Volatile.Read(ref _waitingAgentPrompts));
             window.Show();
             using var registration = ct.Register(() => PostSafe(window.Close));
             return await window.Result;
@@ -302,21 +332,29 @@ sealed class DesktopUi : IWalletUi, IAgentConsentUi, IEndpointConfirmationUi, IS
         }
     }
 
-    async Task<T> PromptAsync<T>(CancellationToken ct, Func<Task<T>> work, T busy)
+    async Task<T> PromptAsync<T>(CancellationToken ct, bool agentInitiated, Func<Task<T>> work, T busy)
     {
-        Interlocked.Increment(ref _waitingPrompts);
+        if (agentInitiated) Interlocked.Increment(ref _waitingAgentPrompts);
+        else Interlocked.Increment(ref _waitingVisitorPrompts);
         var acquired = false;
+        var queue = agentInitiated ? _agentPromptQueue : _visitorPromptQueue;
         try
         {
-            acquired = await _promptQueue.WaitAsync(TimeSpan.FromSeconds(30), ct).ConfigureAwait(false);
-            if (!acquired) return busy;
+            acquired = await queue.WaitAsync(TimeSpan.FromSeconds(30), ct).ConfigureAwait(false);
+            if (!acquired)
+            {
+                if (agentInitiated) throw new RegistryPromptBusyException();
+                ShowInfo(new InfoModel("Wallet busy", "Close the open wallet window first."));
+                return busy;
+            }
             return await OnUi(work).ConfigureAwait(false);
         }
         catch (OperationCanceledException) { return busy; }
         finally
         {
-            if (acquired) _promptQueue.Release();
-            Interlocked.Decrement(ref _waitingPrompts);
+            if (acquired) queue.Release();
+            if (agentInitiated) Interlocked.Decrement(ref _waitingAgentPrompts);
+            else Interlocked.Decrement(ref _waitingVisitorPrompts);
         }
     }
 }

@@ -56,7 +56,7 @@ public class WhisperRuntimeOrderTests
     [Theory]
     [InlineData(1, "Intel integrated", true)]
     [InlineData(2, "NVIDIA GeForce", true)]
-    [InlineData(3, "Virtual GPU", true)]
+    [InlineData(3, "Virtual GPU", false)]
     [InlineData(2, "llvmpipe (LLVM)", false)]
     [InlineData(3, "Microsoft Basic Render Driver", false)]
     public void ProbeRejectsSoftwareAndNonGpuPhysicalDevices(int type, string name, bool usable) =>

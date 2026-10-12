@@ -23,6 +23,9 @@ public sealed class WalletSettings
     public List<AgentRecord> Agents { get; set; } = [];
     public LimitSettings Limits { get; set; } = new();
 
+    /// <summary>Random per-wallet key used to make redacted site labels opaque to agents.</summary>
+    public string? SiteActivityLabelKey { get; set; }
+
     /// <summary>Folders searched for local models (GigaAM folders, ggml Whisper files).</summary>
     public List<string> ModelFolders { get; set; } = [];
 
@@ -152,6 +155,15 @@ public sealed class SourceSetting
 
     /// <summary>Marks a display label supplied by an agent, rather than typed by the visitor.</summary>
     public bool LabelFromAgent { get; set; }
+
+    /// <summary>True when an agent created this setting; agent-originated probe results stay redacted.</summary>
+    public bool AddedByAgent { get; set; }
+
+    /// <summary>Addresses observed during visitor confirmation of a name-based agent endpoint.</summary>
+    public List<string> ConfirmedAddresses { get; set; } = [];
+
+    /// <summary>The address class observed at confirmation: public, private, or unknown.</summary>
+    public string? ConfirmedAddressClass { get; set; }
 }
 
 /// <summary>An ordered chain of sources for one skill: the first that fits answers, the next ones are fallbacks.</summary>

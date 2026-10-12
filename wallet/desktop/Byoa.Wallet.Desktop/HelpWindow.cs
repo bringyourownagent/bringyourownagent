@@ -32,9 +32,9 @@ sealed class HelpWindow : Window
 
         foreach (var name in HelpCatalog.Topics)
         {
-            var item = new ListBoxItem { Content = Pretty(name), Tag = name };
+            var item = new ListBoxItem { Content = HelpCatalog.Title(name), Tag = name };
             AutomationProperties.SetAutomationId(item, "HelpTopic-" + name);
-            AutomationProperties.SetName(item, Pretty(name));
+            AutomationProperties.SetName(item, HelpCatalog.Title(name));
             _topics.Items.Add(item);
         }
 
@@ -88,5 +88,4 @@ sealed class HelpWindow : Window
             content.Width = _body.Bounds.Width;
     }
 
-    static string Pretty(string topic) => topic.Replace('-', ' ').Replace('_', ' ');
 }

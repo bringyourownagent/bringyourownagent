@@ -25,6 +25,7 @@ public sealed class OpenRouterTextSource : ITextSource
     readonly Func<string?> _key;
     readonly Func<bool> _hasKey;
     readonly Uri _baseUrl;
+    readonly string _displayModel;
     readonly object _priceGate = new();
     decimal? _promptPerToken;
     decimal? _completionPerToken;
@@ -36,7 +37,9 @@ public sealed class OpenRouterTextSource : ITextSource
         Func<string?> key, Func<bool> hasKey, Uri? baseUrl = null)
     {
         Model = model;
-        Label = SourceLabels.Clean(label);
+        _displayModel = SourceLabels.Clean(model) ?? "model";
+        // Keep the wire model id unchanged, but give every UI path a cleaned fallback before Name renders it.
+        Label = SourceLabels.Clean(label) ?? _displayModel;
         SecretRef = string.IsNullOrWhiteSpace(secretRef) ? SecretName : secretRef;
         _http = http;
         _key = key;

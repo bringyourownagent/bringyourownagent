@@ -10,6 +10,20 @@ namespace Byoa.Wallet.Tests;
 public sealed class SourceSetTests
 {
     [Fact]
+    public void ProviderNamesDoNotRenderControlCharactersFromModelIds()
+    {
+        using var http = new HttpClient();
+        var local = new OpenAiCompatibleSource(SourceKinds.LmStudio, "model\nwith\tcontrols", null,
+            "http://127.0.0.1:1234/v1", http);
+        var paid = new OpenRouterTextSource("paid\r\nmodel", null, null, http, () => null, () => false);
+
+        Assert.DoesNotContain('\n', local.Name);
+        Assert.DoesNotContain('\t', local.Name);
+        Assert.DoesNotContain('\r', paid.Name);
+        Assert.DoesNotContain('\n', paid.Name);
+    }
+
+    [Fact]
     public void OllamaWithoutV1UsesOneCanonicalIdForTheProviderAndRoute()
     {
         var home = TestFolder.New();
@@ -105,6 +119,36 @@ public sealed class SourceSetTests
 
             var scan = await sources.Scanner.ScanAsync(default);
             Assert.Contains(scan, info => info.Kind == SourceKinds.OpenAiCompatible && info.Endpoint == endpointA);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(WalletPaths.HomeVariable, oldHome);
+        }
+    }
+
+    [Fact]
+    public async Task UnconfirmedAgentLoopbackIsNotAddedToTheBackgroundScanner()
+    {
+        var home = TestFolder.New();
+        var oldHome = Environment.GetEnvironmentVariable(WalletPaths.HomeVariable);
+        Environment.SetEnvironmentVariable(WalletPaths.HomeVariable, home);
+        try
+        {
+            var store = new SettingsStore(null, settings => settings.Sources.Add(new SourceSetting
+            {
+                Id = "agent-loopback",
+                Kind = SourceKinds.OpenAiCompatible,
+                Model = "test-model",
+                Endpoint = "http://127.0.0.1:5311/v1",
+                AddedByAgent = true,
+                EndpointConfirmed = false,
+                Skills = [Vocabulary.Generate],
+            }));
+            using var sources = new SourceSet(store, new SecretStore(Path.Combine(home, "secrets.dat")), new HttpClient());
+
+            var scan = await sources.Scanner.ScanAsync(default);
+
+            Assert.DoesNotContain(scan, info => info.Endpoint.Contains(":5311", StringComparison.Ordinal));
         }
         finally
         {

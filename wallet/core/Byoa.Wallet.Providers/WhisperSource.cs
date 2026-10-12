@@ -53,7 +53,8 @@ public class WhisperSource : ISpeechSource, IDownloadableSource, IWarmable, IDis
         ["ggml-base-q5_1.bin"] = 59_707_625,
     };
 
-    // SHA-256 content hashes from the Hugging Face LFS metadata for ggerganov/whisper.cpp.
+    // SHA-256 content hashes from the Hugging Face LFS metadata for ggerganov/whisper.cpp, recorded from the
+    // repository tree/API at revision "main" while this source was written (each key below is the model file path).
     // The size and the tree metadata remain a second check; these pins are what the wallet trusts.
     static readonly IReadOnlyDictionary<string, string> PinnedSha256 = new Dictionary<string, string>(StringComparer.Ordinal)
     {

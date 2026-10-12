@@ -3,6 +3,8 @@ using Byoa.Wallet.Registry;
 using Byoa.Wallet.Secrets;
 using Byoa.Wallet.Settings;
 using Byoa.Wallet.Sources;
+using System.Net;
+using System.Net.Sockets;
 using System.Collections.ObjectModel;
 
 namespace Byoa.Wallet.Providers;
@@ -60,22 +62,27 @@ public sealed class SourceSet : IDisposable
     int _rebuildPending;
     Task? _scanLoop;
     readonly object _sourceGate = new();
+    readonly Func<string, CancellationToken, Task<IPAddress[]>> _resolveEndpoint;
     Dictionary<string, ITextSource> _lastGood = new(StringComparer.Ordinal);
     IReadOnlyList<InvalidTextSource> _invalid = [];
 
     public SourceSet(SettingsStore store, SecretStore secrets, HttpClient http,
-        CpuFeatureSet? cpuFeatures = null, Func<VulkanProbeResult>? vulkanProbe = null)
+        CpuFeatureSet? cpuFeatures = null, Func<VulkanProbeResult>? vulkanProbe = null,
+        Func<string, CancellationToken, Task<IPAddress[]>>? endpointResolver = null)
     {
         _store = store;
         _secrets = secrets;
+        _resolveEndpoint = endpointResolver ?? ((host, ct) => Dns.GetHostAddressesAsync(host, ct));
         var features = cpuFeatures ?? CpuFeatures.Current;
         // Text calls go through a client that never follows redirects: an endpoint on this computer must not send
         // the wallet's requests (and the visitor's API key) onward to another computer.
-        TextHttp = new HttpClient(new SocketsHttpHandler
+        var textHandler = new SocketsHttpHandler
         {
             AllowAutoRedirect = false,
             ConnectTimeout = TimeSpan.FromSeconds(15),
-        })
+        };
+        textHandler.ConnectCallback = ConnectTextAsync;
+        TextHttp = new HttpClient(textHandler)
         {
             Timeout = TimeSpan.FromSeconds(150),
             MaxResponseContentBufferSize = BoundedHttp.MaxJsonBytes,
@@ -99,10 +106,10 @@ public sealed class SourceSet : IDisposable
         All = [GigaAm, Whisper, WhisperCpu, OpenRouter];
         Scanner = new RuntimeScanner(TextHttp, AddedEndpoints);
         // Older settings used an Ollama id without /v1. Canonicalise those ids once before route repair.
-        _store.Update(NormalizeAddedSourceIds);
+        _store.UpdateIfChanged(NormalizeAddedSourceIds);
         // The registry normally adds the route in the same settings update as the source. For older settings,
         // repair the route once before subscribing to Changed; a rebuild must never write settings.json again.
-        _store.Update(Router.EnsureTextChainFromSettings);
+        _store.UpdateIfChanged(Router.EnsureTextChainFromSettings);
         RebuildText();
         store.Changed += RebuildText;
         _scanLoop = Task.Run(() => ScanLoop(_scans.Token));
@@ -120,6 +127,84 @@ public sealed class SourceSet : IDisposable
 
     /// <summary>The runtime scanner; it watches LM Studio, Ollama and every added endpoint.</summary>
     public RuntimeScanner Scanner { get; }
+
+    /// <summary>Re-resolves agent-added named endpoints at use time and rejects unsafe DNS drift.</summary>
+    async ValueTask<Stream> ConnectTextAsync(SocketsHttpConnectionContext context, CancellationToken ct)
+    {
+        var host = context.DnsEndPoint.Host;
+        var port = context.DnsEndPoint.Port;
+        var setting = _store.Snapshot().Sources.FirstOrDefault(source =>
+            source.AddedByAgent && source.EndpointConfirmed &&
+            Uri.TryCreate(source.Endpoint, UriKind.Absolute, out var uri) &&
+            !IPAddress.TryParse(uri.Host, out _) &&
+            string.Equals(uri.IdnHost, host, StringComparison.OrdinalIgnoreCase) &&
+            (uri.IsDefaultPort ? (uri.Scheme == "https" ? 443 : 80) : uri.Port) == port);
+
+        IPAddress[] addresses;
+        try
+        {
+            addresses = IPAddress.TryParse(host, out var literal)
+                ? [literal]
+                : await _resolveEndpoint(host, ct).WaitAsync(TimeSpan.FromSeconds(2), ct).ConfigureAwait(false);
+        }
+        catch (Exception e) when (e is not OutOfMemoryException)
+        {
+            MarkEndpointUnavailable(host, port, "the endpoint name could not be resolved safely");
+            throw new HttpRequestException("The endpoint name could not be resolved safely.", e);
+        }
+
+        var candidates = setting is null
+            ? addresses
+            : addresses.Where(address => EndpointPolicy.IsAllowedAtUse(address, setting.ConfirmedAddressClass,
+                setting.ConfirmedAddresses)).ToArray();
+        if (candidates.Length == 0)
+        {
+            var reason = setting is null ? "the endpoint has no usable address" :
+                "the endpoint name resolved to an address outside the visitor's confirmed network";
+            MarkEndpointUnavailable(host, port, reason);
+            throw new HttpRequestException("The endpoint is unavailable: " + reason + ".");
+        }
+
+        Exception? last = null;
+        foreach (var address in candidates.Distinct())
+        {
+            TcpClient? client = null;
+            try
+            {
+                client = new TcpClient(address.AddressFamily);
+                await client.ConnectAsync(address, port, ct).ConfigureAwait(false);
+                MarkEndpointAvailable(host, port);
+                return client.GetStream();
+            }
+            catch (Exception e) when (e is not OutOfMemoryException)
+            {
+                last = e;
+                client?.Dispose();
+            }
+        }
+
+        MarkEndpointUnavailable(host, port, "the endpoint did not accept a connection");
+        throw new HttpRequestException("The endpoint did not accept a connection.", last);
+    }
+
+    void MarkEndpointUnavailable(string host, int port, string reason)
+    {
+        foreach (var source in _text.OfType<OpenAiCompatibleSource>())
+            if (EndpointMatches(source.Endpoint, host, port)) source.MarkUnavailable(reason);
+    }
+
+    void MarkEndpointAvailable(string host, int port)
+    {
+        foreach (var source in _text.OfType<OpenAiCompatibleSource>())
+            if (EndpointMatches(source.Endpoint, host, port)) source.MarkAvailable();
+    }
+
+    static bool EndpointMatches(string endpoint, string host, int port)
+    {
+        if (!Uri.TryCreate(endpoint, UriKind.Absolute, out var uri)) return false;
+        var endpointPort = uri.IsDefaultPort ? uri.Scheme == "https" ? 443 : 80 : uri.Port;
+        return endpointPort == port && string.Equals(uri.IdnHost, host, StringComparison.OrdinalIgnoreCase);
+    }
 
     /// <summary>The text sources as the settings list them. The engine keeps this list for its whole life.</summary>
     public IReadOnlyList<ITextSource> Text => _text;
@@ -220,10 +305,10 @@ public sealed class SourceSet : IDisposable
             : setting.Endpoint?.Trim() is { Length: > 0 } configured
                 ? configured
                 : OpenAiCompatibleSource.DefaultEndpoint(kind);
-        var endpointPolicy = EndpointPolicy.Check(endpoint);
+        var endpointPolicy = EndpointPolicy.Check(endpoint, agentSupplied: false);
         if (!endpointPolicy.Allowed) throw new ArgumentException(endpointPolicy.Message);
         var testKey = string.IsNullOrWhiteSpace(transientApiKey) ? null : transientApiKey.Trim();
-        return kind switch
+        ITextSource? source = kind switch
         {
             SourceKinds.LmStudio or SourceKinds.Ollama
                 => new OpenAiCompatibleSource(setting.Kind, setting.Model.Trim(), setting.Label, setting.Endpoint, TextHttp),
@@ -236,6 +321,9 @@ public sealed class SourceSet : IDisposable
                     () => testKey is not null || _secrets.Has(SecretName(setting.SecretRef))),
             _ => null,
         };
+        if (source is OpenAiCompatibleSource runtime && setting.AddedByAgent && !setting.EndpointConfirmed)
+            runtime.MarkUnavailable("waiting for visitor endpoint confirmation");
+        return source;
     }
 
     static string SecretName(string? secretRef) =>
@@ -244,7 +332,7 @@ public sealed class SourceSet : IDisposable
     /// <summary>The endpoints the scanner should watch besides the two built-in ports.</summary>
     IEnumerable<(string Kind, string Endpoint)> AddedEndpoints() => _store.Snapshot().Sources
         .Where(s => s.Enabled && s.Kind is SourceKinds.LmStudio or SourceKinds.Ollama or SourceKinds.OpenAiCompatible)
-        .Where(s => s.EndpointConfirmed || IsLoopbackEndpoint(s.Endpoint))
+        .Where(s => s.EndpointConfirmed || !s.AddedByAgent && IsLoopbackEndpoint(s.Endpoint))
         .Select(s => (s.Kind!, ScannerEndpoint(s.Kind!, s.Endpoint)));
 
     static bool IsLoopbackEndpoint(string? endpoint) => Uri.TryCreate(endpoint, UriKind.Absolute, out var uri) &&
@@ -256,7 +344,7 @@ public sealed class SourceSet : IDisposable
         {
             if (source.Kind!.Equals(SourceKinds.OpenRouter, StringComparison.OrdinalIgnoreCase))
                 source.Endpoint = "https://openrouter.ai/api/v1";
-            if (IsLoopbackEndpoint(source.Endpoint)) source.EndpointConfirmed = true;
+            if (!source.AddedByAgent && IsLoopbackEndpoint(source.Endpoint)) source.EndpointConfirmed = true;
         }
         var replacements = settings.Sources.Where(s => s.Kind is not null && !string.IsNullOrWhiteSpace(s.Model))
             .Select(s => (Old: s.Id, New: s.Kind!.Equals(SourceKinds.OpenRouter, StringComparison.OrdinalIgnoreCase)
@@ -268,7 +356,7 @@ public sealed class SourceSet : IDisposable
             var source = settings.Sources.FirstOrDefault(s => s.Id == oldId);
             if (source is null || settings.Sources.Any(s => s.Id == newId && s != source)) continue;
             source.Id = newId;
-            if (Uri.TryCreate(source.Endpoint, UriKind.Absolute, out var uri) &&
+            if (!source.AddedByAgent && Uri.TryCreate(source.Endpoint, UriKind.Absolute, out var uri) &&
                 (OpenAiCompatibleSource.IsLoopback(uri.Host) || uri.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase)))
                 source.EndpointConfirmed = true;
             foreach (var chain in settings.Chains)

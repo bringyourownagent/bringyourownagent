@@ -23,6 +23,7 @@ public sealed class OpenAiCompatibleSource : ITextSource, ILiveness, ITextSource
     readonly string _kind;
     readonly Uri _base;
     readonly bool _loopback;
+    readonly string _displayModel;
 
     /// <summary>A runtime that refused the JSON schema once gets plain instructions from then on.</summary>
     volatile bool _schemaBlocked;
@@ -32,6 +33,7 @@ public sealed class OpenAiCompatibleSource : ITextSource, ILiveness, ITextSource
     {
         _kind = kind;
         Model = model;
+        _displayModel = SourceLabels.Clean(model) ?? "model";
         _http = http;
         var address = endpoint?.Trim() is { Length: > 0 } given ? given : DefaultEndpoint(kind);
         // Ollama speaks the OpenAI protocol under /v1; the others give the /v1 in their endpoint already.
@@ -42,7 +44,8 @@ public sealed class OpenAiCompatibleSource : ITextSource, ILiveness, ITextSource
             throw new ArgumentException("The endpoint must be an absolute http or https URL.", nameof(endpoint));
         _loopback = IsLoopback(uri.Host);
         _base = new Uri(address.TrimEnd('/') + "/", UriKind.Absolute);
-        Label = SourceLabels.Clean(label);
+        // Keep the wire model id unchanged, but give every UI path a cleaned fallback before Name renders it.
+        Label = SourceLabels.Clean(label) ?? _displayModel;
     }
 
     public static string DefaultEndpoint(string kind) => kind switch
@@ -79,7 +82,7 @@ public sealed class OpenAiCompatibleSource : ITextSource, ILiveness, ITextSource
     };
     public string Name => (Label ?? Model) + " · " + (_loopback ? "this computer" : DisplayAuthority(_base));
 
-    public string Runs => _loopback ? Sources.Runs.ThisDevice : "another computer (" + _base.Host + ")";
+    public string Runs => _loopback ? Sources.Runs.ThisDevice : "another computer (" + _base.IdnHost + ")";
     public string ProviderKind => _loopback ? "local-model" : "home-server";
     public IReadOnlyList<string>? Languages => null;
     public bool Paid => false;
@@ -90,19 +93,28 @@ public sealed class OpenAiCompatibleSource : ITextSource, ILiveness, ITextSource
     /// <summary>Whether the runtime still offers this model: false means the source waits for a better choice.</summary>
     public bool? Listed { get; set; }
 
-    public SourceState State =>
-        string.IsNullOrWhiteSpace(Model) || Listed == false ? SourceState.Missing : SourceState.Ready;
+    /// <summary>A use-time endpoint policy refusal, kept readable for routing and the Sources page.</summary>
+    public string? UnavailableReason { get; private set; }
 
-    public string StateText => State == SourceState.Missing
+    public SourceState State =>
+        !string.IsNullOrWhiteSpace(UnavailableReason) ? SourceState.Unavailable
+        : string.IsNullOrWhiteSpace(Model) || Listed == false ? SourceState.Missing : SourceState.Ready;
+
+    public string StateText => State == SourceState.Unavailable
+        ? "unavailable: " + UnavailableReason
+        : State == SourceState.Missing
         ? string.IsNullOrWhiteSpace(Model) ? "no model chosen yet" : RuntimeName + " does not offer " + Model
-        : Up == false ? (_loopback ? RuntimeName : "another computer (" + _base.Host + ")") + " is not running"
-        : !_loopback && Up == true ? "ready on another computer (" + _base.Host + ")"
+        : Up == false ? (_loopback ? RuntimeName : "another computer (" + _base.IdnHost + ")") + " is not running"
+        : !_loopback && Up == true ? "ready on another computer (" + _base.IdnHost + ")"
         : Up == true ? "ready · " + RuntimeName
         : "ready when " + RuntimeName + " runs";
 
+    internal void MarkUnavailable(string reason) => UnavailableReason = reason;
+    internal void MarkAvailable() => UnavailableReason = null;
+
     static string DisplayAuthority(Uri uri)
     {
-        var host = uri.Host;
+        var host = uri.IdnHost;
         if (host.Contains(':', StringComparison.Ordinal) && !host.StartsWith("[", StringComparison.Ordinal))
             host = "[" + host + "]";
         return host + (uri.IsDefaultPort ? "" : ":" + uri.Port.ToString(CultureInfo.InvariantCulture));

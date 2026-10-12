@@ -15,7 +15,7 @@ sealed class ModelDeleteWindow : Window
     readonly TaskCompletionSource<bool> _result = new(TaskCreationOptions.RunContinuationsAsynchronously);
     bool _closed;
 
-    public ModelDeleteWindow(string modelName, long? sizeBytes, string? note = null)
+    public ModelDeleteWindow(string modelName, long? sizeBytes, string? note = null, Func<int>? waitingCount = null)
     {
         Title = "Delete downloaded model";
         Width = 540;
@@ -31,11 +31,15 @@ sealed class ModelDeleteWindow : Window
         AutomationProperties.SetAutomationId(question, "ModelDeleteQuestion");
         var delete = Ui.Button("Delete", "allow", "ModelDeleteConfirm", () => Answer(true), "small");
         var cancel = Ui.Button("Cancel", "deny", "ModelDeleteCancel", () => Answer(false), "small");
+        var waiting = waitingCount?.Invoke() is { } count && count > 1
+            ? Ui.Wrap((count - 1).ToString() + " more waiting.", "muted", "small")
+            : Ui.Text("", "small");
         var content = Ui.Column(14,
             Ui.Text("Delete downloaded model", "h1"),
             question,
             note is null ? Ui.Text("", "small") : Ui.Wrap(note, "muted", "small"),
             Ui.Wrap("Only a model downloaded by this wallet can be removed.", "muted"),
+            waiting,
             Ui.Row(8, delete, cancel));
         content.Width = 480;
         Content = content;

@@ -29,16 +29,26 @@ sealed class AgentConsentWindow : Window
         var name = Ui.Runs((model.Identity.Name, true), (" wants to manage your wallet", false));
         AutomationProperties.SetName(name, model.Identity.Name + " wants to manage your wallet");
         var path = Ui.Box("field", Ui.Wrap(model.Identity.ClientExecutablePath, "mono", "small"));
+        var observedParent = model.Identity.ObservedParentPath ?? "unknown parent: the wallet could not see which program started the bridge";
+        var startedBy = Ui.Runs(("Started by: ", true), (observedParent, true));
+        var interpreterNote = model.Identity.ParentIsInterpreter
+            ? Ui.Wrap("This program runs other programs; anything started through it will share this approval. You can turn on Full access later in Settings → Agents.", "muted", "small")
+            : Ui.Text("", "small");
+        _full.IsVisible = model.FullAccessAllowed;
+        var accessNote = model.FullAccessAllowed
+            ? "It cannot open a site's access, change your limits, approve another agent, or approve paid use unless you turn on Full access below."
+            : "Full access is not offered on this first connection because this program runs other programs. You can turn it on later in Settings â†’ Agents.";
         var body = Ui.Column(12,
-            Ui.Row(12, Ui.Tile(Ui.Screen, 38), Ui.Column(3, name, Ui.Text("First connection", "muted", "small"))),
+            Ui.Row(12, Ui.Tile(Ui.Screen, 38), Ui.Column(3, startedBy, name, Ui.Text("First connection", "muted", "small"))),
             Ui.Wrap("It can manage sources and routes (you confirm any source on another computer).", "muted"),
             Ui.Wrap("It can download models and, after your confirmation, delete them.", "muted"),
             Ui.Wrap("It can write API keys (it cannot read them).", "muted"),
             Ui.Wrap("It can read the activity log (site names only with Full access).", "muted"),
-            Ui.Wrap("It cannot open a site's access, change your limits, approve another agent, or approve paid use unless you turn on Full access below.", "muted"),
-            Ui.Column(5, Ui.Text(model.Identity.ObservedParentPath is null ? "Parent program (unknown parent; observed by wallet)" : "Parent program (observed by wallet)", "label"), Ui.Box("field", Ui.Wrap(model.Identity.ObservedParentPath ?? "unknown parent", "mono", "small"))),
+            Ui.Wrap(accessNote, "muted"),
+            Ui.Column(5, Ui.Text("Parent program (observed by wallet)", "label"), Ui.Box("field", Ui.Wrap(observedParent, "mono", "small"))),
             Ui.Column(5, Ui.Text("Bridge process (observed by wallet)", "label"), path),
             _full,
+            interpreterNote,
             Ui.Wrap((waitingCount?.Invoke() is { } count && count > 1 ? (count - 1).ToString() + " more waiting. " : "") + "The wallet identifies this agent by the parent program it observed. You can change Full access or Revoke it later in Settings.", "muted", "small"));
         body.Margin = new Thickness(26, 24, 26, 18);
         var allow = Ui.Button("Allow", "allow", "AgentAllow", () => Answer(AgentConsentDecision.Allow), "small");

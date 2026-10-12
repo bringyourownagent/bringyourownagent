@@ -9,21 +9,22 @@ namespace Byoa.Wallet.Desktop;
 /// <summary>Reads the management pipe client's image and its direct parent from Windows.</summary>
 sealed class WindowsAgentProcessInfo : IAgentProcessInfo
 {
-    public ObservedAgentProcess Read(SafePipeHandle pipe)
+    public ObservedAgentProcess? Read(SafePipeHandle pipe)
     {
         try
         {
             if (!GetNamedPipeClientProcessId(pipe, out var clientPid) || clientPid == 0)
-                return new ObservedAgentProcess(null, null);
+                return null;
 
             var clientPath = QueryPath(clientPid);
+            if (clientPath is null) return null;
             var parentPid = ParentProcessId(clientPid);
             var parentPath = parentPid is { } pid && pid != 0 ? QueryPath(pid) : null;
-            return new ObservedAgentProcess(clientPath, parentPath);
+            return new ObservedAgentProcess(clientPath, parentPath, clientPid, ProcessStartTime(clientPid));
         }
         catch
         {
-            return new ObservedAgentProcess(null, null);
+            return null;
         }
     }
 
@@ -57,6 +58,20 @@ sealed class WindowsAgentProcessInfo : IAgentProcessInfo
         finally { CloseHandle(handle); }
     }
 
+    static DateTimeOffset? ProcessStartTime(uint processId)
+    {
+        var handle = OpenProcess(ProcessQueryLimitedInformation, false, processId);
+        if (handle == IntPtr.Zero) return null;
+        try
+        {
+            if (!GetProcessTimes(handle, out var creation, out _, out _, out _)) return null;
+            var ticks = ((long)creation.High << 32) | creation.Low;
+            return DateTimeOffset.FromFileTime(ticks);
+        }
+        catch { return null; }
+        finally { CloseHandle(handle); }
+    }
+
     [Flags] enum SnapshotFlags : uint { Process = 0x00000002 }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
@@ -68,6 +83,13 @@ sealed class WindowsAgentProcessInfo : IAgentProcessInfo
         public int BasePriority;
         public uint Flags;
         [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)] public string ExeFile;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct FileTime
+    {
+        public uint Low;
+        public int High;
     }
 
     const uint ProcessQueryLimitedInformation = 0x1000;
@@ -89,6 +111,9 @@ sealed class WindowsAgentProcessInfo : IAgentProcessInfo
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     static extern bool QueryFullProcessImageName(IntPtr process, uint flags, StringBuilder name, ref uint size);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool GetProcessTimes(IntPtr process, out FileTime creation, out FileTime exit, out FileTime kernel, out FileTime user);
 
     [DllImport("kernel32.dll", EntryPoint = "CloseHandle", SetLastError = true)]
     static extern bool CloseHandle(IntPtr handle);

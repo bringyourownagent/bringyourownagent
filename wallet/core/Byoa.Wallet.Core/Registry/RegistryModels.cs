@@ -46,7 +46,9 @@ public sealed record RegistryRuntimeInfo(
     string Kind,
     string Endpoint,
     bool Running,
-    IReadOnlyList<RuntimeModel> Models);
+    IReadOnlyList<RuntimeModel> Models,
+    long? LatencyMs = null,
+    int? HttpStatus = null);
 
 /// <summary>One model the wallet knows how to fetch into its own models folder.</summary>
 public sealed record DownloadableModelInfo(
@@ -81,6 +83,12 @@ public sealed record SecretDeletionRequest(string SourceId, string SourceName, s
 
 public sealed record RegistryChangedEvent(string Action, string? SourceId, string Actor);
 
+/// <summary>A wallet prompt could not enter its bounded queue before the visitor-facing wait expired.</summary>
+public sealed class RegistryPromptBusyException : InvalidOperationException
+{
+    public RegistryPromptBusyException() : base("The visitor was busy answering another request; try again later.") { }
+}
+
 public sealed record AgentIdentity(string Id, string Name, string ExecutablePath)
 {
     /// <summary>The image path of the bridge process observed by the wallet.</summary>
@@ -89,24 +97,52 @@ public sealed record AgentIdentity(string Id, string Name, string ExecutablePath
     /// <summary>The image path of the process that launched the bridge, when the wallet could resolve it.</summary>
     public string? ObservedParentPath { get; init; }
 
-    public static AgentIdentity CreateObserved(string? displayName, string? clientPath, string? parentPath) =>
-        AgentIdentityFactory.CreateObserved(displayName, clientPath, parentPath);
+    /// <summary>An unresolved parent is deliberately approved only for this pipe connection.</summary>
+    public bool SessionOnly { get; init; }
+
+    /// <summary>General-purpose launchers can start arbitrary programs under the same approval.</summary>
+    public bool ParentIsInterpreter { get; init; }
+
+    public bool FullAccessAllowed => !ParentIsInterpreter;
+
+    public static AgentIdentity CreateObserved(string? displayName, string? clientPath, string? parentPath,
+        uint? clientProcessId = null, DateTimeOffset? clientStartTime = null) =>
+        AgentIdentityFactory.CreateObserved(displayName, clientPath, parentPath, clientProcessId, clientStartTime);
+
+    public static bool IsInterpreterPath(string? path) => AgentIdentityFactory.IsInterpreterPath(path);
 }
 
 static class AgentIdentityFactory
 {
-    public static AgentIdentity CreateObserved(string? name, string? clientPath, string? parentPath)
+    static readonly HashSet<string> InterpreterNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "node", "bun", "deno", "python", "pythonw", "py", "cmd", "powershell", "pwsh", "wscript", "cscript",
+        "java", "bash", "sh", "wsl",
+    };
+
+    public static AgentIdentity CreateObserved(string? name, string? clientPath, string? parentPath,
+        uint? clientProcessId, DateTimeOffset? clientStartTime)
     {
         var display = Clean(name, "Unnamed AI agent");
         var client = CleanPath(clientPath);
         var parent = CleanPath(parentPath);
+        var sessionOnly = parent is null;
         var identityPath = parent ?? client ?? "(unknown parent)";
-        var bytes = System.Text.Encoding.UTF8.GetBytes(identityPath.ToUpperInvariant());
+        // A missing parent must never collapse all bridges into one stored identity. The client PID and start
+        // time make this value connection-specific; a missing start time gets a random nonce instead.
+        var identityMaterial = parent is null
+            ? identityPath + "|" + (clientProcessId?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "unknown")
+                + "|" + (clientStartTime?.UtcTicks.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "unknown")
+                + "|connection:" + Guid.NewGuid().ToString("N")
+            : identityPath;
+        var bytes = System.Text.Encoding.UTF8.GetBytes(identityMaterial.ToUpperInvariant());
         var id = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes), 0, 12).ToLowerInvariant();
         return new AgentIdentity(id, display, identityPath)
         {
             ClientExecutablePath = client ?? "(path unavailable)",
             ObservedParentPath = parent,
+            SessionOnly = sessionOnly,
+            ParentIsInterpreter = IsInterpreterPath(parent),
         };
     }
 
@@ -116,17 +152,33 @@ static class AgentIdentityFactory
     }
 
     static string? CleanPath(string? path) => string.IsNullOrWhiteSpace(path) ? null : path.Trim();
+
+    public static bool IsInterpreterPath(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return false;
+        var name = Path.GetFileNameWithoutExtension(path.Trim());
+        return InterpreterNames.Contains(name);
+    }
 }
 
-public sealed record ObservedAgentProcess(string? ClientImagePath, string? ParentImagePath);
+public sealed record ObservedAgentProcess(string? ClientImagePath, string? ParentImagePath,
+    uint? ClientProcessId = null, DateTimeOffset? ClientStartTime = null);
 
 /// <summary>Reads process facts from the wallet side of the management pipe. Tests inject a fake implementation.</summary>
 public interface IAgentProcessInfo
 {
-    ObservedAgentProcess Read(SafePipeHandle pipe);
+    ObservedAgentProcess? Read(SafePipeHandle pipe);
 }
 
-public sealed record EndpointConfirmationRequest(string AgentName, string Endpoint, string Model, string? Label);
+public sealed record EndpointConfirmationRequest(string AgentName, string Endpoint, string Model, string? Label)
+{
+    public string CanonicalEndpoint { get; init; } = Endpoint;
+    public string? Warning { get; init; }
+    public IReadOnlyList<string> ResolvedAddresses { get; init; } = [];
+    public string? AddressClass { get; init; }
+    public bool ContainsNonAsciiHost { get; init; }
+    public bool IsLoopback { get; init; }
+}
 
 public interface IEndpointConfirmationUi
 {
@@ -138,7 +190,8 @@ public interface ISecretDeletionUi
     Task<bool> ConfirmSecretDeletionAsync(SecretDeletionRequest request, CancellationToken ct);
 }
 
-public sealed record AgentConsentModel(AgentIdentity Identity, bool FullAccessWasPreviouslyGranted);
+public sealed record AgentConsentModel(AgentIdentity Identity, bool FullAccessWasPreviouslyGranted,
+    bool FullAccessAllowed = true);
 
 public enum AgentConsentDecision
 {

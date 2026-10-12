@@ -8,6 +8,7 @@ using Byoa.Wallet.Help;
 using Byoa.Wallet.Protocol;
 using Byoa.Wallet.Registry;
 using Byoa.Wallet.Settings;
+using Byoa.Wallet.Sources;
 
 namespace Byoa.Wallet.Desktop;
 
@@ -19,16 +20,16 @@ sealed class AgentPipeServer : IDisposable
 {
     const int MaxAllowedServerInstances = 8;
     static readonly TimeSpan HelloTimeout = TimeSpan.FromSeconds(10);
-    static readonly TimeSpan IdleTimeout = TimeSpan.FromMinutes(15);
+    static readonly TimeSpan IdleTimeout = TimeSpan.FromMinutes(60);
     static readonly HashSet<string> FullAccessTools = new(StringComparer.Ordinal)
     {
-        "list_sites", "set_site_access", "set_limits",
+        "list_sites", "set_site_access", "set_limits", "set_api_key",
     };
     static readonly HashSet<string> NormalAccessTools = new(StringComparer.Ordinal)
     {
         "help", "status", "list_runtimes", "list_downloadable_models", "add_source", "update_source",
         "remove_source", "enable_source", "test_source", "download_model", "remove_model", "set_order",
-        "request_api_key_entry", "set_api_key", "activity",
+        "request_api_key_entry", "activity",
     };
 
     /// <summary>One explicit classification for every tool. Tests compare it with the public MCP catalog.</summary>
@@ -38,6 +39,8 @@ sealed class AgentPipeServer : IDisposable
         NormalAccessTools.Contains(operation) || FullAccessTools.Contains(operation);
 
     internal static bool RequiresFullAccess(string operation) => FullAccessTools.Contains(operation);
+
+    internal static TimeSpan AuthorizedIdleTimeout => IdleTimeout;
 
     readonly WalletServices _w;
     readonly IAgentConsentUi _ui;
@@ -119,14 +122,26 @@ sealed class AgentPipeServer : IDisposable
                 return;
             }
 
-            var observed = _processInfo.Read(pipe.SafePipeHandle);
+            ObservedAgentProcess? observed = null;
+            for (var attempt = 0; attempt < 3 && observed is null; attempt++)
+            {
+                observed = _processInfo.Read(pipe.SafePipeHandle);
+                if (observed is null && attempt < 2)
+                    await Task.Delay(50, connection.Token).ConfigureAwait(false);
+            }
+            if (observed is null)
+            {
+                await SendAsync(pipe, AgentPipeProtocol.Error("The wallet could not identify the program that started this bridge. Try again."), connection.Token).ConfigureAwait(false);
+                return;
+            }
             if (!IsInstalledBridge(observed.ClientImagePath))
             {
                 await SendAsync(pipe, AgentPipeProtocol.Error("This program is not the wallet's MCP bridge."), connection.Token).ConfigureAwait(false);
                 return;
             }
 
-            var identity = AgentIdentity.CreateObserved(String(hello, "name"), observed.ClientImagePath, observed.ParentImagePath);
+            var identity = AgentIdentity.CreateObserved(String(hello, "name"), observed.ClientImagePath, observed.ParentImagePath,
+                observed.ClientProcessId, observed.ClientStartTime);
             var access = await AuthorizeAsync(identity, connection.Token).ConfigureAwait(false);
             session = new AgentSession(identity, access);
             await SendAsync(pipe, new JsonObject
@@ -152,6 +167,7 @@ sealed class AgentPipeServer : IDisposable
                 }
                 if (bytes is null) break;
                 var hasId = false;
+                JsonNode? requestId = null;
                 JsonObject? response;
                 try
                 {
@@ -163,8 +179,8 @@ sealed class AgentPipeServer : IDisposable
                     else
                     {
                         hasId = message.ContainsKey("id");
+                        requestId = hasId ? message["id"]?.DeepClone() : null;
                         response = await HandleAsync(session, message, connection.Token).ConfigureAwait(false);
-                        response["_requestId"] = message["id"]?.DeepClone();
                     }
                 }
                 catch (Exception e) when (e is not OutOfMemoryException)
@@ -176,13 +192,9 @@ sealed class AgentPipeServer : IDisposable
                 // request id and is echoed as null by the response envelope.
                 if (!hasId || response is null) continue;
                 response["type"] = AgentPipeProtocol.Response;
-                response["id"] = null; // replaced below without ever confusing it with a source/model id
-                // HandleAsync places the request id in this private marker so application ids stay separate.
-                if (response["_requestId"] is { } requestId)
-                {
-                    response.Remove("_requestId");
-                    response["id"] = requestId.DeepClone();
-                }
+                // Keep the request id local. A JSON-RPC id of null is still an id and must remain null in the
+                // response; storing it in a marker property would lose that distinction.
+                response["id"] = requestId?.DeepClone();
                 await SendAsync(pipe, response, connection.Token).ConfigureAwait(false);
             }
         }
@@ -284,7 +296,8 @@ sealed class AgentPipeServer : IDisposable
         AgentConsentAnswer answer;
         try
         {
-            answer = await _ui.AskAgentAsync(new AgentConsentModel(identity, existing?.FullAccess == true), ct).ConfigureAwait(false);
+            answer = await _ui.AskAgentAsync(new AgentConsentModel(identity, existing?.FullAccess == true,
+                identity.FullAccessAllowed), ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -300,6 +313,25 @@ sealed class AgentPipeServer : IDisposable
             return new AgentAccess(false, false, "The visitor chose Not now. Ask the visitor to allow this agent in the wallet.");
         }
 
+        if (identity.SessionOnly)
+        {
+            _w.Activity.Add(new ActivityEntry
+            {
+                At = DateTimeOffset.UtcNow,
+                Origin = "wallet",
+                Kind = "agent",
+                Outcome = answer.Decision == AgentConsentDecision.Allow ? "allowed" : "blocked",
+                Actor = "you in the wallet",
+                Change = (answer.Decision == AgentConsentDecision.Allow ? "Allowed " : "Blocked ") + identity.Name + " for this connection only",
+                Note = identity.ObservedParentPath ?? "unknown parent: the wallet could not see which program started the bridge",
+            });
+            return answer.Decision == AgentConsentDecision.Allow
+                ? new AgentAccess(true, answer.FullAccess && identity.FullAccessAllowed, null)
+                : new AgentAccess(false, false, answer.Decision == AgentConsentDecision.Block
+                    ? "The visitor blocked this agent for this connection."
+                    : "The visitor chose Not now. Ask the visitor to allow this agent.");
+        }
+
         _w.Store.Update(s =>
         {
             s.Agents.RemoveAll(a => a.Id == identity.Id);
@@ -310,7 +342,7 @@ sealed class AgentPipeServer : IDisposable
                 ExecutablePath = identity.ExecutablePath,
                 LastUsed = DateTimeOffset.UtcNow,
                 ApprovedAt = answer.Decision == AgentConsentDecision.Allow ? DateTimeOffset.UtcNow : null,
-                FullAccess = answer.Decision == AgentConsentDecision.Allow && answer.FullAccess,
+                FullAccess = answer.Decision == AgentConsentDecision.Allow && answer.FullAccess && identity.FullAccessAllowed,
                 Status = answer.Decision == AgentConsentDecision.Block ? "blocked" : "allowed",
             });
         });
@@ -325,7 +357,7 @@ sealed class AgentPipeServer : IDisposable
             Note = identity.ExecutablePath,
         });
         return answer.Decision == AgentConsentDecision.Allow
-            ? new AgentAccess(true, answer.FullAccess, null)
+            ? new AgentAccess(true, answer.FullAccess && identity.FullAccessAllowed, null)
             : new AgentAccess(false, false, "The visitor blocked this agent. Revoke the block in Settings → Agents to ask again.");
     }
 
@@ -346,6 +378,9 @@ sealed class AgentPipeServer : IDisposable
         if (!NormalAccessTools.Contains(operation) && !FullAccessTools.Contains(operation))
             return Failure("This wallet tool is not classified for agent access. Call tools/list and choose a listed tool.");
 
+        if (message.TryGetPropertyValue("arguments", out var rawArguments) &&
+            rawArguments is not null && rawArguments is not JsonObject)
+            return Failure("The 'arguments' parameter must be a JSON object.");
         var args = message["arguments"] as JsonObject ?? new JsonObject();
         var actor = "agent: " + session.Identity.Name;
         try
@@ -385,11 +420,16 @@ sealed class AgentPipeServer : IDisposable
         {
             return Failure("The wallet could not write its data folder. Check the wallet home and try again.");
         }
+        catch (Exception e) when (e is not OutOfMemoryException)
+        {
+            return Failure("The wallet could not apply that request: " + e.GetType().Name + ". Check the arguments and try again.");
+        }
     }
 
     AgentAccess CurrentAccess(AgentSession session)
     {
         var record = _w.Store.Snapshot().Agents.FirstOrDefault(a => a.Id == session.Identity.Id);
+        if (session.Identity.SessionOnly) return session.Access;
         return record is { Status: "allowed" }
             ? new AgentAccess(true, record.FullAccess, null)
             : new AgentAccess(false, false, "This agent is no longer approved. Ask the visitor to allow it again in Settings → Agents.");
@@ -438,15 +478,23 @@ sealed class AgentPipeServer : IDisposable
         var runtimeNodes = new List<JsonNode>();
         foreach (var runtime in runtimes)
         {
-            var visible = EndpointPolicy.Check(runtime.Endpoint).IsLoopback || settings.Sources.Any(s =>
-                s.EndpointConfirmed && string.Equals(ProvidersEndpoint(s.Endpoint), ProvidersEndpoint(runtime.Endpoint), StringComparison.OrdinalIgnoreCase));
+            var agentAdded = settings.Sources.Any(s =>
+                s.AddedByAgent &&
+                (s.Kind is SourceKinds.LmStudio or SourceKinds.Ollama or SourceKinds.OpenAiCompatible) &&
+                string.Equals(s.Kind, runtime.Kind, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(ProvidersEndpoint(s.Endpoint), ProvidersEndpoint(runtime.Endpoint), StringComparison.OrdinalIgnoreCase));
+            var visible = !agentAdded && (EndpointPolicy.Check(runtime.Endpoint).IsLoopback || settings.Sources.Any(s =>
+                s.EndpointConfirmed && string.Equals(ProvidersEndpoint(s.Endpoint), ProvidersEndpoint(runtime.Endpoint), StringComparison.OrdinalIgnoreCase)));
             runtimeNodes.Add(new JsonObject
             {
                 ["kind"] = runtime.Kind,
                 ["endpoint"] = runtime.Endpoint,
                 ["running"] = runtime.Running,
                 ["state"] = runtime.Running ? "running" : "not running — start it or download it",
+                ["answered"] = runtime.Running,
                 ["modelCount"] = runtime.Models.Count,
+                ["latencyMs"] = runtime.LatencyMs,
+                ["httpStatus"] = runtime.HttpStatus,
                 ["models"] = visible
                     ? new JsonArray(runtime.Models.Select(m => (JsonNode)new JsonObject
                     {
@@ -511,6 +559,16 @@ sealed class AgentPipeServer : IDisposable
         var watch = Stopwatch.StartNew();
         var result = await _w.Registry.TestSourceAsync(id, ct).ConfigureAwait(false);
         result = result with { LatencyMs = watch.ElapsedMilliseconds };
+        var setting = _w.Store.Snapshot().Sources.FirstOrDefault(s => s.Id == id);
+        if (setting?.AddedByAgent == true)
+        {
+            // Agent-added endpoints are useful for a health check, but their model output is never relayed over
+            // MCP, even when the endpoint is loopback. Settings tests remain allowed to show the answer.
+            var safe = Test(result with { Detail = null });
+            safe["answered"] = result.Ok;
+            safe["httpStatus"] = null;
+            return safe;
+        }
         var endpoint = EndpointPolicy.Check(source.Endpoint);
         var confirmed = _w.Store.Snapshot().Sources.FirstOrDefault(s => s.Id == id)?.EndpointConfirmed == true;
         if (result.Ok && !endpoint.IsLoopback && !confirmed)
@@ -539,8 +597,10 @@ sealed class AgentPipeServer : IDisposable
         var note = _w.Registry.ListSources().Count(source => source.BuiltIn && source.Skills.Contains(model.Skill, StringComparer.Ordinal)) == 1
             ? "This is the only listed source for " + model.Skill + ". The skill may be unavailable until you add another source."
             : null;
-        if (!await _w.Ui.ConfirmModelDeleteAsync(model, note, ct).ConfigureAwait(false))
-            return Failure("The visitor declined to delete this model.");
+        bool confirmed;
+        try { confirmed = await _w.Ui.ConfirmModelDeleteAsync(model, note, ct, agentInitiated: true).ConfigureAwait(false); }
+        catch (RegistryPromptBusyException e) { return Failure(e.Message); }
+        if (!confirmed) return Failure("The visitor declined to delete this model.");
         var result = await _w.Registry.RemoveDownloadedModelAsync(String(args, "model_id"), actor, ct).ConfigureAwait(false);
         return Operation(result, "modelId");
     }
@@ -576,8 +636,7 @@ sealed class AgentPipeServer : IDisposable
             : new JsonObject
             {
                 ["at"] = e.At, ["origin"] = SiteLabel(e.Origin), ["kind"] = e.Kind, ["skill"] = e.Skill,
-                ["outcome"] = e.Outcome, ["source"] = e.Source, ["fallback"] = e.Fallback, ["cost"] = e.Cost,
-                ["actor"] = e.Actor,
+                ["outcome"] = e.Outcome, ["cost"] = e.Cost,
             }).ToArray());
         return result;
     }
@@ -712,11 +771,42 @@ sealed class AgentPipeServer : IDisposable
         return site.Status.ToString().ToLowerInvariant();
     }
 
-    static string SiteLabel(string? origin)
+    string SiteLabel(string? origin)
     {
         if (string.IsNullOrWhiteSpace(origin)) return "site-unknown";
-        var hash = SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(origin));
-        return "site-" + Convert.ToHexString(hash, 0, 2).ToLowerInvariant();
+        var key = _w.Store.Read(s => s.SiteActivityLabelKey);
+        if (key is null || !TryDecodeLabelKey(key, out var bytes))
+        {
+            _w.Store.Update(s =>
+            {
+                if (s.SiteActivityLabelKey is null || !TryDecodeLabelKey(s.SiteActivityLabelKey, out _))
+                    s.SiteActivityLabelKey = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+            });
+            key = _w.Store.Read(s => s.SiteActivityLabelKey);
+            if (!TryDecodeLabelKey(key, out bytes)) return "site-unknown";
+        }
+
+        return HmacSiteLabel(origin, bytes);
+    }
+
+    internal static string HmacSiteLabel(string origin, byte[] key)
+    {
+        using var hmac = new HMACSHA256(key);
+        return "site-" + Convert.ToHexString(hmac.ComputeHash(System.Text.Encoding.UTF8.GetBytes(origin)), 0, 4).ToLowerInvariant();
+    }
+
+    static bool TryDecodeLabelKey(string? value, out byte[] bytes)
+    {
+        try
+        {
+            bytes = value is null ? [] : Convert.FromBase64String(value);
+            return bytes.Length == 32;
+        }
+        catch (FormatException)
+        {
+            bytes = [];
+            return false;
+        }
     }
 
     static string String(JsonObject obj, string name) => StringOrNull(obj, name) ?? throw new ArgumentException("Tell the wallet the '" + name + "' parameter.");

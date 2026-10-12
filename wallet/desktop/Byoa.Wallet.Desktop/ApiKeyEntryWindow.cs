@@ -15,7 +15,7 @@ sealed class ApiKeyEntryWindow : Window
     readonly TaskCompletionSource<string?> _result = new(TaskCreationOptions.RunContinuationsAsynchronously);
     bool _closed;
 
-    public ApiKeyEntryWindow(string sourceName)
+    public ApiKeyEntryWindow(string sourceName, Func<int>? waitingCount = null)
     {
         Title = "Enter an API key";
         Width = 560;
@@ -28,6 +28,9 @@ sealed class ApiKeyEntryWindow : Window
 
         var save = Ui.Button("Save key", "allow", "ApiKeySave", Save, "small");
         var cancel = Ui.Button("Cancel", "deny", "ApiKeyCancel", Cancel, "small");
+        var waiting = waitingCount?.Invoke() is { } count && count > 1
+            ? Ui.Wrap((count - 1).ToString() + " more waiting.", "muted", "small")
+            : Ui.Text("", "small");
         AutomationProperties.SetName(_key, "API key for " + sourceName);
         AutomationProperties.SetAutomationId(_key, "ApiKeyEntry");
         Content = Ui.Column(13,
@@ -36,6 +39,7 @@ sealed class ApiKeyEntryWindow : Window
             Ui.Text("API key", "label"),
             _key,
             Ui.Wrap("Prefer this field over pasting a key into your AI agent.", "muted", "small"),
+            waiting,
             Ui.Row(8, save, cancel));
         ((Control)Content).Margin = new Thickness(30, 26, 30, 24);
 

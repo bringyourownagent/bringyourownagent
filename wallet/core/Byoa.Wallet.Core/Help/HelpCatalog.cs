@@ -21,6 +21,15 @@ public static class HelpCatalog
 
     public static IReadOnlyList<string> Topics => TopicList;
 
+    /// <summary>The reader-facing title is the article's first heading, not its storage id.</summary>
+    public static string Title(string topic)
+    {
+        var heading = Get(topic).Split('\n')
+            .Select(line => line.Trim())
+            .FirstOrDefault(line => line.StartsWith("# ", StringComparison.Ordinal));
+        return heading is { Length: > 2 } ? heading[2..].Trim() : Pretty(topic);
+    }
+
     public static string Get(string topic)
     {
         if (string.IsNullOrWhiteSpace(topic)) return Get("overview");
@@ -45,4 +54,7 @@ public static class HelpCatalog
             + "test_source, then set_order. The wallet asks the visitor for an API key in its own window; prefer "
             + "request_api_key_entry over set_api_key. The wallet never returns a key." + Environment.NewLine;
     }
+
+    static string Pretty(string topic) => string.Join(' ', topic.Replace('-', ' ').Replace('_', ' ')
+        .Split(' ', StringSplitOptions.RemoveEmptyEntries).Select(word => word.Length == 0 ? word : char.ToUpperInvariant(word[0]) + word[1..]));
 }

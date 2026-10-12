@@ -51,15 +51,16 @@ public sealed class RuntimeScanner : IRuntimeScanner
 
     async Task<RuntimeInfo> ProbeAsync(string kind, string endpoint, CancellationToken ct)
     {
+        var watch = System.Diagnostics.Stopwatch.StartNew();
         try
         {
-            var models = kind switch
+            var probe = kind switch
             {
                 SourceKinds.LmStudio => await LmStudioAsync(endpoint, ct).ConfigureAwait(false),
                 SourceKinds.Ollama => await OllamaAsync(endpoint, ct).ConfigureAwait(false),
                 _ => await OpenAiAsync(endpoint, ct).ConfigureAwait(false),
             };
-            return new RuntimeInfo(kind, endpoint, Running: true, models);
+            return new RuntimeInfo(kind, endpoint, Running: true, probe.Models, watch.ElapsedMilliseconds, probe.Status);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -69,21 +70,21 @@ public sealed class RuntimeScanner : IRuntimeScanner
         {
             // A malformed setting, an unexpected JSON shape, or a provider-specific exception means only this
             // runtime is unavailable. It must not take down the scan loop or the settings window.
-            return new RuntimeInfo(kind, endpoint, Running: false, Array.Empty<RuntimeModel>());
+            return new RuntimeInfo(kind, endpoint, Running: false, Array.Empty<RuntimeModel>(), watch.ElapsedMilliseconds, null);
         }
     }
 
     /// <summary>LM Studio: the rich v0 list tells which models sit in memory; the plain v1 list is the fallback.</summary>
-    async Task<IReadOnlyList<RuntimeModel>> LmStudioAsync(string endpoint, CancellationToken ct)
+    async Task<(IReadOnlyList<RuntimeModel> Models, int? Status)> LmStudioAsync(string endpoint, CancellationToken ct)
     {
-        var (v0, ok) = await GetAsync(endpoint + "/api/v0/models", ct).ConfigureAwait(false);
+        var (v0, ok, status) = await GetAsync(endpoint + "/api/v0/models", ct).ConfigureAwait(false);
         if (!ok)
         {
-            var (v1, ok1) = await GetAsync(endpoint + "/v1/models", ct).ConfigureAwait(false);
-            return ok1 ? OpenAiList(v1) : [];
+            var (v1, ok1, status1) = await GetAsync(endpoint + "/v1/models", ct).ConfigureAwait(false);
+            return (ok1 ? OpenAiList(v1) : [], status1 ?? status);
         }
 
-        if (JsonNode.Parse(v0!) is not JsonObject root || root["data"] is not JsonArray items) return [];
+        if (JsonNode.Parse(v0!) is not JsonObject root || root["data"] is not JsonArray items) return ([], status);
         var models = new List<RuntimeModel>();
         foreach (var item in items)
         {
@@ -93,16 +94,16 @@ public sealed class RuntimeScanner : IRuntimeScanner
                 ChatCompletions.Str(item?["state"]) == "loaded"));
         }
 
-        return models;
+        return (models, status);
     }
 
     /// <summary>Ollama: /api/tags lists the pulled models with sizes, /api/ps says which are in memory.</summary>
-    async Task<IReadOnlyList<RuntimeModel>> OllamaAsync(string endpoint, CancellationToken ct)
+    async Task<(IReadOnlyList<RuntimeModel> Models, int? Status)> OllamaAsync(string endpoint, CancellationToken ct)
     {
-        var (tags, ok) = await GetAsync(endpoint + "/api/tags", ct).ConfigureAwait(false);
-        if (!ok) return [];
+        var (tags, ok, status) = await GetAsync(endpoint + "/api/tags", ct).ConfigureAwait(false);
+        if (!ok) return ([], status);
         var loaded = new HashSet<string>(StringComparer.Ordinal);
-        var (ps, psOk) = await GetAsync(endpoint + "/api/ps", ct).ConfigureAwait(false);
+        var (ps, psOk, _) = await GetAsync(endpoint + "/api/ps", ct).ConfigureAwait(false);
         if (psOk && JsonNode.Parse(ps!)?["models"] is JsonArray running)
         {
             foreach (var item in running)
@@ -111,7 +112,7 @@ public sealed class RuntimeScanner : IRuntimeScanner
             }
         }
 
-        if (JsonNode.Parse(tags!)?["models"] is not JsonArray items) return [];
+        if (JsonNode.Parse(tags!)?["models"] is not JsonArray items) return ([], status);
         var models = new List<RuntimeModel>();
         foreach (var item in items)
         {
@@ -122,14 +123,14 @@ public sealed class RuntimeScanner : IRuntimeScanner
                 loaded.Contains(id)));
         }
 
-        return models;
+        return (models, status);
     }
 
     /// <summary>Any other OpenAI-compatible server: the plain model list (nothing about memory).</summary>
-    async Task<IReadOnlyList<RuntimeModel>> OpenAiAsync(string endpoint, CancellationToken ct)
+    async Task<(IReadOnlyList<RuntimeModel> Models, int? Status)> OpenAiAsync(string endpoint, CancellationToken ct)
     {
-        var (json, ok) = await GetAsync(endpoint + "/models", ct).ConfigureAwait(false);
-        return ok ? OpenAiList(json) : [];
+        var (json, ok, status) = await GetAsync(endpoint + "/models", ct).ConfigureAwait(false);
+        return (ok ? OpenAiList(json) : [], status);
     }
 
     static IReadOnlyList<RuntimeModel> OpenAiList(string? json)
@@ -147,12 +148,13 @@ public sealed class RuntimeScanner : IRuntimeScanner
     }
 
     /// <summary>One GET, at most <see cref="ProbeTime"/> long.</summary>
-    async Task<(string? Json, bool Ok)> GetAsync(string url, CancellationToken ct)
+    async Task<(string? Json, bool Ok, int? Status)> GetAsync(string url, CancellationToken ct)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeout.CancelAfter(ProbeTime);
         using var response = await _http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, timeout.Token).ConfigureAwait(false);
-        if (!response.IsSuccessStatusCode) return (null, false);
-        return (await BoundedHttp.ReadJsonAsync(response, timeout.Token, 512 * 1024).ConfigureAwait(false), true);
+        var status = (int)response.StatusCode;
+        if (!response.IsSuccessStatusCode) return (null, false, status);
+        return (await BoundedHttp.ReadJsonAsync(response, timeout.Token, 512 * 1024).ConfigureAwait(false), true, status);
     }
 }

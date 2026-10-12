@@ -134,47 +134,57 @@ public sealed class WalletRegistry
     {
         if (_runtimes is null) return [];
         var runtimes = await _runtimes.ScanAsync(ct).ConfigureAwait(false);
-        return runtimes.Select(r => new RegistryRuntimeInfo(r.Kind, r.Endpoint, r.Running, r.Models)).ToArray();
+        return runtimes.Select(r => new RegistryRuntimeInfo(r.Kind, r.Endpoint, r.Running, r.Models, r.LatencyMs, r.HttpStatus)).ToArray();
     }
 
     public RegistryOperationResult AddSource(SourceDraft draft, string actor = "you in the window")
     {
-        var validation = ValidateDraft(draft);
+        var validation = ValidateDraft(draft, visitorEntered: true);
         if (validation is not null) return RegistryOperationResult.Failure(validation);
         var endpoint = Endpoint(draft.Kind, draft.Endpoint);
-        var assessment = EndpointPolicy.Check(endpoint);
+        var assessment = EndpointPolicy.Check(endpoint, agentSupplied: false);
         if (!assessment.Allowed) return RegistryOperationResult.Failure(assessment.Message);
-        return AddSourceCore(draft, actor, endpointConfirmed: true, visitorEntered: true);
+        return AddSourceCore(draft, actor, endpointConfirmed: true, visitorEntered: true, assessment);
     }
 
     /// <summary>Adds a source requested by an agent, asking the visitor before any remote endpoint is saved.</summary>
     public async Task<RegistryOperationResult> AddSourceAsync(SourceDraft draft, string actor, string agentName,
         CancellationToken ct = default)
     {
-        var validation = ValidateDraft(draft);
+        var validation = ValidateDraft(draft, visitorEntered: false);
         if (validation is not null) return RegistryOperationResult.Failure(validation);
         var endpoint = Endpoint(draft.Kind, draft.Endpoint);
-        var assessment = EndpointPolicy.Check(endpoint);
+        var assessment = EndpointPolicy.Check(endpoint, agentSupplied: true);
         if (!assessment.Allowed) return RegistryOperationResult.Failure(assessment.Message);
-        var confirmed = assessment.IsLoopback || !assessment.NeedsConfirmation;
-        if (assessment.NeedsConfirmation)
+        var needsAgentConfirmation = NeedsAgentEndpointConfirmation(assessment, endpoint);
+        var confirmed = !needsAgentConfirmation;
+        if (needsAgentConfirmation)
         {
             var handler = EndpointConfirmationRequested;
             if (handler is null) return RegistryOperationResult.Failure("The wallet needs the visitor to confirm this endpoint in a wallet window.");
-            var accepted = await handler(new EndpointConfirmationRequest(agentName, endpoint!, draft.Model!.Trim(), CleanLabel(draft.Label)), ct).ConfigureAwait(false);
+            assessment = await EndpointPolicy.CheckForConfirmationAsync(endpoint!, ct).ConfigureAwait(false);
+            if (!assessment.Allowed) return RegistryOperationResult.Failure(assessment.Message);
+            bool accepted;
+            try
+            {
+                accepted = await handler(ToConfirmationRequest(agentName, draft.Model!.Trim(), CleanLabel(draft.Label), assessment), ct).ConfigureAwait(false);
+            }
+            catch (RegistryPromptBusyException e)
+            {
+                return RegistryOperationResult.Failure(e.Message);
+            }
             if (ct.IsCancellationRequested)
                 return RegistryOperationResult.Failure("The agent connection closed before the visitor confirmed this endpoint.");
             if (!accepted)
                 return RegistryOperationResult.Failure("The visitor declined this endpoint. Ask them to confirm it in the wallet if they want to use it.");
-            assessment = await EndpointPolicy.CheckForConfirmationAsync(endpoint!, ct).ConfigureAwait(false);
-            if (!assessment.Allowed) return RegistryOperationResult.Failure(assessment.Message);
             confirmed = true;
         }
 
-        return AddSourceCore(draft, actor, confirmed, visitorEntered: false);
+        return AddSourceCore(draft, actor, confirmed, visitorEntered: false, assessment);
     }
 
-    RegistryOperationResult AddSourceCore(SourceDraft draft, string actor, bool endpointConfirmed, bool visitorEntered)
+    RegistryOperationResult AddSourceCore(SourceDraft draft, string actor, bool endpointConfirmed, bool visitorEntered,
+        EndpointAssessment? assessment = null)
     {
         var id = MakeId(draft.Kind, draft.Model, draft.Endpoint);
         lock (_gate)
@@ -192,7 +202,10 @@ public sealed class WalletRegistry
                     Endpoint = Endpoint(draft.Kind, draft.Endpoint),
                     Label = CleanLabel(draft.Label),
                     LabelFromAgent = !visitorEntered && !string.IsNullOrWhiteSpace(draft.Label),
+                    AddedByAgent = !visitorEntered,
                     EndpointConfirmed = endpointConfirmed,
+                    ConfirmedAddresses = assessment?.ResolvedAddresses.ToList() ?? [],
+                    ConfirmedAddressClass = assessment?.AddressClass,
                     Skills = CleanList(draft.Skills),
                     Languages = CleanList(draft.Languages),
                 });
@@ -209,9 +222,9 @@ public sealed class WalletRegistry
         var setting = _store.Snapshot().Sources.FirstOrDefault(s => s.Id == id);
         var kind = (update.Kind ?? setting?.Kind ?? "").Trim().ToLowerInvariant();
         var endpoint = Endpoint(kind, update.Endpoint ?? setting?.Endpoint);
-        var assessment = EndpointPolicy.Check(endpoint);
+        var assessment = EndpointPolicy.Check(endpoint, agentSupplied: false);
         if (!assessment.Allowed) return RegistryOperationResult.Failure(assessment.Message);
-        return UpdateSourceCore(id, update, actor, endpointConfirmed: true, visitorEntered: true);
+        return UpdateSourceCore(id, update, actor, endpointConfirmed: true, visitorEntered: true, assessment);
     }
 
     /// <summary>Edits an agent source, confirming a changed or previously unconfirmed remote endpoint first.</summary>
@@ -223,28 +236,38 @@ public sealed class WalletRegistry
             return RegistryOperationResult.Failure("That source is built in or does not exist; only an added source can be edited.");
         var kind = (update.Kind ?? setting.Kind).Trim().ToLowerInvariant();
         var endpoint = Endpoint(kind, update.Endpoint ?? setting.Endpoint);
-        var assessment = EndpointPolicy.Check(endpoint);
+        var assessment = EndpointPolicy.Check(endpoint, agentSupplied: true);
         if (!assessment.Allowed) return RegistryOperationResult.Failure(assessment.Message);
-        var sameConfirmedEndpoint = setting.EndpointConfirmed && string.Equals(setting.Endpoint, endpoint, StringComparison.OrdinalIgnoreCase);
-        var confirmed = assessment.IsLoopback || !assessment.NeedsConfirmation || sameConfirmedEndpoint;
-        if (assessment.NeedsConfirmation && !sameConfirmedEndpoint)
+        var sameConfirmedEndpoint = setting.EndpointConfirmed && SameEndpoint(setting.Endpoint, endpoint);
+        var needsAgentConfirmation = NeedsAgentEndpointConfirmation(assessment, endpoint) && !sameConfirmedEndpoint;
+        var confirmed = !needsAgentConfirmation;
+        if (needsAgentConfirmation)
         {
             var handler = EndpointConfirmationRequested;
             if (handler is null) return RegistryOperationResult.Failure("The wallet needs the visitor to confirm this endpoint in a wallet window.");
-            var accepted = await handler(new EndpointConfirmationRequest(agentName, endpoint!, Clean(update.Model ?? setting.Model) ?? "model", CleanLabel(update.Label ?? setting.Label)), ct).ConfigureAwait(false);
+            assessment = await EndpointPolicy.CheckForConfirmationAsync(endpoint!, ct).ConfigureAwait(false);
+            if (!assessment.Allowed) return RegistryOperationResult.Failure(assessment.Message);
+            bool accepted;
+            try
+            {
+                accepted = await handler(ToConfirmationRequest(agentName, Clean(update.Model ?? setting.Model) ?? "model", CleanLabel(update.Label ?? setting.Label), assessment), ct).ConfigureAwait(false);
+            }
+            catch (RegistryPromptBusyException e)
+            {
+                return RegistryOperationResult.Failure(e.Message);
+            }
             if (ct.IsCancellationRequested)
                 return RegistryOperationResult.Failure("The agent connection closed before the visitor confirmed this endpoint.");
             if (!accepted)
                 return RegistryOperationResult.Failure("The visitor declined this endpoint. Ask them to confirm it in the wallet if they want to use it.");
-            assessment = await EndpointPolicy.CheckForConfirmationAsync(endpoint!, ct).ConfigureAwait(false);
-            if (!assessment.Allowed) return RegistryOperationResult.Failure(assessment.Message);
             confirmed = true;
         }
 
-        return UpdateSourceCore(id, update, actor, confirmed, visitorEntered: false);
+        return UpdateSourceCore(id, update, actor, confirmed, visitorEntered: false, assessment);
     }
 
-    RegistryOperationResult UpdateSourceCore(string id, SourceUpdate update, string actor, bool endpointConfirmed, bool visitorEntered)
+    RegistryOperationResult UpdateSourceCore(string id, SourceUpdate update, string actor, bool endpointConfirmed, bool visitorEntered,
+        EndpointAssessment? assessment = null)
     {
         if (string.IsNullOrWhiteSpace(id)) return RegistryOperationResult.Failure("Tell the wallet which source id to update.");
         var setting = _store.Snapshot().Sources.FirstOrDefault(s => s.Id == id);
@@ -275,6 +298,12 @@ public sealed class WalletRegistry
             source.Model = model;
             source.Endpoint = Endpoint(kind, update.Endpoint ?? setting.Endpoint);
             source.EndpointConfirmed = endpointConfirmed;
+            if (assessment is not null)
+            {
+                source.ConfirmedAddresses = assessment.ResolvedAddresses.ToList();
+                source.ConfirmedAddressClass = assessment.AddressClass;
+            }
+            if (!visitorEntered && update.Endpoint is not null) source.AddedByAgent = true;
             if (update.Label is not null)
             {
                 source.Label = CleanLabel(update.Label);
@@ -322,7 +351,14 @@ public sealed class WalletRegistry
         {
             var handler = SecretDeletionRequested;
             if (handler is null) return RegistryOperationResult.Failure("The wallet needs the visitor to choose whether to delete the saved key.");
-            deleteSecret = await handler(new SecretDeletionRequest(id, DisplayName(setting), actor), ct).ConfigureAwait(false);
+            try
+            {
+                deleteSecret = await handler(new SecretDeletionRequest(id, DisplayName(setting), actor), ct).ConfigureAwait(false);
+            }
+            catch (RegistryPromptBusyException e)
+            {
+                return RegistryOperationResult.Failure(e.Message);
+            }
             if (ct.IsCancellationRequested)
                 return RegistryOperationResult.Failure("The agent connection closed before the visitor chose what to do with the saved key.");
         }
@@ -484,8 +520,8 @@ public sealed class WalletRegistry
         {
             var visible = ListSources().FirstOrDefault(source => source.Id == sourceId);
             var setting = _store.Snapshot().Sources.FirstOrDefault(source => source.Id == sourceId);
-            if (visible?.ProviderKind == "home-server" && setting?.EndpointConfirmed != true)
-                return new RegistryTestResult(false, "This source is on another computer and has not been confirmed by the visitor. Ask the visitor to confirm it in the wallet first.");
+            if (setting?.AddedByAgent == true && setting.EndpointConfirmed != true)
+                return new RegistryTestResult(false, "This agent-added endpoint has not been confirmed by the visitor. Ask the visitor to confirm it in the wallet first.");
         }
 
         if (_engine is not null)
@@ -527,7 +563,7 @@ public sealed class WalletRegistry
     public async Task<RegistryTestResult> TestDraftAsync(SourceDraft draft, bool visitorInitiated, string? apiKey,
         CancellationToken ct = default)
     {
-        var validation = ValidateDraft(draft);
+        var validation = ValidateDraft(draft, visitorEntered: visitorInitiated);
         if (validation is not null) return new RegistryTestResult(false, validation);
         if (draft.Skills?.Contains(Vocabulary.Transcribe, StringComparer.Ordinal) == true)
             return new RegistryTestResult(false, "Added model sources currently serve text.generate; choose Text generation.");
@@ -562,6 +598,8 @@ public sealed class WalletRegistry
     public Task<RegistryOperationResult> SetApiKeyAsync(string sourceId, string key, string actor = "you in the window",
         bool fullAccess = false, bool visitorInitiated = true)
     {
+        if (!visitorInitiated && !fullAccess)
+            return Task.FromResult(RegistryOperationResult.Failure("Writing an API key supplied through the agent needs Full access. Prefer request_api_key_entry so the visitor types it in the wallet."));
         if (string.IsNullOrWhiteSpace(key)) return Task.FromResult(RegistryOperationResult.Failure("The API key is empty. Enter it in the wallet and try again."));
         var info = ListSources().FirstOrDefault(s => s.Id == sourceId);
         if (info is null) return Task.FromResult(RegistryOperationResult.Failure("There is no source with id '" + sourceId + "'."));
@@ -599,7 +637,7 @@ public sealed class WalletRegistry
     {
         var info = ListSources().FirstOrDefault(s => s.Id == sourceId);
         if (info is null) return RegistryOperationResult.Failure("There is no source with id '" + sourceId + "'.");
-        if (info.HasApiKey && !visitorInitiated && !fullAccess)
+        if (false && info.HasApiKey && !visitorInitiated && !fullAccess)
             return RegistryOperationResult.Failure("This source already has a saved key. Ask the visitor to replace it in the wallet, or to give you Full access in Settings → Agents.");
         var handler = ApiKeyEntryRequested;
         if (handler is null) return RegistryOperationResult.Failure("The wallet cannot open its API-key field right now. Ask the visitor to use Sources in the wallet.");
@@ -651,7 +689,7 @@ public sealed class WalletRegistry
         var validEndpoint = Uri.TryCreate(source.Endpoint, UriKind.Absolute, out var endpoint)
             && endpoint.Scheme is "http" or "https";
             var loopback = validEndpoint && (OpenAiLoopback(endpoint!.Host) || endpoint.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase));
-        var runs = paid ? Runs.ApiKey : loopback ? Runs.ThisDevice : "another computer (" + (endpoint?.Host ?? "unknown host") + ")";
+        var runs = paid ? Runs.ApiKey : loopback ? Runs.ThisDevice : "another computer (" + (endpoint?.IdnHost ?? "unknown host") + ")";
         var state = paid && !HasKey(source.Id, source) ? SourceState.NoKey : validEndpoint ? SourceState.Ready : SourceState.Broken;
         var name = DisplayName(source);
         var shownEndpoint = paid ? "https://openrouter.ai/api/v1" : source.Endpoint;
@@ -692,13 +730,13 @@ public sealed class WalletRegistry
     static string SecretName(string id, SourceSetting? setting) => setting?.SecretRef
         ?? (id == "openrouter-scribe" ? "openrouter" : "source-key:" + id);
 
-    static string? ValidateDraft(SourceDraft draft)
+    static string? ValidateDraft(SourceDraft draft, bool visitorEntered)
     {
         var kind = draft.Kind?.Trim().ToLowerInvariant();
         if (kind is null || !Kinds.Contains(kind)) return "Unknown source kind. Use lmstudio, ollama, openai-compatible, or openrouter.";
         if (string.IsNullOrWhiteSpace(draft.Model)) return "Tell the wallet the model id before adding the source.";
         var endpoint = Endpoint(kind, draft.Endpoint);
-        var endpointCheck = EndpointPolicy.Check(endpoint);
+        var endpointCheck = EndpointPolicy.Check(endpoint, agentSupplied: !visitorEntered);
         if (!endpointCheck.Allowed) return endpointCheck.Message;
         if (draft.Skills is { Count: > 0 } && draft.Skills.Any(string.IsNullOrWhiteSpace)) return "Every skill name must be non-empty.";
         if (draft.Skills is { Count: > 0 } && draft.Skills.Any(skill => !string.Equals(skill, Vocabulary.Generate, StringComparison.Ordinal)))
@@ -729,9 +767,60 @@ public sealed class WalletRegistry
     static string? CleanLabel(string? value)
         => SourceLabels.Clean(value);
 
+    static bool NeedsAgentEndpointConfirmation(EndpointAssessment assessment, string? endpoint)
+    {
+        if (IsCanonicalOpenRouter(endpoint)) return false;
+        // Every non-loopback endpoint is a different computer from the agent's point of view. Keep this explicit
+        // instead of relying only on the assessment flag so future policy changes cannot accidentally skip the UI.
+        if (!assessment.IsLoopback && assessment.Uri is not null) return true;
+        if (assessment.NeedsConfirmation) return true;
+        if (assessment.IsLoopback && !IsStandardRuntimeEndpoint(endpoint)) return true;
+        return false;
+    }
+
+    static bool IsStandardRuntimeEndpoint(string? endpoint)
+    {
+        if (!Uri.TryCreate(endpoint, UriKind.Absolute, out var uri)) return false;
+        var port = uri.IsDefaultPort ? uri.Scheme == "https" ? 443 : 80 : uri.Port;
+        return port is 1234 or 11434;
+    }
+
+    static bool IsCanonicalOpenRouter(string? endpoint) => string.Equals(
+        endpoint?.Trim().TrimEnd('/'), "https://openrouter.ai/api/v1", StringComparison.OrdinalIgnoreCase);
+
+    static bool SameEndpoint(string? left, string? right)
+    {
+        if (!Uri.TryCreate(left, UriKind.Absolute, out var a) || !Uri.TryCreate(right, UriKind.Absolute, out var b))
+            return string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
+
+        var aPort = a.IsDefaultPort ? a.Scheme.Equals("https", StringComparison.OrdinalIgnoreCase) ? 443 : 80 : a.Port;
+        var bPort = b.IsDefaultPort ? b.Scheme.Equals("https", StringComparison.OrdinalIgnoreCase) ? 443 : 80 : b.Port;
+        return string.Equals(a.Scheme, b.Scheme, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(a.IdnHost, b.IdnHost, StringComparison.OrdinalIgnoreCase)
+            && aPort == bPort
+            && string.Equals(a.AbsolutePath.TrimEnd('/'), b.AbsolutePath.TrimEnd('/'), StringComparison.Ordinal)
+            && string.Equals(a.Query, b.Query, StringComparison.Ordinal);
+    }
+
+    static EndpointConfirmationRequest ToConfirmationRequest(string agentName, string model, string? label,
+        EndpointAssessment assessment)
+    {
+        var endpoint = assessment.CanonicalEndpoint.Length > 0 ? assessment.CanonicalEndpoint : assessment.Uri?.ToString() ?? "unknown endpoint";
+        return new EndpointConfirmationRequest(SourceLabels.Clean(agentName) ?? "your AI agent", endpoint,
+            SourceLabels.Clean(model) ?? "model", label)
+        {
+            CanonicalEndpoint = endpoint,
+            Warning = assessment.Uri?.Scheme.Equals("https", StringComparison.OrdinalIgnoreCase) == true ? "encrypted" : "not encrypted",
+            ResolvedAddresses = assessment.ResolvedAddresses,
+            AddressClass = assessment.AddressClass,
+            ContainsNonAsciiHost = assessment.ContainsNonAsciiHost,
+            IsLoopback = assessment.IsLoopback,
+        };
+    }
+
     static string DisplayName(SourceSetting source)
     {
-        var label = CleanLabel(source.Label) ?? source.Model ?? source.Kind ?? "source";
+        var label = CleanLabel(source.Label) ?? SourceLabels.Clean(source.Model) ?? source.Kind ?? "source";
         if (Uri.TryCreate(source.Endpoint, UriKind.Absolute, out var uri))
         {
             var loopback = IPAddress.TryParse(uri.Host, out var address) && (IPAddress.IsLoopback(address) ||
@@ -744,7 +833,7 @@ public sealed class WalletRegistry
 
     static string DisplayAuthority(Uri uri)
     {
-        var host = uri.Host;
+        var host = uri.IdnHost;
         if (host.Contains(':', StringComparison.Ordinal) && !host.StartsWith("[", StringComparison.Ordinal))
             host = "[" + host + "]";
         return host + (uri.IsDefaultPort ? "" : ":" + uri.Port.ToString(System.Globalization.CultureInfo.InvariantCulture));

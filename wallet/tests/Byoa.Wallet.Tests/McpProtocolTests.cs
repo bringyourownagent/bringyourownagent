@@ -58,6 +58,20 @@ public sealed class McpProtocolTests
         Assert.Contains("not running", result["content"]![0]!["text"]!.GetValue<string>(), StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public async Task NullParamsAndArgumentsMeanAbsentObjects()
+    {
+        var responses = await Run(
+            "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":null}",
+            "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"help\",\"arguments\":null}}",
+            "{\"jsonrpc\":\"2.0\",\"method\":\"still-unknown\",\"params\":null}");
+
+        Assert.Equal(2, responses.Length);
+        Assert.Contains(responses, response => response["id"]?.GetValue<int>() == 1);
+        Assert.Contains(responses, response => response["id"]?.GetValue<int>() == 2 &&
+            response["result"]?["isError"]?.GetValue<bool>() == false);
+    }
+
     static async Task<JsonObject[]> Run(params string[] lines)
     {
         var input = new StringReader(string.Join(Environment.NewLine, lines) + Environment.NewLine);

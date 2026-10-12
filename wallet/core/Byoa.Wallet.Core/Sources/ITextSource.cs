@@ -107,7 +107,8 @@ public interface ITextSourceWarmable
 /// <param name="Kind">One of <see cref="SourceKinds"/>.</param>
 /// <param name="Endpoint">Its base URL.</param>
 /// <param name="Running">Whether it answered just now.</param>
-public sealed record RuntimeInfo(string Kind, string Endpoint, bool Running, IReadOnlyList<RuntimeModel> Models);
+public sealed record RuntimeInfo(string Kind, string Endpoint, bool Running, IReadOnlyList<RuntimeModel> Models,
+    long? LatencyMs = null, int? HttpStatus = null);
 
 /// <summary>A model a runtime offers.</summary>
 /// <param name="Id">The runtime's own model id ("qwen/qwen3.5-4b", "llama3.2:3b").</param>
