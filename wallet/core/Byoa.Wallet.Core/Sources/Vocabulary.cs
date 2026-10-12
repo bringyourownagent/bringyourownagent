@@ -4,6 +4,7 @@ namespace Byoa.Wallet.Sources;
 public static class Vocabulary
 {
     public const string Transcribe = "audio.transcribe";
+    public const string Generate = "text.generate";
 
     /// <summary>The skills this wallet can serve in 0.1.</summary>
     public static readonly string[] Served = [Transcribe];

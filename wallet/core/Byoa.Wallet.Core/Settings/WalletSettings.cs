@@ -105,11 +105,36 @@ public sealed class SiteRecord
     public string? PauseReason { get; set; }
 }
 
-/// <summary>The visitor's switch for one source.</summary>
+/// <summary>
+/// The visitor's switch for one source. Built-in sources (GigaAM, Whisper, OpenRouter speech) describe themselves in
+/// code and keep only <see cref="Id"/> and <see cref="Enabled"/> here; sources the visitor (or his agent) adds also
+/// carry what they are: <see cref="Kind"/>, <see cref="Model"/> and the rest.
+/// </summary>
 public sealed class SourceSetting
 {
     public string Id { get; set; } = "";
     public bool Enabled { get; set; } = true;
+
+    /// <summary>One of <c>SourceKinds</c> for an added source; null for a built-in one.</summary>
+    public string? Kind { get; set; }
+
+    /// <summary>The name people see; null means one made from the kind and the model.</summary>
+    public string? Label { get; set; }
+
+    /// <summary>The runtime's base URL; null means the kind's default.</summary>
+    public string? Endpoint { get; set; }
+
+    /// <summary>The runtime's or the API's model id.</summary>
+    public string? Model { get; set; }
+
+    /// <summary>The skills it serves, e.g. ["text.generate"].</summary>
+    public List<string> Skills { get; set; } = [];
+
+    /// <summary>Primary language tags it is used for; empty means any.</summary>
+    public List<string> Languages { get; set; } = [];
+
+    /// <summary>The name of its API key in the secret store (never the key itself); null when it needs none.</summary>
+    public string? SecretRef { get; set; }
 }
 
 /// <summary>An ordered chain of sources for one skill: the first that fits answers, the next ones are fallbacks.</summary>
