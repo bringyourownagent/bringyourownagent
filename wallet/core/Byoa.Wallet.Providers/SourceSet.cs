@@ -120,8 +120,12 @@ public sealed class SourceSet : IDisposable
                 if (!setting.Enabled || !setting.Skills.Contains(Vocabulary.Generate)) continue;
                 ITextSource? source = setting.Kind switch
                 {
-                    SourceKinds.LmStudio or SourceKinds.Ollama or SourceKinds.OpenAiCompatible
+                    SourceKinds.LmStudio or SourceKinds.Ollama
                         when !string.IsNullOrWhiteSpace(setting.Model)
+                            => new OpenAiCompatibleSource(setting.Kind, setting.Model, setting.Label, setting.Endpoint, TextHttp),
+                    // An "other server" needs an address of its own; the two runtimes above have their usual ports.
+                    SourceKinds.OpenAiCompatible
+                        when !string.IsNullOrWhiteSpace(setting.Model) && !string.IsNullOrWhiteSpace(setting.Endpoint)
                             => new OpenAiCompatibleSource(setting.Kind, setting.Model, setting.Label, setting.Endpoint, TextHttp),
                     SourceKinds.OpenRouter when !string.IsNullOrWhiteSpace(setting.Model)
                             => new OpenRouterTextSource(setting.Model, setting.Label, setting.SecretRef, TextHttp,

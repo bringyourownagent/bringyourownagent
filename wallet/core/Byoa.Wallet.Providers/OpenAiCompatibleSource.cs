@@ -176,7 +176,7 @@ public sealed class OpenAiCompatibleSource : ITextSource, ILiveness
             ["temperature"] = request.Temperature,
             ["stream"] = false,
         };
-        if (useSchema) body["response_format"] = ChatCompletions.ChoiceSchema(request.Choices!);
+        if (useSchema && request.Choices is not null) body["response_format"] = ChatCompletions.ChoiceSchema(request.Choices);
         return body;
     }
 }

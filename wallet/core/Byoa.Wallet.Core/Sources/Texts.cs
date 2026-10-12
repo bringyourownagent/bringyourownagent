@@ -48,8 +48,14 @@ public static partial class Texts
     {
         var t = CleanAnswer(text);
         // Off with the dressing a model likes to add: quotes around the whole answer, and politeness at the end.
-        t = t.Trim().Trim('"', '\'', '“', '”', '«', '»').Trim();
-        t = t.TrimEnd('.', '!', '?', ',', ';', ':', '。', '！', '？');
+        // Repeated until it settles: `"yes".` needs two passes.
+        string before;
+        do
+        {
+            before = t;
+            t = t.Trim().Trim('"', '\'', '“', '”', '«', '»').TrimEnd('.', '!', '?', ',', ';', ':', '。', '！', '？');
+        }
+        while (t != before);
         var builder = new StringBuilder(t.Length);
         var space = false;
         foreach (var c in t)
@@ -62,7 +68,7 @@ public static partial class Texts
 
             if (space && builder.Length > 0) builder.Append(' ');
             space = false;
-            builder.Append(c);
+            builder.Append(char.ToLowerInvariant(c));         // compared without case: "YES" is the page's "yes"
         }
 
         return builder.ToString();

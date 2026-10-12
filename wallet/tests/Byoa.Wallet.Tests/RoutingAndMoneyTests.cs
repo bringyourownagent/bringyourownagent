@@ -83,6 +83,22 @@ public class RoutingTests
         Assert.Equal(["whisper"], plan.Steps.Select(x => x.Source.Id));
     }
 
+    [Theory]
+    [InlineData(SourceState.Ready)]
+    [InlineData(SourceState.Downloading)]
+    public void TheCpuWhisperStepsAsideWhileTheBigWhisperWorks(SourceState gpuState)
+    {
+        var cpu = new FakeSource(Router.CpuWhisperId);
+        var gpu = new FakeSource(Router.WhisperId) { State = gpuState };
+        var plan = Router.Plan(Defaults().Chain(Vocabulary.Transcribe), [Giga, gpu, cpu, Paid], _ => true, "sk");
+        Assert.Equal("the big Whisper already works on this PC", plan.Skipped.Single(k => k.Source.Id == Router.CpuWhisperId).Why);
+        Assert.DoesNotContain(cpu.Id, plan.Steps.Select(x => x.Source.Id));
+
+        gpu.State = SourceState.NeedsDownload;                    // no GPU Whisper here: the CPU one is the fallback
+        var without = Router.Plan(Defaults().Chain(Vocabulary.Transcribe), [Giga, gpu, cpu, Paid], _ => true, "sk");
+        Assert.Contains(cpu.Id, without.Steps.Select(x => x.Source.Id));
+    }
+
     [Fact]
     public void TheManagerExplainsItsChoiceFromProperties()
     {
