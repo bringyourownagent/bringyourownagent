@@ -22,8 +22,8 @@ public class WhisperCpuSourceTests
             Assert.False(source.Paid);
             Assert.Null(source.Languages);                        // every language Whisper knows
             Assert.Equal(SourceState.NeedsDownload, source.State);
-            Assert.Equal("not downloaded yet (191 MB), downloads on first use", source.StateText);
-            Assert.Equal(191_073_507, source.DownloadSize);
+            Assert.Equal("not downloaded yet (190 MB), downloads on first use", source.StateText);
+            Assert.Equal(190_085_487, source.DownloadSize);
         }
         finally
         {

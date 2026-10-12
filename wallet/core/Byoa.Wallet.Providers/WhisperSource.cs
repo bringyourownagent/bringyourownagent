@@ -29,11 +29,12 @@ public class WhisperSource : ISpeechSource, IDownloadableSource, IWarmable, IDis
         ["ggml-large-v3-turbo.bin"] = 1_624_555_275,
         ["ggml-medium.bin"] = 1_533_763_059,
         ["ggml-small.bin"] = 487_601_967,
-        ["ggml-small-q5_1.bin"] = 191_073_507,
-        ["ggml-base-q5_1.bin"] = 80_201_447,
+        ["ggml-small-q5_1.bin"] = 190_085_487,
+        ["ggml-base-q5_1.bin"] = 59_707_625,
     };
 
-    static int _runtimeConfigured;
+    static int _gpuRuntimeConfigured;
+    static int _cpuRuntimeConfigured;
 
     readonly Func<string> _modelFile;
     readonly Func<IReadOnlyList<FoundModel>> _found;
@@ -218,11 +219,14 @@ public class WhisperSource : ISpeechSource, IDownloadableSource, IWarmable, IDis
     // ------------------------------------------------------------------------------------------------
     // transcription
 
-    static void ConfigureRuntime()
+    static void ConfigureRuntime(bool useGpu)
     {
-        if (Interlocked.Exchange(ref _runtimeConfigured, 1) == 1) return;
-        // GPU through Vulkan first; the CPU build is the automatic fallback when Vulkan cannot load.
-        RuntimeOptions.RuntimeLibraryOrder = [RuntimeLibrary.Vulkan, RuntimeLibrary.Cpu, RuntimeLibrary.CpuNoAvx];
+        if (Interlocked.Exchange(ref useGpu ? ref _gpuRuntimeConfigured : ref _cpuRuntimeConfigured, 1) == 1) return;
+        // GPU through Vulkan first; the CPU build is the automatic fallback when Vulkan cannot load. A source that
+        // runs without the GPU never loads Vulkan at all: on some machines its driver breaks the CPU run instead.
+        RuntimeOptions.RuntimeLibraryOrder = useGpu
+            ? [RuntimeLibrary.Vulkan, RuntimeLibrary.Cpu, RuntimeLibrary.CpuNoAvx]
+            : [RuntimeLibrary.Cpu, RuntimeLibrary.CpuNoAvx];
     }
 
     /// <summary>Whether this source may use the GPU; the CPU source loads without it.</summary>
@@ -242,7 +246,7 @@ public class WhisperSource : ISpeechSource, IDownloadableSource, IWarmable, IDis
         var path = ModelPath ?? throw new InvalidOperationException("the Whisper model is not downloaded yet");
         if (_factory is not null && _factoryPath == path) return _factory;
         DisposeFactory();
-        ConfigureRuntime();
+        ConfigureRuntime(UseGpu);
         _factory = WhisperFactory.FromPath(path, new WhisperFactoryOptions { UseGpu = UseGpu });
         _factoryPath = path;
         _runtime = RuntimeLabel();
