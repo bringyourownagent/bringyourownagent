@@ -36,6 +36,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
+      - name: Install the test dependency (ws, for the relay tests)
+        working-directory: sdk/js
+        run: npm install --no-package-lock --no-audit --no-fund
       - name: Shared vectors and unit tests
         working-directory: sdk/js
         run: node --test

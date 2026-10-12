@@ -71,6 +71,45 @@ npx bringyourownagent check --json ...      # machine-readable output
 
 Exit codes: `0` the manifest is valid or the call may proceed (`allowed`, `warn`); `1` the manifest is invalid or the call may not proceed (`ask`, `blocked`); `2` usage error or unreadable input. Example files are in [`sdk/examples/`](https://github.com/bringyourownagent/bringyourownagent/tree/main/sdk/examples).
 
+## For sites: reach the visitor's agent wallet (draft)
+
+Besides the rules, the package has the two halves of a site that asks the visitor's own agent wallet for AI. They follow [spec/CONTRACT.md](https://github.com/bringyourownagent/bringyourownagent/blob/main/spec/CONTRACT.md) and [spec/CONTRACT-DIRECT.md](https://github.com/bringyourownagent/bringyourownagent/blob/main/spec/CONTRACT-DIRECT.md). A complete example site is in [`sdk/examples/site/`](https://github.com/bringyourownagent/bringyourownagent/tree/main/sdk/examples/site).
+
+**In the page** (`bringyourownagent/browser`, no dependencies, an ES module):
+
+```js
+import { hasExtension, requestWithExtension, callWithExtension, connectWithoutExtension } from 'bringyourownagent/browser';
+
+button.onclick = async () => {              // both need a click
+  if (hasExtension()) {
+    const grant = await requestWithExtension(manifest);          // null: AI unavailable, use your own path
+    const answer = await callWithExtension(grant, 'text.generate', { messages }, { choices: ['yes', 'no'] });
+  } else {
+    const r = await connectWithoutExtension();                    // starts the wallet with a bringyourownagent:// link
+    // r = { state: 'connected', pairing } | { state: 'timeout' | 'expired' | 'cancelled' | 'error' }
+  }
+};
+```
+
+**On your server** (`bringyourownagent/relay`, needs `npm install ws`):
+
+```js
+import { createRelay } from 'bringyourownagent/relay';
+
+const relay = createRelay({ manifest, endpoint: 'wss://your-host/byoa/ws' });   // the manifest is validated now
+await relay.attach(httpServer, '/byoa/ws');                                      // the wallet connects here
+
+// your routes: POST /byoa/code      -> relay.newCode(pageKey, { ip })     { code, link }
+//              GET  /byoa/state     -> relay.codeState(pageKey, code)     { state, pairing? }
+//              POST /byoa/cancel    -> relay.cancel(pageKey, code)
+
+const wallet = relay.walletFor(pairing);                                          // what the page kept after connecting
+const answer = await wallet?.call('text.generate', { messages }, { maxTokens: 8, choices: ['yes', 'no'] });
+// { ok: true, output: { text }, receipt } or { ok: false }; never an exception. The answer is user input.
+```
+
+The relay keeps codes (192 random bits, 120 s, single use, rate limited per address) and pairings in memory, sends nothing before a valid `hello`, echoes the manifest in `welcome`, allows 4 calls in flight per wallet, and gives the first call after a connect a longer wait. Behind a reverse proxy, forward the WebSocket path (Apache: `ProxyPass /byoa/ws ws://127.0.0.1:PORT/byoa/ws`).
+
 ## Development
 
 The tests include the shared test vectors in `sdk/test-vectors/`, which the Python package must pass identically. From `sdk/js/` in the repository:

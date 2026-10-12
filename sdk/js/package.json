@@ -1,7 +1,7 @@
 {
   "name": "bringyourownagent",
   "version": "0.0.2",
-  "description": "Early draft reference implementation of BYOA (Bring Your Own Agent): manifest validation and the call gate.",
+  "description": "Early draft reference implementation of BYOA (Bring Your Own Agent): manifest validation, the call gate, and the site's side of the wallet connection (page helpers and a relay for the direct link).",
   "keywords": [
     "byoa",
     "bring-your-own-agent",
@@ -30,6 +30,14 @@
       "types": "./index.d.ts",
       "default": "./src/index.js"
     },
+    "./relay": {
+      "types": "./src/site/relay.d.ts",
+      "default": "./src/site/relay.js"
+    },
+    "./browser": {
+      "types": "./src/site/browser.d.ts",
+      "default": "./src/site/browser.js"
+    },
     "./package.json": "./package.json"
   },
   "main": "./src/index.js",
@@ -48,5 +56,16 @@
   },
   "scripts": {
     "test": "node --test"
+  },
+  "peerDependencies": {
+    "ws": "^8.18.0"
+  },
+  "peerDependenciesMeta": {
+    "ws": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "ws": "^8.18.0"
   }
 }

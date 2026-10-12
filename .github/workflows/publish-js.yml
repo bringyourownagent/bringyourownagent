@@ -24,6 +24,9 @@ jobs:
         with:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
+      - name: Install the test dependency (ws, for the relay tests)
+        working-directory: sdk/js
+        run: npm install --no-package-lock --no-audit --no-fund
       - name: Test
         working-directory: sdk/js
         run: node --test

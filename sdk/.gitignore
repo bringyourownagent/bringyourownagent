@@ -6,3 +6,4 @@ python/build/
 .venv/
 node_modules/
 *.tgz
+package-lock.json

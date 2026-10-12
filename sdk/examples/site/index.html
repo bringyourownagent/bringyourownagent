@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BYOA demo: ask the visitor's own model</title>
+<style>
+  body { font: 16px/1.5 system-ui, sans-serif; max-width: 34rem; margin: 2rem auto; padding: 0 1rem; }
+  button { font: inherit; padding: .5rem .9rem; }
+  #log { white-space: pre-wrap; background: #f4f4f4; padding: .75rem; min-height: 4rem; }
+</style>
+</head>
+<body>
+<h1>Guess the secret thing</h1>
+<p>The secret is hidden on the server. Ask yes/no questions: <strong>your own AI</strong> answers them, through your agent wallet. This site pays for no AI.</p>
+<p>
+  <button id="ext" hidden>Connect through the extension</button>
+  <button id="direct">Connect without the extension</button>
+  <button id="stop" hidden>Cancel</button>
+</p>
+<p id="state">Not connected.</p>
+<form id="ask" hidden>
+  <input id="q" size="30" placeholder="Is it alive?" autocomplete="off">
+  <button>Ask</button>
+</form>
+<div id="log"></div>
+
+<script type="module">
+import { hasExtension, requestWithExtension, callWithExtension, connectWithoutExtension } from '/browser.js';
+
+const $ = (id) => document.getElementById(id);
+const log = (line) => { $('log').textContent += line + '\n'; };
+let ask = null; // how to put one question to the wallet, once connected
+
+if (hasExtension()) $('ext').hidden = false;
+
+$('ext').onclick = async () => {
+  const manifest = await (await fetch('/byoa/manifest')).json();
+  const grant = await requestWithExtension(manifest);        // from a click, or the wallet shows nothing
+  if (!grant) { $('state').textContent = 'AI unavailable.'; return; }
+  $('state').textContent = 'Connected through the extension.';
+  // with the extension the page calls the wallet itself; the secret would have to travel to the page,
+  // so this demo keeps its question on the page too
+  ask = async (question) => {
+    const r = await callWithExtension(grant, 'text.generate', {
+      messages: [{ role: 'system', content: 'Secret: a cat. Answer only yes, no or unclear.' }, { role: 'user', content: question }],
+    }, { maxTokens: 4, temperature: 0, choices: ['yes', 'no', 'unclear'] });
+    return r.ok ? r.output.text : null;
+  };
+  $('ask').hidden = false;
+};
+
+let controller = null;
+$('direct').onclick = async () => {
+  controller = new AbortController();
+  $('stop').hidden = false;
+  $('state').textContent = 'Waiting for your wallet... (allow the browser to open it)';
+  const result = await connectWithoutExtension({ signal: controller.signal });   // from a click
+  $('stop').hidden = true;
+  if (result.state !== 'connected') { $('state').textContent = 'The wallet did not connect.'; return; }
+  $('state').textContent = 'Connected without the extension.';
+  ask = async (question) => {
+    const r = await (await fetch('/ask', { method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ pairing: result.pairing, question }) })).json();
+    return r.ok ? r.text : null;
+  };
+  $('ask').hidden = false;
+};
+$('stop').onclick = () => controller?.abort();
+
+$('ask').onsubmit = async (event) => {
+  event.preventDefault();
+  const question = $('q').value.trim();
+  if (!question || !ask) return;
+  $('q').value = '';
+  const answer = await ask(question);
+  log(`${question}  ->  ${answer ?? '(your wallet could not answer)'}`);
+};
+</script>
+</body>
+</html>
