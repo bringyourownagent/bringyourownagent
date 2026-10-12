@@ -13,7 +13,7 @@ namespace Byoa.Wallet.Providers;
 /// server is up and still offers the model. A local runtime answers one request at a time — the wallet keeps a
 /// second call from even starting while one runs.
 /// </summary>
-public sealed class OpenAiCompatibleSource : ITextSource, ILiveness
+public sealed class OpenAiCompatibleSource : ITextSource, ILiveness, ITextSourceWarmable
 {
     /// <summary>The room a local model may use for one answer, its own hidden reasoning included.</summary>
     const int MaxLocalTokens = 4096;
@@ -80,6 +80,17 @@ public sealed class OpenAiCompatibleSource : ITextSource, ILiveness
         : "ready when " + RuntimeName + " runs";
 
     public decimal EstimateCost(TextRequest request) => 0;
+
+    /// <summary>Asks a local runtime to load this model before a site receives its grant.</summary>
+    public async Task WarmAsync(string? language, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(Model)) throw new InvalidOperationException("no model chosen in the settings");
+        if (!_loopback) return;
+        var request = new TextRequest([new ChatMessage("user", "Reply with OK when ready.")], 1, 0, language, null);
+        // The response is deliberately discarded. This is a local load/warm-up request, not a site call and not a
+        // paid source. It is enough for LM Studio, Ollama and other OpenAI-compatible servers to load the model.
+        await ChatAsync(request, useSchema: false, tokenFactor: 1, ct).ConfigureAwait(false);
+    }
 
     public async Task<TextAnswer> GenerateAsync(TextRequest request, CancellationToken ct)
     {

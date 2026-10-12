@@ -1,83 +1,61 @@
+using System.Text.Json.Nodes;
+using Byoa.Wallet.Engine;
 using Byoa.Wallet.Providers;
 using Byoa.Wallet.Registry;
 using Byoa.Wallet.Settings;
 using Byoa.Wallet.Sources;
-using System.Net.Http.Json;
 
 namespace Byoa.Wallet.Desktop;
 
-/// <summary>Tests local built-ins with a tiny sample. Paid sources are never called silently by a test button.</summary>
-sealed class WalletSourceTester : IRegistrySourceTester
+/// <summary>Adapts the engine's wallet-owned test call to the registry's plain result type.</summary>
+sealed class WalletSourceTester : IRegistrySourceTester, IVisitorInitiatedSourceTester
 {
-    readonly IReadOnlyList<ISpeechSource> _speech;
-    readonly HttpClient _http;
-    readonly SettingsStore? _settings;
+    readonly WalletEngine _engine;
+    readonly SourceSet _sources;
+    readonly SettingsStore _settings;
 
-    public WalletSourceTester(IEnumerable<ISpeechSource> speech, HttpClient http, SettingsStore? settings = null)
+    public WalletSourceTester(WalletEngine engine, SourceSet sources, SettingsStore settings)
     {
-        _speech = speech.ToArray();
-        _http = http;
+        _engine = engine;
+        _sources = sources;
         _settings = settings;
     }
 
-    public async Task<RegistryTestResult> TestSourceAsync(string sourceId, CancellationToken ct)
-    {
-        var source = _speech.FirstOrDefault(s => s.Id == sourceId);
-        if (source is not null)
-        {
-            if (source.Paid) return new RegistryTestResult(false, "This is a paid source. The wallet will not make a paid test call without a separate visitor confirmation.");
-            try
-            {
-                var answer = await source.TranscribeAsync(Sample(), "ru", ct).ConfigureAwait(false);
-                return new RegistryTestResult(true, "Test passed: the source answered a short local sample.", answer.Detail);
-            }
-            catch (Exception e) when (e is not OutOfMemoryException and not OperationCanceledException)
-            {
-                return new RegistryTestResult(false, "Test failed: " + Short(e), e.GetType().Name);
-            }
-        }
+    public Task<RegistryTestResult> TestSourceAsync(string sourceId, CancellationToken ct) =>
+        TestSourceAsync(sourceId, visitorInitiated: false, ct);
 
-        var added = _settings?.Snapshot().Sources.FirstOrDefault(s => s.Id == sourceId && s.Kind is not null);
-        return added is null
-            ? new RegistryTestResult(false, "That source is not available to the current wallet engine yet. Add it after the text provider is installed.")
-            : await TestDraftAsync(added, ct).ConfigureAwait(false);
+    public async Task<RegistryTestResult> TestSourceAsync(string sourceId, bool visitorInitiated, CancellationToken ct)
+    {
+        var source = _sources.All.FirstOrDefault(s => s.Id == sourceId);
+        if (source is not null) return ToResult(await _engine.TestSourceAsync(source.Id, Vocabulary.Transcribe, visitorInitiated, ct).ConfigureAwait(false));
+
+        var setting = _settings.Snapshot().Sources.FirstOrDefault(s => s.Id == sourceId && s.Kind is not null);
+        var text = _sources.FindText(sourceId) ?? (setting is null ? null : _sources.CreateTextSource(setting));
+        if (text is null) return new RegistryTestResult(false, "There is no source with id '" + sourceId + "' in the running wallet.");
+        return ToResult(await _engine.TestSourceAsync(text, Vocabulary.Generate, visitorInitiated, ct).ConfigureAwait(false));
     }
 
-    public async Task<RegistryTestResult> TestDraftAsync(SourceSetting draft, CancellationToken ct)
-    {
-        if (draft.Kind == SourceKinds.OpenRouter)
-            return new RegistryTestResult(false, "OpenRouter is paid. The wallet will not make a paid test call automatically.");
-        if (string.IsNullOrWhiteSpace(draft.Endpoint) || string.IsNullOrWhiteSpace(draft.Model))
-            return new RegistryTestResult(false, "Give the local source an endpoint and model id first.");
-        if (!draft.Skills.Contains(Vocabulary.Generate, StringComparer.Ordinal))
-            return new RegistryTestResult(false, "The current local test supports text.generate sources; choose that skill first.");
+    public Task<RegistryTestResult> TestDraftAsync(SourceSetting draft, CancellationToken ct) =>
+        TestDraftAsync(draft, visitorInitiated: false, ct);
 
-        try
-        {
-            var endpoint = draft.Endpoint.TrimEnd('/');
-            var body = new
-            {
-                model = draft.Model,
-                messages = new[] { new { role = "user", content = "Reply with exactly: wallet test ok" } },
-                max_tokens = 16,
-                temperature = 0,
-            };
-            using var response = await _http.PostAsJsonAsync(endpoint + "/chat/completions", body, ct).ConfigureAwait(false);
-            if (!response.IsSuccessStatusCode) return new RegistryTestResult(false, "Test failed: the model server returned HTTP " + (int)response.StatusCode + ". Start it or check the endpoint.");
-            return new RegistryTestResult(true, "Test passed: the local model answered the one-line prompt.");
-        }
-        catch (Exception e) when (e is HttpRequestException or TaskCanceledException or IOException)
-        {
-            return new RegistryTestResult(false, "Test failed: the local model server could not be reached. Start it or check the endpoint.");
-        }
+    public async Task<RegistryTestResult> TestDraftAsync(SourceSetting draft, bool visitorInitiated, CancellationToken ct)
+    {
+        var skill = draft.Skills.Contains(Vocabulary.Transcribe, StringComparer.Ordinal)
+            ? Vocabulary.Transcribe : Vocabulary.Generate;
+        if (skill == Vocabulary.Transcribe)
+            return new RegistryTestResult(false, "Added model sources currently serve text.generate; choose Text generation.");
+        var text = _sources.CreateTextSource(draft);
+        if (text is null) return new RegistryTestResult(false, "Give the local source an endpoint and model id first.");
+        return ToResult(await _engine.TestSourceAsync(text, skill, visitorInitiated, ct).ConfigureAwait(false));
     }
 
-    static float[] Sample()
+    static RegistryTestResult ToResult(JsonNode? result)
     {
-        var samples = new float[1600];
-        for (var i = 0; i < samples.Length; i++) samples[i] = 0.03f * MathF.Sin(i * 0.05f);
-        return samples;
+        if (result is JsonObject { } json && json["ok"]?.GetValue<bool>() == true)
+            return new RegistryTestResult(true, "Test passed: the wallet routed the short sample through this source.",
+                json["output"]?["text"]?.GetValue<string>());
+        var reason = result is JsonObject failed && failed["error"]?.GetValue<string>() is { } error
+            ? error : "the source did not answer";
+        return new RegistryTestResult(false, "Test failed: " + reason + ".");
     }
-
-    static string Short(Exception e) => e.Message.Length > 160 ? e.Message[..157] + "..." : e.Message;
 }

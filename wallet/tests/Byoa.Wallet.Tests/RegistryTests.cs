@@ -1,4 +1,5 @@
 using Byoa.Wallet.Activity;
+using Byoa.Wallet.Engine;
 using Byoa.Wallet.Registry;
 using Byoa.Wallet.Secrets;
 using Byoa.Wallet.Settings;
@@ -30,6 +31,24 @@ public sealed class RegistryTests
         Assert.True(registry.RemoveSource(added.Id!).Ok);
         Assert.DoesNotContain(registry.ListSources(), s => s.Id == added.Id);
         Assert.Contains(registry.ListChains(Vocabulary.Generate), c => !c.OrderedSourceIds.Contains(added.Id!));
+    }
+
+    [Fact]
+    public void EditingTheModelIdMovesItsSavedChainStop()
+    {
+        var dir = TestFolder.New();
+        var store = new SettingsStore(null);
+        var registry = NewRegistry(store, Path.Combine(dir, "secrets.dat"));
+        var added = registry.AddSource(new SourceDraft(SourceKinds.LmStudio, "old-model", Skills: [Vocabulary.Generate]));
+        Assert.True(added.Ok, added.Message);
+        Assert.True(registry.SetOrder(Vocabulary.Generate, null, [added.Id!]).Ok);
+
+        var edited = registry.UpdateSource(added.Id!, new SourceUpdate(Model: "new-model"));
+
+        Assert.True(edited.Ok, edited.Message);
+        Assert.Equal("lmstudio:new-model", edited.Id);
+        Assert.Equal(["lmstudio:new-model"], Assert.Single(registry.ListChains(Vocabulary.Generate)).OrderedSourceIds);
+        Assert.DoesNotContain(registry.ListSources(), source => source.Id == added.Id);
     }
 
     [Fact]
@@ -67,6 +86,55 @@ public sealed class RegistryTests
         Assert.False(outside.Ok);
         Assert.Contains("outside", outside.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(1, manager.Removes);
+    }
+
+    [Fact]
+    public async Task ProductionRegistryTestsDraftThroughTheEngineWithoutAnAdapter()
+    {
+        var dir = TestFolder.New();
+        var store = new SettingsStore(null);
+        var log = new ActivityLog(null, DateTimeOffset.UtcNow);
+        var source = new FakeTextSource("lmstudio:test-model") { Answers = new Queue<string>(["wallet test ok"]) };
+        var engine = new WalletEngine(store, [], log, new ScriptedUi(), new ManualTime(), [source]);
+        var registry = new WalletRegistry(store, new SecretStore(Path.Combine(dir, "secrets.dat")), log,
+            engine: engine, textFactory: _ => source);
+
+        var result = await registry.TestDraftAsync(
+            new SourceDraft(SourceKinds.LmStudio, "test-model", "http://127.0.0.1:1234/v1", [Vocabulary.Generate]),
+            visitorInitiated: true);
+
+        Assert.True(result.Ok, result.Message);
+        Assert.Equal(1, source.Calls);
+        Assert.DoesNotContain(log.Recent(), entry => entry.Outcome == "failed");
+    }
+
+    [Fact]
+    public async Task DraftTestPassesAVisitorEnteredKeyOnlyToTheTemporarySource()
+    {
+        var dir = TestFolder.New();
+        var store = new SettingsStore(null);
+        var log = new ActivityLog(null, DateTimeOffset.UtcNow);
+        var source = new FakeTextSource("openrouter:test-model", runs: Sources.Runs.ApiKey, costPerCall: 0.01m)
+        {
+            Answers = new Queue<string>(["wallet test ok"]),
+        };
+        string? receivedKey = null;
+        var engine = new WalletEngine(store, [], log, new ScriptedUi(), new ManualTime(), [source]);
+        var registry = new WalletRegistry(store, new SecretStore(Path.Combine(dir, "secrets.dat")), log,
+            engine: engine, draftTextFactory: (setting, key) =>
+            {
+                receivedKey = key;
+                return source;
+            });
+
+        var result = await registry.TestDraftAsync(
+            new SourceDraft(SourceKinds.OpenRouter, "test-model", Skills: [Vocabulary.Generate]),
+            visitorInitiated: true, apiKey: "visitor-key-that-must-not-return");
+
+        Assert.True(result.Ok, result.Message);
+        Assert.Equal("visitor-key-that-must-not-return", receivedKey);
+        Assert.DoesNotContain("visitor-key", result.Message, StringComparison.Ordinal);
+        Assert.Empty(new SecretStore(Path.Combine(dir, "secrets.dat")).Get("source-key:openrouter:test-model") ?? "");
     }
 
     static WalletRegistry NewRegistry(SettingsStore store, string secretPath, IWalletModelManager? models = null, string? modelsRoot = null)

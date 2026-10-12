@@ -115,6 +115,13 @@ public interface IRegistrySourceTester
     Task<RegistryTestResult> TestDraftAsync(SourceSetting draft, CancellationToken ct);
 }
 
+/// <summary>A source tester may distinguish the visitor pressing Test from a remote agent asking to test.</summary>
+public interface IVisitorInitiatedSourceTester
+{
+    Task<RegistryTestResult> TestSourceAsync(string sourceId, bool visitorInitiated, CancellationToken ct);
+    Task<RegistryTestResult> TestDraftAsync(SourceSetting draft, bool visitorInitiated, CancellationToken ct);
+}
+
 /// <summary>Downloads and inspects only models owned by the active wallet.</summary>
 public interface IWalletModelManager
 {

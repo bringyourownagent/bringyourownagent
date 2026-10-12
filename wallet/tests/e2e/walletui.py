@@ -7,6 +7,7 @@ AutomationIds such as NoticeShow, NoticeDecline, NoticeBlock, ConsentAllow, Cons
 PaidOnce, PaidNo, Tab-sites, SourceEnabled-gigaam-v3.
 """
 import hashlib
+import ctypes
 import os
 import time
 
@@ -14,6 +15,11 @@ import uiautomation as auto
 from PIL import ImageGrab
 
 auto.SetGlobalSearchTimeout(1)
+
+# UI runs use an isolated wallet home. Inherit this Windows error mode into the wallet child so a
+# deliberate managed crash writes errors.log without opening a native crash dialog on the owner's desktop.
+if os.name == "nt":
+    ctypes.windll.kernel32.SetErrorMode(0x8003)
 
 
 def find_window(title, timeout=10.0):

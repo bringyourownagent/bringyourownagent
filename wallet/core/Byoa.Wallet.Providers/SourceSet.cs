@@ -117,21 +117,10 @@ public sealed class SourceSet : IDisposable
             var list = new List<ITextSource>();
             foreach (var setting in settings.Sources)
             {
-                if (!setting.Enabled || !setting.Skills.Contains(Vocabulary.Generate)) continue;
-                ITextSource? source = setting.Kind switch
-                {
-                    SourceKinds.LmStudio or SourceKinds.Ollama
-                        when !string.IsNullOrWhiteSpace(setting.Model)
-                            => new OpenAiCompatibleSource(setting.Kind, setting.Model, setting.Label, setting.Endpoint, TextHttp),
-                    // An "other server" needs an address of its own; the two runtimes above have their usual ports.
-                    SourceKinds.OpenAiCompatible
-                        when !string.IsNullOrWhiteSpace(setting.Model) && !string.IsNullOrWhiteSpace(setting.Endpoint)
-                            => new OpenAiCompatibleSource(setting.Kind, setting.Model, setting.Label, setting.Endpoint, TextHttp),
-                    SourceKinds.OpenRouter when !string.IsNullOrWhiteSpace(setting.Model)
-                            => new OpenRouterTextSource(setting.Model, setting.Label, setting.SecretRef, TextHttp,
-                                () => _secrets.Get(SecretName(setting.SecretRef)), () => _secrets.Has(SecretName(setting.SecretRef))),
-                    _ => null,
-                };
+                // Keep disabled sources materialised so the registry and the Skills page can show them and
+                // Router.PlanText can explain "turned off". The route, not this list, owns the enabled check.
+                if (setting.Skills.Count > 0 && !setting.Skills.Contains(Vocabulary.Generate)) continue;
+                var source = CreateTextSource(setting);
                 if (source is not null && !list.Any(s => s.Id == source.Id)) list.Add(source);
             }
 
@@ -143,6 +132,32 @@ public sealed class SourceSet : IDisposable
         {
             Interlocked.Exchange(ref _rebuilding, 0);
         }
+    }
+
+    /// <summary>Materialises one text source with the same provider construction used by the live list.</summary>
+    public ITextSource? CreateTextSource(SourceSetting setting) => CreateTextSource(setting, null);
+
+    /// <summary>
+    /// Materialises a draft source for the wallet's visitor-initiated test. The optional key is held only by the
+    /// temporary provider instance; saving a source still goes through the registry and SecretStore.
+    /// </summary>
+    public ITextSource? CreateTextSource(SourceSetting setting, string? transientApiKey)
+    {
+        if (setting.Kind is null || string.IsNullOrWhiteSpace(setting.Model)) return null;
+        var testKey = string.IsNullOrWhiteSpace(transientApiKey) ? null : transientApiKey.Trim();
+        return setting.Kind.Trim().ToLowerInvariant() switch
+        {
+            SourceKinds.LmStudio or SourceKinds.Ollama
+                => new OpenAiCompatibleSource(setting.Kind, setting.Model.Trim(), setting.Label, setting.Endpoint, TextHttp),
+            SourceKinds.OpenAiCompatible
+                when !string.IsNullOrWhiteSpace(setting.Endpoint)
+                => new OpenAiCompatibleSource(setting.Kind, setting.Model.Trim(), setting.Label, setting.Endpoint, TextHttp),
+            SourceKinds.OpenRouter
+                => new OpenRouterTextSource(setting.Model.Trim(), setting.Label, setting.SecretRef, TextHttp,
+                    () => testKey ?? _secrets.Get(SecretName(setting.SecretRef)),
+                    () => testKey is not null || _secrets.Has(SecretName(setting.SecretRef))),
+            _ => null,
+        };
     }
 
     static string SecretName(string? secretRef) =>

@@ -23,6 +23,7 @@ sealed class DesktopUi : IWalletUi, IAgentConsentUi
     SettingsWindow? _settings;
     HelpWindow? _help;
     ToastWindow? _download;
+    PreparingHandle? _preparing;
 
     public DesktopUi(WalletServices services) => _w = services;
 
@@ -88,7 +89,11 @@ sealed class DesktopUi : IWalletUi, IAgentConsentUi
 
     public Task<ConsentAnswer> ShowConsentAsync(ConsentModel model, CancellationToken ct) => OnUi(async () =>
     {
-        var window = new ConsentWindow(model, page => OpenSettings(page));
+        var window = new ConsentWindow(model, page =>
+        {
+            if (page == "add-model") OpenAddModel();
+            else OpenSettings(page);
+        });
         window.CloseOn(ct);
         window.Show();
         return await window.Result;
@@ -112,6 +117,7 @@ sealed class DesktopUi : IWalletUi, IAgentConsentUi
     public IDisposable ShowPreparing(PreparingModel model)
     {
         var handle = new PreparingHandle();
+        _preparing = handle;
         Dispatcher.UIThread.Post(() =>
         {
             if (handle.Done) return;
@@ -121,11 +127,21 @@ sealed class DesktopUi : IWalletUi, IAgentConsentUi
         return handle;
     }
 
+    public void UpdatePreparing(PreparingModel model) => Dispatcher.UIThread.Post(() =>
+    {
+        if (_preparing is not null) _preparing.Update(model);
+    });
+
     /// <summary>Closes the "Preparing your model…" toast, also when it is disposed before it was shown.</summary>
     sealed class PreparingHandle : IDisposable
     {
         public volatile bool Done;
         public ToastWindow? Toast;
+
+        public void Update(PreparingModel model)
+        {
+            if (!Done) Toast?.SetPreparingProgress(model.Progress);
+        }
 
         public void Dispose()
         {

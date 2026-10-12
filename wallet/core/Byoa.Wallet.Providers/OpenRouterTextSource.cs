@@ -108,7 +108,7 @@ public sealed class OpenRouterTextSource : ITextSource
                 return;
             }
         }
-        catch (Exception e) when (e is HttpRequestException or TaskCanceledException or JsonException or InvalidOperationException)
+        catch (Exception e) when (e is not OutOfMemoryException)
         {
             // no prices this hour; the flat estimate stays
         }

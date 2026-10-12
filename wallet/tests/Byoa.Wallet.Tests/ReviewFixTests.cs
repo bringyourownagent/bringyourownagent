@@ -319,17 +319,38 @@ public class ReviewFixTests
     }
 
     [Fact]
-    public async Task R2_TheWaitForTheModelsIsBounded()
+    public async Task R2_A_SlowDownloadKeepsAllowWaitingAndReportsProgress()
+    {
+        var slow = new SlowDownloadSource("slow-whisper", ["ru"], TimeSpan.FromMilliseconds(180));
+        var store = new SettingsStore(null);
+        var ui = new ScriptedUi();
+        var log = new ActivityLog(null, _time.Now);
+        var engine = new WalletEngine(store, [slow], log, ui, _time);
+        store.Update(s => s.Chain(Vocabulary.Transcribe).Stops.Insert(0, new ChainStop { SourceId = slow.Id }));
+
+        var watch = Stopwatch.StartNew();
+        var result = await engine.HandleAsync(Clips.Request(Site, click: true, Only("ru")));
+
+        Assert.NotNull(result);
+        Assert.True(watch.Elapsed >= TimeSpan.FromMilliseconds(300), watch.Elapsed.ToString());
+        Assert.Equal(SourceState.Ready, slow.State);
+        Assert.Contains(ui.PreparingUpdates, update => update.Progress is >= 0.40 and <= 0.42);
+        Assert.Contains(ui.Preparing, update => update.Progress is not null);
+        Assert.Equal(1, ui.PreparingClosed);
+    }
+
+    [Fact]
+    public async Task R2_A_SlowModelIsNotReleasedByTheOldWarmTimeout()
     {
         var saved = WalletEngine.WarmWait;
         WalletEngine.WarmWait = TimeSpan.FromSeconds(1);
         try
         {
-            var giga = new WarmingSource("gigaam-v3", ["ru"]) { WarmTime = TimeSpan.FromSeconds(30) };
+            var giga = new WarmingSource("gigaam-v3", ["ru"]) { WarmTime = TimeSpan.FromMilliseconds(1400) };
             var engine = new WalletEngine(_store, [giga, _whisper], _log, _ui, _time);
             var watch = Stopwatch.StartNew();
             await GrantAsync(engine, Only("ru")).WaitAsync(TimeSpan.FromSeconds(10));
-            Assert.InRange(watch.Elapsed.TotalSeconds, 0.9, 5);
+            Assert.InRange(watch.Elapsed.TotalSeconds, 1.2, 5);
             Assert.Single(_ui.Preparing);
             Assert.Equal(1, _ui.PreparingClosed);
         }

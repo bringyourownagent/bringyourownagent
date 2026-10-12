@@ -104,6 +104,12 @@ public sealed class FrameServer
             {
                 result = Wire.Fallback(message.Type);
             }
+            catch (Exception e) when (e is not OutOfMemoryException)
+            {
+                // A malformed or unexpected handler failure must answer this frame and must not become an
+                // unobserved Task.Run exception that takes down the tray process.
+                result = Wire.Fallback(message.Type);
+            }
 
             response = Wire.Response(message.Id, result);
         }

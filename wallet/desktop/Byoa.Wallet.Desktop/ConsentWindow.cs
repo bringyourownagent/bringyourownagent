@@ -218,10 +218,13 @@ sealed class ConsentWindow : CornerWindow
 
         if (!row.CanServe)
         {
-            panel.Children.Add(Ui.Wrap(row.Required
+            var explanation = row.Why.StartsWith("No ", StringComparison.Ordinal)
+                ? row.Why
+                : row.Required
                 ? "None of your sources can do this, and the site needs it."
-                : "None of your sources can do this. It is optional: it will be left off.", "muted"));
-            panel.Children.Add(Ui.Link("Add a model or a key…", "ConsentFix", () => _openSettings("sources")));
+                : "None of your sources can do this. It is optional: it will be left off.";
+            panel.Children.Add(Ui.Wrap(explanation, "muted"));
+            panel.Children.Add(Ui.Link("Add a model or a key…", "ConsentFix", () => _openSettings("add-model")));
         }
         else
         {
@@ -232,7 +235,8 @@ sealed class ConsentWindow : CornerWindow
                     Ui.Glyph(Ui.Arrow, Ui.Brush("Muted"), 14, 2),
                     Ui.Glyph(route.Where == "API key" ? Ui.Key : Ui.Screen, Ui.Brush("Ink2"), 14, 2),
                     Ui.Text(route.SourceName, "strong"),
-                    Ui.Text("· " + route.Where + (multi && route.Language is not null ? " · " + Vocabulary.LanguageName(route.Language) : ""), "muted"));
+                    Ui.Text("· " + route.Where + " · " + (route.Paid ? "paid" : "free")
+                        + (multi && route.Language is not null ? " · " + Vocabulary.LanguageName(route.Language) : ""), "muted"));
                 if (route.Fits) line.Children.Add(Ui.InkCheck(15));
                 ((TextBlock)line.Children[2]).FontSize = 14;
                 panel.Children.Add(line);

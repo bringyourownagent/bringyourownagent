@@ -23,7 +23,11 @@ sealed class PipeServer : IDisposable
         _openLink = openLink;
     }
 
-    public void Start() => _ = Task.Run(AcceptLoopAsync);
+    public void Start() => _ = Task.Run(async () =>
+    {
+        try { await AcceptLoopAsync().ConfigureAwait(false); }
+        catch (Exception e) when (e is not OutOfMemoryException) { ErrorLog.Write(WalletPaths.Home, e); }
+    });
 
     async Task AcceptLoopAsync()
     {
@@ -48,7 +52,11 @@ sealed class PipeServer : IDisposable
                 continue;
             }
 
-            _ = Task.Run(() => ServeAsync(pipe));
+            _ = Task.Run(async () =>
+            {
+                try { await ServeAsync(pipe).ConfigureAwait(false); }
+                catch (Exception e) when (e is not OutOfMemoryException) { ErrorLog.Write(WalletPaths.Home, e); }
+            });
         }
     }
 

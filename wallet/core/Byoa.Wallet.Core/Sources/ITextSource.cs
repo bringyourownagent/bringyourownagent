@@ -73,6 +73,13 @@ public interface ITextSource
     Task<TextAnswer> GenerateAsync(TextRequest request, CancellationToken ct);
 }
 
+/// <summary>A local text source that can load its model before the first page call.</summary>
+public interface ITextSourceWarmable
+{
+    /// <summary>Loads the model for a language. The wallet never uses this for a paid source.</summary>
+    Task WarmAsync(string? language, CancellationToken ct);
+}
+
 /// <summary>A local runtime found on this computer.</summary>
 /// <param name="Kind">One of <see cref="SourceKinds"/>.</param>
 /// <param name="Endpoint">Its base URL.</param>

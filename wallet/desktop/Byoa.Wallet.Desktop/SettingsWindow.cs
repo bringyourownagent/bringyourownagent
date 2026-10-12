@@ -485,8 +485,15 @@ sealed class SettingsWindow : Window
                     {
                         _ = Task.Run(async () =>
                         {
-                            var result = await _w.Registry.DownloadModelAsync(model.Id);
-                            Dispatcher.UIThread.Post(() => { _w.Ui.ShowInfo(new InfoModel(result.Ok ? "Model downloaded" : "Model download", result.Message)); Render(); });
+                            try
+                            {
+                                var result = await _w.Registry.DownloadModelAsync(model.Id);
+                                Dispatcher.UIThread.Post(() => { _w.Ui.ShowInfo(new InfoModel(result.Ok ? "Model downloaded" : "Model download", result.Message)); Render(); });
+                            }
+                            catch (Exception e) when (e is not OutOfMemoryException)
+                            {
+                                Dispatcher.UIThread.Post(() => _w.Ui.ShowInfo(new InfoModel("Model download", "The wallet could not download that model: " + e.Message)));
+                            }
                         });
                     }, "small")
                     : model.Downloaded
@@ -576,7 +583,7 @@ sealed class SettingsWindow : Window
         {
             panel.Children.Add(Ui.Button("Download now", "allow", "WhisperDownload", () =>
             {
-                _ = whisper.EnsureDownloadedAsync(CancellationToken.None);
+                _ = StartWhisperDownloadAsync(whisper);
                 _w.Ui.DownloadStarted(whisper);
                 Render();
             }, "small"));
@@ -590,6 +597,24 @@ sealed class SettingsWindow : Window
         }
 
         return panel;
+    }
+
+    async Task StartWhisperDownloadAsync(WhisperSource whisper)
+    {
+        try
+        {
+            await whisper.EnsureDownloadedAsync(CancellationToken.None).ConfigureAwait(true);
+        }
+        catch (Exception e)
+        {
+            // This task is started by a button event. Keep its failure on the wallet's side of the UI instead of
+            // allowing an unobserved task exception to reach the process-level handler.
+            _w.Ui.ShowInfo(new InfoModel("Model download", "The wallet could not download Whisper: " + e.Message));
+        }
+        finally
+        {
+            Render();
+        }
     }
 
     static readonly (string File, string Note)[] WhisperChoices =
@@ -647,14 +672,16 @@ sealed class SettingsWindow : Window
         var settings = _w.Store.Snapshot();
         foreach (var chain in settings.Chains)
         {
-            page.Children.Add(Section(Vocabulary.SkillName(chain.Skill), Ui.Text(chain.Skill, "mono")));
+            var chainName = Vocabulary.SkillName(chain.Skill) + (chain.Language is null ? "" : " · " + Vocabulary.LanguageName(chain.Language));
+            page.Children.Add(Section(chainName, Ui.Text(chain.Skill + (chain.Language is null ? "" : " / " + chain.Language), "mono")));
             var stops = new StackPanel { Spacing = 10 };
             for (var i = 0; i < chain.Stops.Count; i++)
             {
                 var stop = chain.Stops[i];
-                var source = _w.Sources.All.FirstOrDefault(s => s.Id == stop.SourceId);
-                if (source is null) continue;
-                stops.Children.Add(StopRow(chain.Skill, i, chain.Stops.Count, stop, source));
+                if (_w.Sources.All.FirstOrDefault(s => s.Id == stop.SourceId) is { } speech)
+                    stops.Children.Add(StopRow(chain.Skill, chain.Language, i, chain.Stops.Count, stop, speech));
+                else if (_w.Sources.FindText(stop.SourceId) is { } text)
+                    stops.Children.Add(TextStopRow(chain.Skill, chain.Language, i, chain.Stops.Count, stop, text));
             }
 
             page.Children.Add(Ui.Box("card", stops));
@@ -664,16 +691,20 @@ sealed class SettingsWindow : Window
             manager.Children.Add(Ui.Text("Manager suggests", "label"));
             foreach (var language in new string?[] { "ru", "sk", "en", null })
             {
-                var plan = Router.Plan(chain, _w.Sources.All, id => settings.Source(id).Enabled, language);
                 var label = language is null ? "Language not given" : Vocabulary.LanguageName(language);
-                manager.Children.Add(Ui.Wrap(label + ": " + Router.Explain(plan, language), "small"));
+                var chosen = settings.Chains.FirstOrDefault(c => c.Skill == chain.Skill && c.Language == Vocabulary.PrimaryLanguage(language))
+                    ?? settings.Chains.FirstOrDefault(c => c.Skill == chain.Skill && c.Language is null) ?? chain;
+                var explanation = chain.Skill == Vocabulary.Generate
+                    ? Router.ExplainText(Router.PlanText(chosen, _w.Sources.Text, id => settings.Source(id).Enabled, language))
+                    : Router.Explain(Router.Plan(chosen, _w.Sources.All, id => settings.Source(id).Enabled, language), language);
+                manager.Children.Add(Ui.Wrap(label + ": " + explanation, "small"));
             }
 
             page.Children.Add(Ui.Box("manager", manager));
         }
     }
 
-    Control StopRow(string skill, int index, int count, ChainStop stop, ISpeechSource source)
+    Control StopRow(string skill, string? language, int index, int count, ChainStop stop, ISpeechSource source)
     {
         var name = Ui.Row(8, Ui.Text(source.Name, "strong"),
             Ui.Glyph(source.Runs == Runs.ApiKey ? Ui.Key : Ui.Screen, Ui.Brush("Ink2"), 13, 2),
@@ -683,21 +714,21 @@ sealed class SettingsWindow : Window
 
         var on = new CheckBox { Content = "On", IsChecked = stop.Enabled };
         AutomationProperties.SetAutomationId(on, "StopEnabled-" + source.Id);
-        on.IsCheckedChanged += (_, _) => _w.Registry.SetStopEnabled(skill, null, source.Id, on.IsChecked == true);
+        on.IsCheckedChanged += (_, _) => _w.Registry.SetStopEnabled(skill, language, source.Id, on.IsChecked == true);
         var options = Ui.Row(14, on);
         if (source.Paid)
         {
             var ask = new CheckBox { Content = "Ask before paid", IsChecked = stop.AskBeforePaid };
             AutomationProperties.SetAutomationId(ask, "StopAsk-" + source.Id);
-            ask.IsCheckedChanged += (_, _) => _w.Registry.SetAskBeforePaid(skill, null, source.Id, ask.IsChecked == true);
+            ask.IsCheckedChanged += (_, _) => _w.Registry.SetAskBeforePaid(skill, language, source.Id, ask.IsChecked == true);
             options.Children.Add(ask);
         }
 
-        var up = Ui.Button("", "deny", "StopUp-" + source.Id, () => Move(skill, source.Id, -1), "square");
+        var up = Ui.Button("", "deny", "StopUp-" + source.Id, () => Move(skill, language, source.Id, -1), "square");
         up.Content = Ui.Glyph(Ui.Up, Ui.Brush("Ink"), 14);
         up.IsEnabled = index > 0;
         AutomationProperties.SetName(up, "Move " + source.Name + " up");
-        var down = Ui.Button("", "deny", "StopDown-" + source.Id, () => Move(skill, source.Id, 1), "square");
+        var down = Ui.Button("", "deny", "StopDown-" + source.Id, () => Move(skill, language, source.Id, 1), "square");
         down.Content = Ui.Glyph(Ui.Down, Ui.Brush("Ink"), 14);
         down.IsEnabled = index < count - 1;
         AutomationProperties.SetName(down, "Move " + source.Name + " down");
@@ -707,17 +738,51 @@ sealed class SettingsWindow : Window
         return Ui.Columns("Auto,*,Auto", Ui.Stop(index + 1, index == 0, source.Paid), middle, Ui.Row(6, up, down));
     }
 
-    static string EngineWhere(ISpeechSource s) => WalletEngine.Where(s);
-
-    void Move(string skill, string id, int by)
+    Control TextStopRow(string skill, string? language, int index, int count, ChainStop stop, ITextSource source)
     {
-        var ids = _w.Registry.ListChains(skill).FirstOrDefault(c => c.Language is null)?.OrderedSourceIds.ToList();
+        var name = Ui.Row(8, Ui.Text(source.Name, "strong"),
+            Ui.Glyph(source.Runs == Runs.ApiKey ? Ui.Key : Ui.Screen, Ui.Brush("Ink2"), 13, 2),
+            Ui.Text(EngineWhere(source), "muted"));
+        var langs = source.Languages is null ? "many languages" : "only " + string.Join(", ", source.Languages.Select(Vocabulary.LanguageName));
+        var info = Ui.Wrap((index == 0 ? "First choice · " : "") + langs + " · " + (source.Paid ? "paid" : "no cloud bill") + " · " + source.StateText, "muted");
+        var on = new CheckBox { Content = "On", IsChecked = stop.Enabled };
+        AutomationProperties.SetAutomationId(on, "StopEnabled-" + source.Id);
+        on.IsCheckedChanged += (_, _) => _w.Registry.SetStopEnabled(skill, language, source.Id, on.IsChecked == true);
+        var options = Ui.Row(14, on);
+        if (source.Paid)
+        {
+            var ask = new CheckBox { Content = "Ask before paid", IsChecked = stop.AskBeforePaid };
+            AutomationProperties.SetAutomationId(ask, "StopAsk-" + source.Id);
+            ask.IsCheckedChanged += (_, _) => _w.Registry.SetAskBeforePaid(skill, language, source.Id, ask.IsChecked == true);
+            options.Children.Add(ask);
+        }
+
+        var up = Ui.Button("", "deny", "StopUp-" + source.Id, () => Move(skill, language, source.Id, -1), "square");
+        up.Content = Ui.Glyph(Ui.Up, Ui.Brush("Ink"), 14);
+        up.IsEnabled = index > 0;
+        AutomationProperties.SetName(up, "Move " + source.Name + " up");
+        var down = Ui.Button("", "deny", "StopDown-" + source.Id, () => Move(skill, language, source.Id, 1), "square");
+        down.Content = Ui.Glyph(Ui.Down, Ui.Brush("Ink"), 14);
+        down.IsEnabled = index < count - 1;
+        AutomationProperties.SetName(down, "Move " + source.Name + " down");
+        var middle = Ui.Column(3, name, info, options);
+        middle.Margin = new Thickness(12, 0, 12, 0);
+        return Ui.Columns("Auto,*,Auto", Ui.Stop(index + 1, index == 0, source.Paid), middle, Ui.Row(6, up, down));
+    }
+
+    static string EngineWhere(ISpeechSource s) => WalletEngine.Where(s);
+    static string EngineWhere(ITextSource s) => WalletEngine.Where(s);
+
+    void Move(string skill, string? language, string id, int by)
+    {
+        var primary = Vocabulary.PrimaryLanguage(language);
+        var ids = _w.Registry.ListChains(skill).FirstOrDefault(c => c.Language == primary)?.OrderedSourceIds.ToList();
         if (ids is null) return;
         var i = ids.FindIndex(sourceId => sourceId == id);
         var j = i + by;
         if (i < 0 || j < 0 || j >= ids.Count) return;
         (ids[i], ids[j]) = (ids[j], ids[i]);
-        _w.Registry.SetOrder(skill, null, ids);
+        _w.Registry.SetOrder(skill, primary, ids);
         Render();
     }
 

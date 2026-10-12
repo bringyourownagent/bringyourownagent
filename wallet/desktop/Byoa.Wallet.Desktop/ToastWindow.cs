@@ -19,6 +19,8 @@ sealed class ToastWindow : CornerWindow
 {
     readonly TaskCompletionSource<string?> _answer = new(TaskCreationOptions.RunContinuationsAsynchronously);
     readonly StackPanel _body = new() { Spacing = 10 };
+    ProgressBar? _preparingBar;
+    TextBlock? _preparingProgress;
     CancellationTokenRegistration _timeout;
     bool _closed;
 
@@ -134,13 +136,37 @@ sealed class ToastWindow : CornerWindow
         var title = Ui.Runs(("Preparing your model…", true));
         AutomationProperties.SetAutomationId(title, "NoticePreparing");
         AutomationProperties.SetName(title, "Preparing your model");
+        var progress = Ui.Text("", "strong", "small");
+        AutomationProperties.SetAutomationId(progress, "PreparingProgress");
         var lines = Ui.Column(4,
             title,
             Ui.Wrap("Loading " + string.Join(" and ", model.Sources) + " for " + model.Host + ", so its first answer is quick.", "muted"),
             bar,
+            progress,
             Ui.Text("Agent wallet", "muted", "small"));
         t._body.Children.Add(t.Header(Ui.Tile(Ui.Screen, 24), lines));
+        t._preparingBar = bar;
+        t._preparingProgress = progress;
+        t.SetPreparingProgress(model.Progress);
         return t;
+    }
+
+    public void SetPreparingProgress(double? value)
+    {
+        if (_preparingBar is null || _preparingProgress is null) return;
+        if (value is { } fraction)
+        {
+            var percent = Math.Clamp((int)Math.Round(fraction * 100), 0, 100);
+            _preparingBar.IsIndeterminate = false;
+            _preparingBar.Value = percent;
+            _preparingBar.Maximum = 100;
+            _preparingProgress.Text = "Preparing your model... " + percent + " %";
+        }
+        else
+        {
+            _preparingBar.IsIndeterminate = true;
+            _preparingProgress.Text = "Preparing your model...";
+        }
     }
 
     /// <summary>Closes the toast from code (no answer).</summary>

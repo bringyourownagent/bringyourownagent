@@ -127,6 +127,7 @@ public static class Router
             if (!stop.Enabled || !enabled(source.Id)) why = "turned off";
             else if (!KnowsText(source, language)) why = language is null ? "needs to know the language" : "does not know " + Vocabulary.LanguageName(language);
             else if (source is ILiveness { Up: false }) why = "not running";
+            else if (source.State is SourceState.NeedsDownload or SourceState.Downloading) why = "model is still preparing";
             else if (source.State is SourceState.Missing) why = "model not found";
             else if (source.State is SourceState.NoKey) why = "no API key";
             else if (source.State is SourceState.Broken) why = "failed to load";
@@ -185,6 +186,12 @@ public static class Router
         var first = plan.First;
         if (first is null)
         {
+            if (plan.Skipped.Any(x => x.Why == "not running"))
+                return "No local text runtime is running. Start LM Studio or Ollama, or add a model.";
+            if (plan.Skipped.Any(x => x.Why == "no API key"))
+                return "No API-key source is ready. Add its key in the wallet, or add a local model.";
+            if (plan.Skipped.Any(x => x.Why == "model is still preparing"))
+                return "Your model is still preparing. Wait for it to finish or add another model as a fallback.";
             return "None of your sources can do this. Add a model in LM Studio or Ollama, or an API key, in Detailed settings.";
         }
 

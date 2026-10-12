@@ -82,6 +82,48 @@ public class TextEngineTests
     }
 
     [Fact]
+    public async Task AWalletOwnedTextTestUsesTheEngineWithoutCreatingASite()
+    {
+        var result = Assert.IsType<JsonObject>(await _engine.TestSourceAsync(_first.Id, Vocabulary.Generate));
+
+        Assert.True(Ok(result), result.ToJsonString() + " / " + _log.Recent()[0].Note);
+        Assert.Equal("Paris", result["output"]!["text"]!.GetValue<string>());
+        Assert.Equal(1, _first.Calls);
+        Assert.Null(_engine.FindSite("wallet"));
+        Assert.Equal("test", _log.Recent()[0].Kind);
+        Assert.Equal("wallet", _log.Recent()[0].Via);
+    }
+
+    [Fact]
+    public async Task ARemoteTextTestCannotAuthorizeAPaidSource()
+    {
+        var refused = Assert.IsType<JsonObject>(await _engine.TestSourceAsync(_paid.Id, Vocabulary.Generate));
+
+        Assert.False(Ok(refused));
+        Assert.Contains("press Test in the wallet", refused["error"]!.GetValue<string>(), StringComparison.Ordinal);
+        Assert.Equal(0, _paid.Calls);
+
+        var allowed = Assert.IsType<JsonObject>(await _engine.TestSourceAsync(_paid.Id, Vocabulary.Generate, visitorInitiated: true));
+        Assert.True(Ok(allowed), allowed.ToJsonString() + " / " + _log.Recent()[0].Note);
+        Assert.Equal(1, _paid.Calls);
+    }
+
+    [Fact]
+    public async Task ALanguageSpecificTextChainWinsOverTheDefaultChain()
+    {
+        _store.Update(s => s.Chain(Vocabulary.Generate, "de").Stops =
+            [new ChainStop { SourceId = _second.Id }, new ChainStop { SourceId = _first.Id }]);
+        var grant = await GrantAsync();
+
+        var result = await _engine.HandleAsync(TextCall(Site, grant,
+            new JsonObject { ["language"] = "de-DE" }));
+
+        Assert.Equal("Lyon", result!["output"]!["text"]!.GetValue<string>());
+        Assert.Equal(0, _first.Calls);
+        Assert.Equal(1, _second.Calls);
+    }
+
+    [Fact]
     public async Task ThePageParamsReachTheSource()
     {
         var grant = await GrantAsync();

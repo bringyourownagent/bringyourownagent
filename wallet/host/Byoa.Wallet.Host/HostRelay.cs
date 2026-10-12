@@ -131,7 +131,7 @@ public sealed class HostRelay
                 await WriteBrowserAsync(frame, ct).ConfigureAwait(false);
             }
         }
-        catch (Exception e) when (e is IOException or InvalidDataException or ObjectDisposedException or OperationCanceledException)
+        catch (Exception e) when (e is not OutOfMemoryException)
         {
             // the wallet went away
         }

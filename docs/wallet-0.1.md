@@ -61,7 +61,7 @@ One JSON message per frame: `{ "id": n, "type", "origin", "userActivation", "pay
 3. If the site is **allowed with "decide on my own"** and the manifest asks for nothing new (no new skill the wallet can serve, no required skill it cannot serve, the expected cost per session not above the visitor's budget for the site), the wallet grants silently, click or no click, once the models are loaded (item 6).
 4. **Without a click** anything else gets `null`; the tray icon gets a quiet dot and the site's count of held-back requests goes up.
 5. **With a click**: the notice, then the consent window. A second request from the same origin while the first is asking shares its answer; the question stays open while any page that asked still waits for it (closing the first tab does not close it for the second). One prompt is shown at a time. With no answer in 120 s the page gets `null`.
-6. **Allow** stores the site's decision (skills, budget per session, "decide on my own", the expected cost and the languages) and opens a session grant: a random 144-bit id, valid 12 hours, held in memory only (a restarted wallet ends all sessions; the page then asks again). **The page gets its grant only when the models are ready**: the wallet loads the first local source of the route for each language the manifest declares and waits for it, at most 30 s, with "Preparing your model…" in a small toast meanwhile (shown only when it takes more than 150 ms). The silent grant of item 3 waits the same way, without a toast. A model the route prefers but that is not downloaded yet starts downloading (calls fall back until it is there). The wallet also loads the models of the allowed sites when it starts. So the first call is as fast as the others, and a page's call timeout does not meet a cold model.
+6. **Allow** stores the site's decision (skills, budget per session, "decide on my own", the expected cost and the languages) and opens a session grant: a random 144-bit id, valid 12 hours, held in memory only (a restarted wallet ends all sessions; the page then asks again). **The page gets its grant only when the models are ready**: the wallet loads the first local source of the route for each language the manifest declares and waits for it, with "Preparing your model…" in a small toast meanwhile (shown only when it takes more than 150 ms). If that source fails, the next local source gets the chance. The silent grant of item 3 waits the same way, without a toast. A model the route prefers but that is not downloaded yet starts downloading before the grant. The wallet also loads the models of the allowed sites when it starts. A slow preparation holds this site only; other sites continue to run.
 7. **Asking for more** (a new skill the wallet can serve, a required skill it cannot serve, or an expected cost per session above the visitor's budget) shows only the difference: an "updated" chip, "Only what is new", and "Budget $0.05 → $0.10 per session" (from the visitor's budget to the site's new expected cost). A required skill no source can serve is shown as missing and Allow is not offered, so the page gets `null`; it is never granted silently. A higher expected cost that is still within the visitor's budget asks nothing.
 
 ## 4. What happens on a call
@@ -98,7 +98,7 @@ From Allow to `request()` resolved, on a freshly started wallet (the models are 
 | sk | 1.95-2.1 s | Whisper 1.7-1.9 s | 470-480 ms (Whisper) |
 | ru + sk (the e2e test; Geo-1) | 2.4 s | both 1.9-2.0 s | 80 ms (ru), 476 ms (sk) |
 
-A silent grant ("decide on my own") on a wallet that the request itself starts: 2.1 s (ru) and 2.5 s (sk), wallet start included. The first Whisper load ever on a machine takes 8-15 s (it prepares its GPU shaders); the wait for it is bounded at 30 s, after which the page gets its grant and calls fall back until the model is there.
+A silent grant ("decide on my own") on a wallet that the request itself starts: 2.1 s (ru) and 2.5 s (sk), wallet start included. The first Whisper load ever on a machine takes 8-15 s (it prepares its GPU shaders); the page receives its grant after the first usable route source is ready, or after the next fallback is ready if loading fails.
 
 ## 7. What 0.1 does not do
 
@@ -136,7 +136,7 @@ Found while building 0.1:
 5. **Skill parameters** (`languages` for `audio.transcribe`) are not checked by the rules, but the wallet routes on them; the first skill parameters deserve rules of their own.
 6. **"Asking for more"** needs a definition in the spec (which changes count: new skills, higher expected cost, new languages?). 0.1 counts new skills it can serve, required skills it cannot serve, and an expected cost per session above the visitor's budget.
 7. The contract's extension-host messages say nothing about the payload shapes or about a status message; section 2 above documents what 0.1 uses.
-8. **Readiness**: the contract has no "preparing" state, so the wallet holds `request()` until its models are loaded (at most 30 s). A progress hint in the page API would let sites show their own "preparing" instead of waiting without knowing why.
+8. **Readiness**: the contract has no "preparing" state, so the wallet holds `request()` until its first usable route source is loaded and shows the visitor a progress hint in its own window. A progress hint in the page API would let sites show their own "preparing" instead of waiting without knowing why.
 
 ## 10. Transports
 
@@ -169,6 +169,8 @@ one transport is allowed through the other.
 - **What the visitor sees.** Sites shows "Connected without the extension" (and "paired" when the wallet will come back on its own); Activity marks the link's events (link ignored, connected, closed, refused) and every request and call "via link".
 
 ## 11. Registry, MCP and agents
+
+Preparation is a real wait, not a page timeout: after Allow the wallet keeps the request pending until the first usable local source (or the next local fallback) has downloaded and loaded. A slow preparation shows its progress in the wallet and does not hold requests from other sites.
 
 The wallet has one registry for sources, models and routes. The Sources page, Help, and the MCP bridge read and change that registry, so an agent sees the same source ids, language chains, model catalog and activity that the visitor sees in the wallet. Added sources can be edited, disabled, reordered and removed; built-in sources can be disabled. Model downloads use the wallet's active `models` folder. The visitor can confirm deletion in Sources; an approved MCP agent acts immediately on the visitor's explicit request. Both use the same registry check: only a file below the active folder that this wallet recorded as downloaded, in its wallet-created model folder, can be removed. Paths outside it and visitor-provided model folders are refused, and the removal is logged with the actor.
 

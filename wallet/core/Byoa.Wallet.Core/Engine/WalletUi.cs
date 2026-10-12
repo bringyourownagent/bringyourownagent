@@ -70,7 +70,7 @@ public sealed record ConsentAnswer(bool Allow, decimal Budget, bool AutoDecide, 
 public sealed record PaidModel(string Origin, string Host, string SourceName, decimal Estimate, string Why);
 
 /// <summary>"Preparing your model…": the routed models are loading before the page gets its grant.</summary>
-public sealed record PreparingModel(string Origin, string Host, IReadOnlyList<string> Sources);
+public sealed record PreparingModel(string Origin, string Host, IReadOnlyList<string> Sources, double? Progress = null);
 
 /// <summary>A short message that needs no answer, with an optional button that opens a settings page.</summary>
 public sealed record InfoModel(string Title, string Text, string? ActionText = null, string? OpenPage = null);
@@ -91,6 +91,9 @@ public interface IWalletUi
 
     /// <summary>Shows "Preparing your model…" until the returned handle is disposed.</summary>
     IDisposable ShowPreparing(PreparingModel model);
+
+    /// <summary>Updates the preparation notice; a UI may ignore progress.</summary>
+    void UpdatePreparing(PreparingModel model) { }
 
     /// <summary>A request without a click was held back: the tray icon gets a quiet badge.</summary>
     void QuietRequest(string origin);
@@ -120,6 +123,7 @@ public sealed class NoUi : IWalletUi
     public Task<PaidAnswer> AskPaidAsync(PaidModel model, CancellationToken ct) => Task.FromResult(PaidAnswer.No);
     public void ShowInfo(InfoModel model) { }
     public IDisposable ShowPreparing(PreparingModel model) => Nothing.Instance;
+    public void UpdatePreparing(PreparingModel model) { }
     public void QuietRequest(string origin) { }
     public void DownloadStarted(ISpeechSource source) { }
     public void OpenSettings(string? page = null) { }

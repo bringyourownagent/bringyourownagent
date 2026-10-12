@@ -100,9 +100,23 @@ class FakeSite:
 
     async def _page(self, request):
         link = self.new_link()
-        html = ("<!doctype html><meta charset=utf-8><title>Fake site</title>"
-                "<body style='font:18px Segoe UI;margin:40px'><h1>Fake BYOA site</h1>"
-                f"<p><a id='go' href='{link}'>Use my AI without the extension</a></p></body>")
+        if "text.generate" in self.manifest.get("skills", {}):
+            manifest = json.dumps(self.manifest, separators=(",", ":"))
+            html = ("<!doctype html><meta charset=utf-8><title>Fake text site</title>"
+                    "<body style='font:18px Segoe UI;margin:40px'><h1>Fake BYOA text site</h1>"
+                    "<p><button id='connect' type='button'>Use my AI</button></p>"
+                    "<pre id='result'>no request yet</pre>"
+                    f"<script>window.MANIFEST={manifest};window.grant=undefined;"
+                    "window.generate=async()=>{window.grant=await window.byoa.request(window.MANIFEST);"
+                    "if(!window.grant)return null;window.lastResult=await window.byoa.call(window.grant.grantId,'text.generate',"
+                    "{messages:[{role:'user',content:'Answer the question with yes or no: is two plus two four?'}]},"
+                    "{choices:['yes','no']});return window.lastResult;};"
+                    "document.getElementById('connect').onclick=async()=>{document.getElementById('result').textContent="
+                    "JSON.stringify(await window.generate());};</script></body>")
+        else:
+            html = ("<!doctype html><meta charset=utf-8><title>Fake site</title>"
+                    "<body style='font:18px Segoe UI;margin:40px'><h1>Fake BYOA site</h1>"
+                    f"<p><a id='go' href='{link}'>Use my AI without the extension</a></p></body>")
         return web.Response(text=html, content_type="text/html")
 
     async def _manifest(self, request):
@@ -180,5 +194,23 @@ class FakeSite:
             "params": {"language": language},
         }))
         result = await asyncio.wait_for(future, 50)
+        result["ms"] = int((time.time() - started) * 1000)
+        return result
+
+    def call_text(self, choices=("yes", "no"), seconds=120):
+        return asyncio.run_coroutine_threadsafe(self._call_text(choices), self._loop).result(seconds)
+
+    async def _call_text(self, choices):
+        self._next_id += 1
+        call_id = self._next_id
+        future = self._loop.create_future()
+        self._waiting[call_id] = future
+        started = time.time()
+        await self.live.send_str(json.dumps({
+            "type": "call", "id": call_id, "skill": "text.generate",
+            "input": {"messages": [{"role": "user", "content": "Answer the question with yes or no: is two plus two four?"}]},
+            "params": {"choices": list(choices)},
+        }))
+        result = await asyncio.wait_for(future, 100)
         result["ms"] = int((time.time() - started) * 1000)
         return result

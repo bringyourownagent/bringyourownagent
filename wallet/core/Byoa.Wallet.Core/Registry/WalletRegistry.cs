@@ -1,6 +1,8 @@
 using System.Security.Cryptography;
 using System.Runtime.Versioning;
+using System.Text.Json.Nodes;
 using Byoa.Wallet.Activity;
+using Byoa.Wallet.Engine;
 using Byoa.Wallet.Protocol;
 using Byoa.Wallet.Secrets;
 using Byoa.Wallet.Settings;
@@ -28,6 +30,9 @@ public sealed class WalletRegistry
     readonly IRuntimeScanner? _runtimes;
     readonly IWalletModelManager _models;
     readonly IRegistrySourceTester? _tester;
+    readonly WalletEngine? _engine;
+    readonly Func<SourceSetting, ITextSource?>? _textFactory;
+    readonly Func<SourceSetting, string?, ITextSource?>? _draftTextFactory;
     readonly string _modelsRoot;
     readonly object _gate = new();
 
@@ -40,16 +45,22 @@ public sealed class WalletRegistry
         IRuntimeScanner? runtimeScanner = null,
         IWalletModelManager? modelManager = null,
         IRegistrySourceTester? sourceTester = null,
-        string? modelsRoot = null)
+        string? modelsRoot = null,
+        WalletEngine? engine = null,
+        Func<SourceSetting, ITextSource?>? textFactory = null,
+        Func<SourceSetting, string?, ITextSource?>? draftTextFactory = null)
     {
         _store = store;
         _secrets = secrets;
         _activity = activity;
-        _speech = speechSources?.ToArray() ?? [];
-        _text = textSources?.ToArray() ?? [];
+        _speech = speechSources is IReadOnlyList<ISpeechSource> speechList ? speechList : speechSources?.ToArray() ?? [];
+        _text = textSources is IReadOnlyList<ITextSource> textList ? textList : textSources?.ToArray() ?? [];
         _runtimes = runtimeScanner;
         _models = modelManager ?? new EmptyModelManager();
         _tester = sourceTester;
+        _engine = engine;
+        _textFactory = textFactory;
+        _draftTextFactory = draftTextFactory;
         _modelsRoot = modelsRoot ?? WalletPaths.Models;
     }
 
@@ -150,21 +161,38 @@ public sealed class WalletRegistry
         var setting = _store.Snapshot().Sources.FirstOrDefault(s => s.Id == id);
         if (setting is null || setting.Kind is null)
             return RegistryOperationResult.Failure("That source is built in or does not exist; only an added source can be edited.");
-        if (update.Kind is not null && !Kinds.Contains(update.Kind.Trim().ToLowerInvariant()))
+        var kind = (update.Kind ?? setting.Kind).Trim().ToLowerInvariant();
+        var model = Clean(update.Model ?? setting.Model);
+        if (!Kinds.Contains(kind))
             return RegistryOperationResult.Failure("Unknown source kind. Use lmstudio, ollama, openai-compatible, or openrouter.");
+        if (model is null) return RegistryOperationResult.Failure("Tell the wallet the model id before saving this source.");
+
+        var newId = MakeId(kind, model, update.Endpoint ?? setting.Endpoint);
+        if (!string.Equals(newId, id, StringComparison.Ordinal) && KnownSourceIds().Any(x => x == newId))
+            return RegistryOperationResult.Failure("A source with id '" + newId + "' already exists.");
 
         _store.Update(s =>
         {
             var source = s.Sources.First(x => x.Id == id);
-            if (update.Kind is not null) source.Kind = update.Kind.Trim().ToLowerInvariant();
-            if (update.Model is not null) source.Model = Clean(update.Model);
+            // The default source-key name contains the source id. Preserve it explicitly when the id changes so
+            // editing a model never makes an already entered key disappear from the provider.
+            if (!string.Equals(newId, id, StringComparison.Ordinal) && source.SecretRef is null)
+                source.SecretRef = "source-key:" + id;
+            source.Id = newId;
+            source.Kind = kind;
+            source.Model = model;
             if (update.Endpoint is not null) source.Endpoint = Clean(update.Endpoint);
             if (update.Label is not null) source.Label = Clean(update.Label);
             if (update.Skills is not null) source.Skills = CleanList(update.Skills);
             if (update.Languages is not null) source.Languages = CleanList(update.Languages);
+            if (!string.Equals(newId, id, StringComparison.Ordinal))
+            {
+                foreach (var chain in s.Chains)
+                    foreach (var stop in chain.Stops.Where(stop => stop.SourceId == id)) stop.SourceId = newId;
+            }
         });
-        Change("source-updated", id, actor, "Updated source " + DisplayId(id));
-        return RegistryOperationResult.Success("Source updated: " + id + ".", id);
+        Change("source-updated", newId, actor, "Updated source " + DisplayId(newId));
+        return RegistryOperationResult.Success("Source updated: " + newId + ".", newId);
     }
 
     public RegistryOperationResult RemoveSource(string id, string actor = "you in the window")
@@ -266,18 +294,57 @@ public sealed class WalletRegistry
     }
 
     public async Task<RegistryTestResult> TestSourceAsync(string sourceId, CancellationToken ct = default)
+        => await TestSourceAsync(sourceId, visitorInitiated: false, ct).ConfigureAwait(false);
+
+    /// <summary>Tests a source through the wallet engine; only a visitor pressing Test may authorize a paid call.</summary>
+    public async Task<RegistryTestResult> TestSourceAsync(string sourceId, bool visitorInitiated, CancellationToken ct = default)
     {
         if (!KnownSourceIds().Contains(sourceId, StringComparer.Ordinal))
             return new RegistryTestResult(false, "There is no source with id '" + sourceId + "'. Add it first.");
+
+        if (_engine is not null)
+        {
+            if (_speech.Any(source => source.Id == sourceId))
+                return FromEngine(await _engine.TestSourceAsync(sourceId, Vocabulary.Transcribe, visitorInitiated, ct).ConfigureAwait(false));
+
+            var text = _text.FirstOrDefault(source => source.Id == sourceId);
+            if (text is null)
+            {
+                var setting = _store.Snapshot().Sources.FirstOrDefault(source => source.Id == sourceId);
+                if (setting is { Skills.Count: > 0 } && !setting.Skills.Contains(Vocabulary.Generate, StringComparer.Ordinal))
+                    return new RegistryTestResult(false, "Added model sources currently serve text.generate; choose Text generation.");
+                text = setting is null ? null : _textFactory?.Invoke(setting);
+            }
+
+            return text is null
+                ? new RegistryTestResult(false, "There is no text source with id '" + sourceId + "' in the running wallet.")
+                : FromEngine(await _engine.TestSourceAsync(text, Vocabulary.Generate, visitorInitiated, ct).ConfigureAwait(false));
+        }
+
         if (_tester is null) return new RegistryTestResult(false, "This wallet has no source test adapter.");
+        if (visitorInitiated && _tester is IVisitorInitiatedSourceTester visitor)
+            return await visitor.TestSourceAsync(sourceId, true, ct).ConfigureAwait(false);
         return await _tester.TestSourceAsync(sourceId, ct).ConfigureAwait(false);
     }
 
     public async Task<RegistryTestResult> TestDraftAsync(SourceDraft draft, CancellationToken ct = default)
+        => await TestDraftAsync(draft, visitorInitiated: false, ct).ConfigureAwait(false);
+
+    /// <summary>Tests a not-yet-saved draft through the same engine path as an existing source.</summary>
+    public async Task<RegistryTestResult> TestDraftAsync(SourceDraft draft, bool visitorInitiated, CancellationToken ct = default)
+        => await TestDraftAsync(draft, visitorInitiated, apiKey: null, ct).ConfigureAwait(false);
+
+    /// <summary>
+    /// Tests a draft with a key the visitor has just entered. The key is passed only to the temporary source; it is
+    /// not returned, logged or stored by this method. Saving the source and its key remains a separate operation.
+    /// </summary>
+    public async Task<RegistryTestResult> TestDraftAsync(SourceDraft draft, bool visitorInitiated, string? apiKey,
+        CancellationToken ct = default)
     {
         var validation = ValidateDraft(draft);
         if (validation is not null) return new RegistryTestResult(false, validation);
-        if (_tester is null) return new RegistryTestResult(false, "This wallet has no source test adapter.");
+        if (draft.Skills?.Contains(Vocabulary.Transcribe, StringComparer.Ordinal) == true)
+            return new RegistryTestResult(false, "Added model sources currently serve text.generate; choose Text generation.");
         var id = MakeId(draft.Kind, draft.Model, draft.Endpoint);
         var setting = new SourceSetting
         {
@@ -289,6 +356,20 @@ public sealed class WalletRegistry
             Skills = CleanList(draft.Skills),
             Languages = CleanList(draft.Languages),
         };
+
+        if (_engine is not null)
+        {
+            // A key entered by a caller is meaningful only for the visitor's own Test button. Agent/MCP requests
+            // must use the saved source and can never smuggle a paid key into a draft test.
+            var text = _draftTextFactory?.Invoke(setting, visitorInitiated ? apiKey : null) ?? _textFactory?.Invoke(setting);
+            return text is null
+                ? new RegistryTestResult(false, "The wallet could not create that text source. Check its endpoint and model id.")
+                : FromEngine(await _engine.TestSourceAsync(text, Vocabulary.Generate, visitorInitiated, ct).ConfigureAwait(false));
+        }
+
+        if (_tester is null) return new RegistryTestResult(false, "This wallet has no source test adapter.");
+        if (visitorInitiated && _tester is IVisitorInitiatedSourceTester visitor)
+            return await visitor.TestDraftAsync(setting, true, ct).ConfigureAwait(false);
         return await _tester.TestDraftAsync(setting, ct).ConfigureAwait(false);
     }
 
@@ -388,6 +469,8 @@ public sealed class WalletRegistry
         if (kind is null || !Kinds.Contains(kind)) return "Unknown source kind. Use lmstudio, ollama, openai-compatible, or openrouter.";
         if (string.IsNullOrWhiteSpace(draft.Model)) return "Tell the wallet the model id before adding the source.";
         if (draft.Skills is { Count: > 0 } && draft.Skills.Any(string.IsNullOrWhiteSpace)) return "Every skill name must be non-empty.";
+        if (draft.Skills is { Count: > 0 } && draft.Skills.Any(skill => !string.Equals(skill, Vocabulary.Generate, StringComparison.Ordinal)))
+            return "Added model sources currently serve text.generate; choose Text generation.";
         return null;
     }
 
@@ -408,6 +491,17 @@ public sealed class WalletRegistry
     }
     static List<string> CleanList(IReadOnlyList<string>? values) => values?.Where(v => !string.IsNullOrWhiteSpace(v)).Select(v => v.Trim().ToLowerInvariant()).Distinct(StringComparer.Ordinal).ToList() ?? [];
     static string? Primary(string? language) => Vocabulary.PrimaryLanguage(language);
+
+    static RegistryTestResult FromEngine(JsonNode? result)
+    {
+        if (result is JsonObject { } json && json["ok"]?.GetValue<bool>() == true)
+            return new RegistryTestResult(true, "Test passed: the wallet routed the short sample through this source.",
+                json["output"]?["text"]?.GetValue<string>());
+
+        var reason = result is JsonObject failed && failed["error"]?.GetValue<string>() is { } error
+            ? error : "the source did not answer";
+        return new RegistryTestResult(false, "Test failed: " + reason + ".");
+    }
 
     void Change(string action, string? sourceId, string actor, string text)
     {

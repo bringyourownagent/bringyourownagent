@@ -244,20 +244,26 @@ sealed class AddModelWindow : Window
     {
         _test.IsEnabled = false;
         _result.Text = "Testing…";
-        RegistryTestResult result;
-        if (!_local)
+        try
         {
-            result = new RegistryTestResult(true,
-                "Provider details are ready. The wallet did not make a paid test call; a site will ask before paid use.");
+            RegistryTestResult result;
+            result = _editingId is { } id
+                ? await _w.Registry.TestSourceAsync(id, visitorInitiated: true)
+                : await _w.Registry.TestDraftAsync(Draft(), visitorInitiated: true,
+                    apiKey: _local ? null : _key.Text);
+            _tested = result.Ok;
+            _result.Text = result.Message;
         }
-        else
+        catch (Exception e) when (e is not OutOfMemoryException)
         {
-            result = _editingId is { } id ? await _w.Registry.TestSourceAsync(id) : await _w.Registry.TestDraftAsync(Draft());
+            _tested = false;
+            _result.Text = "Test failed: " + (e.Message.Length > 160 ? e.Message[..157] + "..." : e.Message);
         }
-        _tested = result.Ok;
-        _result.Text = result.Message;
-        _test.IsEnabled = true;
-        UpdateButtons();
+        finally
+        {
+            _test.IsEnabled = true;
+            UpdateButtons();
+        }
     }
 
     void Save()

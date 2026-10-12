@@ -25,11 +25,11 @@ sealed class WalletServices : IDisposable
         Http.DefaultRequestHeaders.UserAgent.ParseAdd("BYOA-agent-wallet/" + WalletPaths.Version);
         Sources = new SourceSet(Store, Secrets, Http);
         Ui = new DesktopUi(this);
-        Engine = new WalletEngine(Store, Sources.All, Activity, Ui);
+        Engine = new WalletEngine(Store, Sources.All, Activity, Ui, textSources: Sources.Text);
         var modelManager = new WalletModelManager(Store, Sources.Whisper);
-        Registry = new WalletRegistry(Store, Secrets, Activity, Sources.All, [],
-            new LocalRuntimeScanner(() => Store.Read(s => s.Sources.Select(x => x.Endpoint).Where(e => e is not null).Select(e => e!).ToArray())),
-            modelManager, new WalletSourceTester(Sources.All, Http, Store));
+        Registry = new WalletRegistry(Store, Secrets, Activity, Sources.All, Sources.Text,
+            Sources.Scanner, modelManager, engine: Engine, textFactory: Sources.CreateTextSource,
+            draftTextFactory: Sources.CreateTextSource);
         Registry.ApiKeyEntryRequested += Ui.RequestApiKeyEntryAsync;
         Pairings = new PairingStore(Path.Combine(home, "pairings.dat"));
         Direct = new DirectTransport(Engine, Pairings, new DirectOptions { DevLocal = DirectLink.DevLocalFromEnvironment });
