@@ -33,9 +33,24 @@ export async function releaseWithExtension(grant) {
   try { await window.byoa?.release?.(grant.grantId); } catch { /* nothing to do */ }
 }
 
+/**
+ * Resolves true as soon as the extension has put `window.byoa` on the page, or false after `timeoutMs`. The extension
+ * announces itself with a `byoa:ready` event that may fire before your script runs, so `hasExtension()` first.
+ */
+export function whenExtensionReady(timeoutMs = 1500) {
+  return new Promise((resolve) => {
+    if (hasExtension()) { resolve(true); return; }
+    if (typeof window === 'undefined') { resolve(false); return; }
+    const done = (value) => { clearTimeout(timer); window.removeEventListener('byoa:ready', onReady); resolve(value); };
+    const onReady = () => done(hasExtension());
+    const timer = setTimeout(() => done(hasExtension()), timeoutMs);
+    window.addEventListener('byoa:ready', onReady);
+  });
+}
+
 /** Starts the wallet with its link. The page stays where it is: the browser asks the visitor first. */
 export function openWalletLink(link) {
-  if (typeof link !== 'string' || !link.startsWith('bringyourownagent://')) throw new TypeError('not a BYOA link');
+  if (typeof link !== 'string' || !link.startsWith('bringyourownagent://connect?')) throw new TypeError('not a BYOA link');
   window.location.href = link;
 }
 
@@ -53,11 +68,21 @@ export function openWalletLink(link) {
  * @param {(link: string) => void} [options.open]  Replaces `openWalletLink` (tests).
  * @returns {Promise<{ state: 'connected', pairing: string } | { state: 'expired' | 'timeout' | 'cancelled' | 'error' }>}
  */
-export async function connectWithoutExtension(options = {}) {
+export function connectWithoutExtension(options = {}) {
+  // a second click while the first is still waiting would open a second link: it gets the first one's answer
+  if (connecting) return connecting;
+  connecting = connect(options).finally(() => { connecting = null; });
+  return connecting;
+}
+
+let connecting = null;
+
+async function connect(options) {
   const {
     newCodeUrl = '/byoa/code', stateUrl = '/byoa/state', cancelUrl = '/byoa/cancel',
-    waitMs = 90_000, pollMs = 1000, signal, open = openWalletLink,
+    waitMs = 90_000, signal, open = openWalletLink,
   } = options;
+  const pollMs = Math.max(options.pollMs ?? 1000, 5); // never a busy loop
   const fetchJson = async (url, init) => {
     const response = await fetch(url, { credentials: 'same-origin', ...init });
     if (!response.ok) throw new Error(`${response.status}`);
@@ -65,7 +90,10 @@ export async function connectWithoutExtension(options = {}) {
   };
   let issued;
   try { issued = await fetchJson(newCodeUrl, { method: 'POST' }); } catch { return { state: 'error' }; }
-  if (typeof issued?.link !== 'string' || typeof issued?.code !== 'string') return { state: 'error' };
+  // `code` is this library's name for the one-time code; the first site that used the protocol called it `session`
+  const code = issued?.code ?? issued?.session;
+  if (typeof issued?.link !== 'string' || typeof code !== 'string') return { state: 'error' };
+  issued.code = code;
   try { open(issued.link); } catch { return { state: 'error' }; }
 
   const until = Date.now() + waitMs;
@@ -87,7 +115,8 @@ export async function connectWithoutExtension(options = {}) {
 
 function sleep(ms, signal) {
   return new Promise((resolve) => {
-    const timer = setTimeout(resolve, ms);
-    signal?.addEventListener('abort', () => { clearTimeout(timer); resolve(); }, { once: true });
+    const finish = () => { clearTimeout(timer); signal?.removeEventListener('abort', finish); resolve(); };
+    const timer = setTimeout(finish, ms);
+    signal?.addEventListener('abort', finish, { once: true });
   });
 }

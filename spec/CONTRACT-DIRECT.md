@@ -28,7 +28,7 @@
 
 ## 3. Before Allow
 
-- **No network contact of any kind.** The wallet reads the manifest from the link (§7), shows the notice and consent from it, and does nothing else. Without a click the browser will not launch the protocol, so "only after a click" is enforced by the browser.
+- **No network contact of any kind.** The wallet reads the manifest from the link (§7), shows the notice and consent from it, and does nothing else. Without a click the browser will not launch the protocol, so "only after a click" is enforced by the browser. That guarantee covers links a browser launches. A link handed to the wallet by anything else (another program on the visitor's computer, a command line) is treated like a click: the visitor still sees the notice with the site's origin and can decline, and a program running as the visitor could do worse anyway.
 - **Decline and Block.** The wallet never connects. The site cannot tell this from "no wallet installed": it simply never sees a connection. Block also makes later links for that origin do nothing (an activity entry only).
 - **Already granted.** If the origin already has a grant covering the manifest with "decide on my own" ticked, the wallet connects without a notice.
 - **Asking for more.** The consent shows only the difference, as in [CONTRACT.md](CONTRACT.md).
@@ -46,7 +46,8 @@ Wallet to server, first frame:
 Server to wallet:
 
 - `{"type":"welcome","pairing":"<opaque token>","manifest":"<the same base64url string as in the link>"}`, or `{"type":"error","code":"bad-session"}` followed by a close.
-- `pairing` is a long-lived token, 128 bits or more, that the wallet stores per origin **only** if "decide on my own" is ticked. It lets the wallet reconnect later (after a wallet restart, or when the page reloads) with `{"type":"hello","session":null,"pairing":"<token>",...}` and no new link.
+- `pairing` is a token of 128 bits or more (at least 22 characters of the URL-safe alphabet `A-Z a-z 0-9 - _`) that the wallet stores per origin **only** if "decide on my own" is ticked. It lets the wallet reconnect later (after a wallet restart, or when the page reloads) with `{"type":"hello","session":null,"pairing":"<token>",...}` and no new link.
+- **The pairing is a bearer secret of the site's own server.** Whoever presents it becomes the wallet of that pairing, and the newest connection with a pairing replaces the older one. A site SHOULD therefore keep it on the server, tied to the visitor's session (for example by an `HttpOnly` cookie), and MUST NOT put it where script on the page can read it if that page can run third-party script.
 
 Calls:
 
@@ -56,11 +57,22 @@ Calls:
 Rules for calls and the connection:
 
 - The wallet applies exactly the same gate, limits, budget, routing, fallbacks, "ask before paid" and activity log as for extension calls.
-- At most 4 calls in flight per connection; extra calls get `ok:false`.
+- **Calls in flight.** The site MUST keep at most 4 calls in flight to one wallet. It MAY queue more, but only a bounded number, and the waiting time of a call counts from the moment of the call, not from the moment it is sent. The wallet is the backstop: it answers any call beyond 4 in flight with `ok:false`.
 - Either side may send `{"type":"bye"}` and close.
 - Revoking the site in the wallet closes the socket and forgets the pairing.
 - The wallet sends a ping every 30 seconds.
 - On a disconnect, the wallet reconnects with backoff (1, 2, 5, 10, 30 seconds) while the grant is valid **and** the pairing is stored. Otherwise it stays disconnected.
+- A frame over 4 MB, in either direction, ends the connection. A site MUST NOT send one, and MUST bound the size of what it accepts back.
+
+**What ends what**
+
+| Thing | It ends when |
+|---|---|
+| A one-time code | it is used once, or 120 seconds pass, or the page cancels it |
+| The wallet's retries with a code | 60 seconds after the link (the wallet gives up; the code itself lives 120 s) |
+| A `bad-session` error | the wallet forgets any pairing it was trying and stops; the visitor needs a new link |
+| A pairing | the visitor revokes or blocks the site, the manifest the site echoes differs from the link's, the site forgets it (idle for 24 hours or more is a sensible limit), or the site restarts (a site that keeps pairings in memory forgets them all) |
+| A connection | either side says `bye`, a frame breaks a rule, it is silent too long, or the site lets it go (a long-lived connection may be let go with `bye`; the wallet comes back by itself with its pairing) |
 
 ## 5. The site's side (what a site has to do)
 
@@ -70,9 +82,11 @@ Rules for calls and the connection:
   - The page shows a waiting state with a cancel button, and after 90 seconds a plain "the wallet did not connect" (no other detail).
   - When the wallet's `hello` arrives, the server binds that wallet connection to the page and tells the page it is connected.
 - **Reload.** The page stores the pairing token that the server sends it on `welcome` (for example in `localStorage`). On reload it tells the server; if the wallet connection with that pairing is live, the server binds it again.
-- **Calls.** The server sends calls straight to the bound wallet connection. It should use timeouts, a longer first call to allow for model warm-up, and give up on the wallet after repeated failures.
-- **Trust.** The wallet's answer is user input.
-- **Endpoint.** `wss://<host>/<path>` for the channel. A site may also publish its manifest at an `https://` URL for humans and tools; the wallet never fetches it.
+- **Calls.** The server sends calls straight to the bound wallet connection. It SHOULD use timeouts, a longer first call to allow for model warm-up (a timeout during warm-up is not a failure), and give up on the wallet after repeated failures (three in a row is a sensible limit): there is no other AI, so the site continues on its own path.
+- **Trust.** The wallet's answer is user input. A site validates the shape it expects, caps the size of what it accepts, and never renders it as markup.
+- **The endpoint** is `wss://<host>/<path>` for the channel. A site may also publish its manifest at an `https://` URL for humans and tools; the wallet never fetches it.
+- **The page's three HTTP calls** are the site's own business, but they must not tell a "no" from a "no wallet". The state query answers only `waiting`, `connected` (with the pairing) or `expired`. The reference JavaScript library uses `POST /byoa/code` returning `{ code, link }` (an older site used the name `session` for `code`), `GET /byoa/state?code=` returning `{ state, pairing? }`, and `POST /byoa/cancel` with `{ code }`. The code identifies the page that asked for it, not the visitor: the site ties it to its own page or session id.
+- **Rate limits** are per visitor address and per page. A site behind a reverse proxy takes the address from a header its own proxy sets, never from one the visitor can send.
 - **Server limits.**
   - Codes are single use, expire after 120 seconds, and are rate-limited per IP.
   - At most one wallet connection per pairing.
@@ -90,5 +104,6 @@ Fetching a manifest from the site before consent would let the site learn that a
 
 - The link carries the manifest itself: `manifest=<base64url, no padding, of the manifest JSON bytes, at most 4096 bytes decoded>`.
 - The wallet makes **no** network request of any kind before Allow (or before a silent "decide on my own" grant). It parses and validates the manifest from the link and shows the consent from it.
+- The site MUST keep **the exact string** it put in the link and echo that string: the comparison is over bytes, and the same manifest serialised again (another key order, other escaping, another process) is a different string. A site that builds links on one server and accepts wallets on another keeps the string where both can read it.
 - After Allow, `hello` as in §4. The server's `welcome` must echo the manifest it put in the link: `{"type":"welcome","pairing":"...","manifest":"<the same base64url string>"}`. The wallet compares it byte for byte with the link's; on a mismatch it sends `bye`, closes, forgets any pairing, and records "the site's manifest differs from its link" in its activity log (the grant is revoked).
 - On a reconnect with a pairing (no link), `welcome.manifest` is the site's current manifest; if it asks for more than the stored grant covers, the wallet sends `bye`, closes, and needs a new link and a new consent (which shows only the difference).

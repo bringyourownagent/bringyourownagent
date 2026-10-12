@@ -50,13 +50,29 @@ const FILES = {
   '/browser.js': ['../../js/src/site/browser.js', 'text/javascript; charset=utf-8'],
 };
 
-const server = createServer(async (req, res) => {
+const server = createServer((req, res) => {
+  handle(req, res).catch(() => send(res, 400, { error: 'bad request' }));
+});
+
+async function handle(req, res) {
+  // only plain "/path?query" targets are served (not "http://host/..." or "//host/...")
+  if (!/^\/(?!\/)/.test(req.url ?? '')) { send(res, 400, { error: 'bad request' }); return; }
   const url = new URL(req.url, ORIGIN);
-  // the page is told apart by a cookie; use your own session id in a real site
+  // the page is told apart by a cookie; use your own session id in a real site. It names the page, it is not a secret.
   const cookie = /(?:^|; )pk=([\w-]+)/.exec(req.headers.cookie ?? '');
   const pageKey = cookie?.[1] ?? randomBytes(12).toString('base64url');
-  if (!cookie) res.setHeader('set-cookie', `pk=${pageKey}; Path=/; HttpOnly; SameSite=Strict`);
-  try {
+  if (!cookie) {
+    res.setHeader('set-cookie', `pk=${pageKey}; Path=/; HttpOnly; SameSite=Strict${ORIGIN.startsWith('https:') ? '; Secure' : ''}`);
+    // without the cookie the next request would be a different page: the flow cannot work, so say so
+    if (req.method === 'POST') { send(res, 400, { error: 'this demo needs cookies' }); return; }
+  }
+  // a foreign page must not be able to spend this visitor's codes: only same-origin requests change anything
+  if (req.method === 'POST' && (req.headers['sec-fetch-site'] ?? 'same-origin') !== 'same-origin') {
+    send(res, 403, { error: 'forbidden' });
+    return;
+  }
+  {
+    // the wallet's pairing is a secret of your server's: it is given to the page that connected, and never logged
     if (req.method === 'GET' && FILES[url.pathname]) {
       const [file, type] = FILES[url.pathname];
       res.writeHead(200, { 'content-type': type });
@@ -64,7 +80,8 @@ const server = createServer(async (req, res) => {
     } else if (req.method === 'GET' && url.pathname === '/byoa/manifest') {
       send(res, 200, MANIFEST);
     } else if (req.method === 'POST' && url.pathname === '/byoa/code') {
-      const issued = relay.newCode(pageKey, { ip: req.socket.remoteAddress ?? '' });
+      // the address: here the connection's own; behind a reverse proxy use the header your proxy sets, never one the visitor can send
+      const issued = relay.newCode(pageKey, { ip: req.socket.remoteAddress ?? 'unknown' });
       issued ? send(res, 200, issued) : send(res, 429, { error: 'too many codes, wait a minute' });
     } else if (req.method === 'GET' && url.pathname === '/byoa/state') {
       send(res, 200, relay.codeState(pageKey, url.searchParams.get('code') ?? ''));
@@ -81,14 +98,14 @@ const server = createServer(async (req, res) => {
           { role: 'user', content: question.slice(0, 300) },
         ],
       }, { maxTokens: 4, temperature: 0, language: 'en', choices: ['yes', 'no', 'unclear'] });
-      send(res, 200, answer.ok ? { ok: true, text: String(answer.output.text) } : { ok: false });
+      // only one of the three words we asked for is accepted; anything else the wallet sends is dropped
+      const text = answer.ok ? String(answer.output.text) : '';
+      send(res, 200, ['yes', 'no', 'unclear'].includes(text) ? { ok: true, text } : { ok: false });
     } else {
       send(res, 404, { error: 'not found' });
     }
-  } catch {
-    send(res, 400, { error: 'bad request' });
   }
-});
+}
 
 await relay.attach(server, '/byoa/ws');
 server.listen(PORT, () => console.log(`open ${ORIGIN}`));

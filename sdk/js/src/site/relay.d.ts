@@ -4,10 +4,17 @@ import type { EventEmitter } from 'node:events';
 import type { Server } from 'node:http';
 import type { Server as HttpsServer } from 'node:https';
 
-/** The answer to one call. Never an exception: `{ ok: false }` means "unavailable for this call"; use your own path. */
+/**
+ * The answer to one call. Never an exception: `{ ok: false }` means "unavailable for this call"; use your own path.
+ * `output` is what the visitor's software sent: it is user input, never trusted; validate it and cap it before use.
+ * `receipt` is reduced to two short strings or null.
+ */
 export type CallResult =
   | { ok: true; output: Record<string, unknown>; receipt: { cost: string; provider: string } | null }
-  | { ok: false; timedOut?: boolean; cancelled?: boolean };
+  | { ok: false; timedOut?: boolean; cancelled?: boolean; tooBig?: boolean };
+
+/** The visitor's address as the limits count it: IPv4-mapped IPv6 becomes IPv4, any other IPv6 becomes its /64. */
+export function addressKey(ip: string): string;
 
 /** One wallet connected to the server. */
 export class WalletConnection extends EventEmitter {
@@ -19,24 +26,36 @@ export class WalletConnection extends EventEmitter {
   readonly wallet: Record<string, unknown> | null;
   /** True while the wallet can take calls. */
   readonly live: boolean;
+  /** True when a newer connection with the same pairing took this one's place. */
+  readonly replaced: boolean;
+  /** How many calls in a row have failed (a timeout during the warm-up does not count). */
+  readonly failures: number;
+  /** How many calls wait for a free place. */
+  readonly queued: number;
   /**
-   * One use of a skill. Never rejects. At most 4 calls are in flight to one wallet; the rest wait their turn.
-   * The first call after a connect gets a longer wait (a cold model may need time).
+   * One use of a skill. Never rejects. At most 4 calls are in flight to one wallet, up to `maxQueued` more wait their
+   * turn, and any call beyond that fails at once. The wait (`timeoutMs`, default 12 s) counts from the moment of the
+   * call, including the time spent waiting for a place. The first call after a connect gets a longer wait (a cold
+   * model may need time). A call whose frame would exceed 4 MB fails with `tooBig`.
    */
   call(skill: string, input: unknown, params?: Record<string, unknown>, options?: { timeoutMs?: number }): Promise<CallResult>;
   /** Says "bye" and closes. */
   bye(): void;
   close(code?: number, reason?: string): void;
   on(event: 'close', listener: () => void): this;
+  /** This many calls in a row failed (`failureLimit`): the site should give up on this wallet and use its own path. */
+  on(event: 'failing', listener: (failures: number) => void): this;
 }
 
 export interface RelayOptions {
   /** The manifest this site asks with. It is validated now and travels, as it is, in every link (at most 4096 bytes). */
   manifest: object;
-  /** The wallet's WebSocket URL, `wss://your-host/byoa/ws`. */
+  /** The wallet's WebSocket URL, `wss://your-host/byoa/ws` (no user name, no fragment). */
   endpoint: string;
-  /** Codes one address may ask for in a minute. Default 10. */
+  /** Codes one address may ask for in a minute (see `addressKey`). Default 10. */
   codesPerMinute?: number;
+  /** Codes one page (`pageKey`) may ask for in a minute. Default 6. */
+  codesPerPageMinute?: number;
   /** Default 12000. */
   callTimeoutMs?: number;
   /** For the first call after a connect. Default 30000. */
@@ -47,10 +66,20 @@ export interface RelayOptions {
   idleMs?: number;
   /** Default 5000. */
   sendTimeoutMs?: number;
-  /** Default 1000. */
+  /** A connection older than this is let go with "bye"; the wallet comes back on its own with its pairing. Default 12 hours. */
+  maxLifetimeMs?: number;
+  /** Open WebSockets, welcomed or not; more are refused before the handshake. Default 500. */
+  maxSockets?: number;
+  /** When full, the oldest pairing without a wallet goes first, then the live pairing used least recently. Default 1000. */
   maxPairings?: number;
   /** Default 2000. */
   maxCodes?: number;
+  /** Calls waiting for a free place, per wallet. Default 32. */
+  maxQueued?: number;
+  /** The biggest `output` taken from a wallet, as JSON. Default 65536. */
+  maxOutputBytes?: number;
+  /** Calls in a row that fail before a connection emits `failing`. Default 3. */
+  failureLimit?: number;
   /** A clock in milliseconds, for tests. */
   now?: () => number;
 }
@@ -58,36 +87,47 @@ export interface RelayOptions {
 export class Relay extends EventEmitter {
   constructor(options: RelayOptions);
   readonly manifest: object;
-  /** The manifest as the link carries it: base64url, no padding. */
+  /** The manifest as the link carries it: base64url, no padding. Keep this exact string: `welcome` must echo it byte for byte. */
   readonly manifestB64: string;
   readonly endpoint: string;
   readonly pairingCount: number;
+  /** Open WebSockets, welcomed or not. */
+  readonly socketCount: number;
 
   /**
    * A new one-time code for one page (192 random bits, valid 120 s, single use) and the link that carries it.
-   * `pageKey` is any string that names the page or game session on your side: only the same key can ask about the code.
-   * Returns null when this address asked for too many in the last minute.
+   * `pageKey` is any string that names the page or game session on your side and does not change while the page waits:
+   * only the same key can ask about the code. `ip` is the visitor's address and is required: take it from the
+   * connection, or from a header that your own reverse proxy sets (never one the visitor can send).
+   * Returns null when this address or page asked for too many in the last minute, or the table is full.
    */
-  newCode(pageKey: string, options?: { ip?: string }): { code: string; link: string; expiresAt: string } | null;
+  newCode(pageKey: string, options: { ip: string }): { code: string; link: string; expiresAt: string } | null;
   /** Has the wallet come with this code? `connected` carries the pairing token for the page to keep. */
   codeState(pageKey: string, code: string): { state: 'waiting' | 'expired' } | { state: 'connected'; pairing: string };
   /** The page stopped waiting: a wallet that arrives with this code later hears "bad-session". */
   cancel(pageKey: string, code: string): boolean;
-  /** The live wallet of a pairing token (what a page keeps after connecting), or undefined. */
+  /** The live wallet of a pairing token (what a page keeps after connecting), or undefined. The pairing is a bearer secret for your server. */
   walletFor(pairing: string): WalletConnection | undefined;
   pairingState(pairing: string): 'live' | 'offline' | 'unknown';
   /** Forgets a pairing and says bye to its wallet. */
   forget(pairing: string): boolean;
 
-  /** Serves wallet connections on an HTTP(S) server at `path` (default `/byoa/ws`). Needs the `ws` package. */
+  /** Serves wallet connections on an HTTP(S) server at `path` (default `/byoa/ws`). Call once per server. Needs the `ws` package. */
   attach(server: Server | HttpsServer, path?: string): Promise<this>;
+  /** Stops listening for wallets on every attached server (open connections stay until `closeAll`). */
+  detach(): void;
   /** Serves one `ws` WebSocket that your framework already accepted. */
   serve(ws: unknown): void;
-  /** Closes every wallet connection (shutdown). */
+  /** Closes every wallet connection, welcomed or not, and stops the housekeeping timer (shutdown). */
   closeAll(): void;
 
   on(event: 'connected', listener: (wallet: WalletConnection) => void): this;
+  /** A connection ended. If `wallet.replaced` is true a newer one with the same pairing is already live: do not tear down the page. */
   on(event: 'disconnected', listener: (wallet: WalletConnection) => void): this;
+  /** A pairing was pushed out of a full table (its wallet got "bye"). */
+  on(event: 'evicted', listener: (pairing: string) => void): this;
+  /** `forget(pairing)` was called. */
+  on(event: 'forgotten', listener: (pairing: string) => void): this;
 }
 
 export function createRelay(options: RelayOptions): Relay;

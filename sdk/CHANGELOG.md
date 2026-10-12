@@ -4,7 +4,7 @@ The libraries share one version number and one rule set. Dates are UTC.
 
 ## Unreleased (Node.js)
 
-- Added the site's side of the wallet connection, no change to any rule: `bringyourownagent/browser` (page helpers for the extension, and "connect without the extension" with a `bringyourownagent://` link) and `bringyourownagent/relay` (a small server part: one-time codes, pairing tokens, the wallet's WebSocket and calls to it, as in `spec/CONTRACT-DIRECT.md`). The relay needs the optional peer dependency `ws`. A runnable example site is in `sdk/examples/site/`. Each site runs its own relay; there is no shared one.
+- Added the site's side of the wallet connection, no change to any rule: `bringyourownagent/browser` (page helpers for the extension, and "connect without the extension" with a `bringyourownagent://` link) and `bringyourownagent/relay` (a small server part: one-time codes, pairing tokens, the wallet's WebSocket and calls to it, as in `spec/CONTRACT-DIRECT.md`). The relay needs the optional peer dependency `ws`. A runnable example site is in `sdk/examples/site/`. Each site runs its own relay; there is no shared one. Reviewed independently before release: bounded call queue, caps on sockets, connection age and what a wallet may return, per-address (IPv6 /64) and per-page code limits, an address that must be given, honest typings.
 
 ## 0.0.2 for .NET (2026-10-10)
 

@@ -10,12 +10,14 @@
 
 import { EventEmitter } from 'node:events';
 import { randomBytes } from 'node:crypto';
+import { isIPv6 } from 'node:net';
 import { validateManifest } from '../manifest.js';
 
 export const CODE_LIFE_MS = 120_000;
 export const MAX_FRAME_BYTES = 4 * 1024 * 1024;
 export const MAX_MANIFEST_BYTES = 4096;
 const PAIRING_IDLE_MS = 24 * 60 * 60 * 1000;
+const SWEEP_EVERY_MS = 60_000;
 
 const secret = () => randomBytes(24).toString('base64url'); // 192 random bits, URL-safe, no padding
 
@@ -38,8 +40,35 @@ export function connectLink(endpoint, manifestB64, code) {
 }
 
 /**
+ * The key a visitor's address is limited under: an IPv4-mapped IPv6 address becomes its IPv4 form, and any other
+ * IPv6 address becomes its /64 (one home network owns the whole /64 and can rotate inside it at will).
+ */
+export function addressKey(ip) {
+  let a = String(ip).trim().toLowerCase();
+  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(a);
+  if (mapped) return mapped[1];
+  if (!isIPv6(a)) return a;
+  const [head, tail = ''] = a.split('::');
+  const groups = head.split(':').filter(Boolean);
+  const rest = tail.split(':').filter(Boolean);
+  const all = [...groups, ...Array(Math.max(0, 8 - groups.length - rest.length)).fill('0'), ...rest];
+  return all.slice(0, 4).map((g) => g.replace(/^0+(?=.)/, '')).join(':') + '::/64';
+}
+
+/** What a wallet may hand back as a receipt: two short strings, nothing else. Anything else is dropped. */
+function cleanReceipt(receipt) {
+  if (receipt === null || typeof receipt !== 'object') return null;
+  const { cost, provider } = receipt;
+  if (typeof cost !== 'string' || typeof provider !== 'string' || cost.length > 40 || provider.length > 40) return null;
+  return { cost, provider };
+}
+
+/**
  * One wallet connection. Calls go out with `call()`, which never rejects: the answer is
  * `{ ok: true, output, receipt }` or `{ ok: false }` (the wallet said no, did not answer in time, or went away).
+ * The wallet's `output` is the visitor's software speaking: it is user input, never trusted.
+ *
+ * Events: `close`; `failing` (this many calls in a row failed: the site should give up on this wallet).
  */
 export class WalletConnection extends EventEmitter {
   constructor(socket, options) {
@@ -51,64 +80,90 @@ export class WalletConnection extends EventEmitter {
     this.wallet = null;
     this.welcomed = false;
     this.closed = false;
+    /** True when a newer connection with the same pairing took this one's place. */
+    this.replaced = false;
+    /** How many calls in a row have failed (a timeout during the warm-up does not count). */
+    this.failures = 0;
+    this.openedAt = Date.now();
     this._nextId = 0;
     this._pending = new Map();
     this._queue = [];
     this._inFlight = 0;
     this._warming = true; // the first call after a (re)connect may meet a cold model
+    this._lastCall = 0;
   }
 
   /** True while the wallet can take calls. */
   get live() { return this.welcomed && !this.closed; }
 
+  /** How many calls wait for a free place. */
+  get queued() { return this._queue.length; }
+
   /**
-   * One use of a skill. `options.timeoutMs` overrides the default wait. Never rejects.
-   * At most 4 calls are in flight to one wallet; the rest wait their turn.
+   * One use of a skill. Never rejects. `options.timeoutMs` overrides the wait, which counts from now, including
+   * the time spent waiting for a place: at most 4 calls are in flight to one wallet, up to `maxQueued` more wait
+   * their turn, and any call beyond that fails at once.
    */
   call(skill, input, params = {}, options = {}) {
     return new Promise((resolve) => {
-      if (!this.live) { resolve({ ok: false }); return; }
-      this._queue.push({ skill, input, params, options, resolve });
+      if (!this.live || this._queue.length >= this.options.maxQueued) { resolve({ ok: false }); return; }
+      const job = { skill, input, params, resolve, done: false, warm: this._warming };
+      job.timer = setTimeout(() => this._expire(job), options.timeoutMs ?? (job.warm ? this.options.firstCallTimeoutMs : this.options.callTimeoutMs));
+      this._queue.push(job);
       this._pump();
     });
+  }
+
+  _expire(job) {
+    if (job.done) return;
+    const at = this._queue.indexOf(job);
+    if (at >= 0) this._queue.splice(at, 1);
+    this._finish(job, { ok: false, timedOut: true });
+  }
+
+  _finish(job, answer) {
+    if (job.done) return;
+    job.done = true;
+    clearTimeout(job.timer);
+    if (job.id !== undefined) { this._pending.delete(job.id); this._inFlight--; }
+    if (job.warm && !answer.cancelled) this._warming = false;
+    if (answer.ok) this.failures = 0;
+    else if (!(job.warm && answer.timedOut) && !answer.cancelled && !answer.tooBig) { // a cold start is not the wallet failing
+      if (++this.failures === this.options.failureLimit) this.emit('failing', this.failures);
+    }
+    job.resolve(answer);
+    this._pump();
   }
 
   _pump() {
     while (this._inFlight < this.options.maxInFlight && this._queue.length > 0 && this.live) {
       const job = this._queue.shift();
       const id = ++this._nextId;
-      const warm = this._warming;
-      const timeoutMs = job.options.timeoutMs ?? (warm ? this.options.firstCallTimeoutMs : this.options.callTimeoutMs);
-      const finish = (answer) => {
-        const waiting = this._pending.get(id);
-        if (!waiting) return;
-        clearTimeout(waiting.timer);
-        this._pending.delete(id);
-        this._inFlight--;
-        if (warm && answer.ok !== undefined) this._warming = false;
-        job.resolve(answer);
-        this._pump();
-      };
+      const frame = JSON.stringify({ type: 'call', id, skill: job.skill, input: job.input, params: job.params });
+      if (Buffer.byteLength(frame) > MAX_FRAME_BYTES) { this._finish(job, { ok: false, tooBig: true }); continue; } // the wallet would close the connection
+      job.id = id;
       this._inFlight++;
-      this._pending.set(id, { finish, timer: setTimeout(() => finish({ ok: false, timedOut: true }), timeoutMs) });
-      this._send({ type: 'call', id, skill: job.skill, input: job.input, params: job.params });
+      this._pending.set(id, job);
+      this._lastCall = Date.now();
+      this._sendRaw(frame);
     }
   }
 
   _result(frame) {
-    const waiting = Number.isInteger(frame.id) ? this._pending.get(frame.id) : undefined;
-    if (!waiting) return; // late, repeated or made up
-    if (frame.ok === true && frame.output !== null && typeof frame.output === 'object') {
-      waiting.finish({ ok: true, output: frame.output, receipt: frame.receipt ?? null });
-    } else {
-      waiting.finish({ ok: false });
-    }
+    const job = Number.isInteger(frame.id) ? this._pending.get(frame.id) : undefined;
+    if (!job) return; // late, repeated or made up
+    const output = frame.output;
+    const sane = frame.ok === true && output !== null && typeof output === 'object' && !Array.isArray(output)
+      && JSON.stringify(output).length <= this.options.maxOutputBytes;
+    this._finish(job, sane ? { ok: true, output, receipt: cleanReceipt(frame.receipt) } : { ok: false });
   }
 
-  _send(message) {
+  _send(message) { this._sendRaw(JSON.stringify(message)); }
+
+  _sendRaw(text) {
     if (this.closed) return;
     const timer = setTimeout(() => this.terminate(), this.options.sendTimeoutMs); // a wallet that stopped reading is dropped
-    this.socket.send(JSON.stringify(message), (error) => { clearTimeout(timer); if (error) this.terminate(); });
+    this.socket.send(text, (error) => { clearTimeout(timer); if (error) this.terminate(); });
   }
 
   /** The server lets this wallet go: "bye" and a close. */
@@ -132,8 +187,9 @@ export class WalletConnection extends EventEmitter {
     this.closed = true;
     clearTimeout(this._helloTimer);
     clearTimeout(this._idleTimer);
-    for (const waiting of [...this._pending.values()]) waiting.finish({ ok: false, cancelled: true });
-    for (const job of this._queue.splice(0)) job.resolve({ ok: false, cancelled: true });
+    clearTimeout(this._lifeTimer);
+    for (const job of [...this._pending.values()]) this._finish(job, { ok: false, cancelled: true });
+    for (const job of this._queue.splice(0)) this._finish(job, { ok: false, cancelled: true });
     this.emit('close');
   }
 }
@@ -144,14 +200,21 @@ export class WalletConnection extends EventEmitter {
  * @param {object} options
  * @param {object} options.manifest       The manifest this site asks with (validated now; it travels in every link).
  * @param {string} options.endpoint       The wallet's WebSocket URL, `wss://your-host/byoa/ws`.
- * @param {number} [options.codesPerMinute=10]  Codes one address may ask for in a minute.
+ * @param {number} [options.codesPerMinute=10]     Codes one address may ask for in a minute.
+ * @param {number} [options.codesPerPageMinute=6]  Codes one page (`pageKey`) may ask for in a minute.
  * @param {number} [options.callTimeoutMs=12000]
  * @param {number} [options.firstCallTimeoutMs=30000]  The first call after a connect may meet a cold model.
  * @param {number} [options.helloMs=10000]   From the connection to its hello.
  * @param {number} [options.idleMs=75000]    Silence after welcome (the wallet pings every 30 s).
  * @param {number} [options.sendTimeoutMs=5000]
+ * @param {number} [options.maxLifetimeMs=43200000]  A connection older than this is let go with "bye" (the wallet
+ *   comes back on its own with its pairing).
+ * @param {number} [options.maxSockets=500]  Open WebSockets, welcomed or not; more are refused before the handshake.
  * @param {number} [options.maxPairings=1000]
  * @param {number} [options.maxCodes=2000]
+ * @param {number} [options.maxQueued=32]    Calls waiting for a free place, per wallet.
+ * @param {number} [options.maxOutputBytes=65536]  The biggest `output` taken from a wallet (as JSON).
+ * @param {number} [options.failureLimit=3]  Calls in a row that fail before the connection emits `failing`.
  * @param {() => number} [options.now]       Clock in ms, for tests.
  */
 export function createRelay(options) {
@@ -165,17 +228,23 @@ export class Relay extends EventEmitter {
     if (!checked.ok) {
       throw new Error('invalid BYOA manifest: ' + checked.errors.map((e) => `${e.code} ${e.path}`).join(', '));
     }
-    if (typeof options.endpoint !== 'string' || !options.endpoint.startsWith('ws')) {
-      throw new TypeError('options.endpoint must be a ws:// or wss:// URL');
+    let endpoint;
+    try { endpoint = new URL(options.endpoint); } catch { endpoint = null; }
+    // the URL parser forgives "wss:/host"; a wallet does not
+    if (!endpoint || !/^wss?:\/\/[^/@?#\s]+/i.test(options.endpoint) || !['ws:', 'wss:'].includes(endpoint.protocol)
+      || endpoint.username || endpoint.password || endpoint.hash) {
+      throw new TypeError('options.endpoint must be a ws:// or wss:// URL without user name or fragment');
     }
     this.manifest = options.manifest;
     this.manifestB64 = encodeManifest(options.manifest);
     this.endpoint = options.endpoint;
-    this.skills = Object.keys(options.manifest.skills ?? {});
     this.limits = {
       codesPerMinute: options.codesPerMinute ?? 10,
+      codesPerPageMinute: options.codesPerPageMinute ?? 6,
       maxPairings: options.maxPairings ?? 1000,
       maxCodes: options.maxCodes ?? 2000,
+      maxSockets: options.maxSockets ?? 500,
+      maxLifetimeMs: options.maxLifetimeMs ?? 12 * 60 * 60 * 1000,
     };
     this.connection = {
       callTimeoutMs: options.callTimeoutMs ?? 12_000,
@@ -183,31 +252,54 @@ export class Relay extends EventEmitter {
       helloMs: options.helloMs ?? 10_000,
       idleMs: options.idleMs ?? 75_000,
       sendTimeoutMs: options.sendTimeoutMs ?? 5_000,
+      maxQueued: options.maxQueued ?? 32,
+      maxOutputBytes: options.maxOutputBytes ?? 65_536,
+      failureLimit: options.failureLimit ?? 3,
       maxInFlight: 4,
     };
     this._now = options.now ?? Date.now;
     this._codes = new Map();
     this._pairings = new Map();
     this._asked = new Map();
+    this._askedPage = new Map();
+    this._sockets = new Set();
+    this._servers = [];
     this._wss = null;
+    this._sweeper = setInterval(() => this._sweep(this._now()), SWEEP_EVERY_MS);
+    this._sweeper.unref?.();
   }
 
   /**
    * A new one-time code for one page, and the link that carries it. `pageKey` is any string that names the page
-   * or game session on your side: only the same key can ask about the code later.
-   * Returns null when this address asked for too many codes in the last minute (or the table is full).
+   * or game session on your side and does not change while the page waits: only the same key can ask about the code.
+   *
+   * `ip` is the visitor's address and is **required**: the number of codes is limited per address and per page.
+   * Give the address of the connection, or a header that your own reverse proxy sets (never one the visitor can
+   * send); behind a proxy the socket's address is the proxy's, which would put every visitor in one bucket.
+   *
+   * Returns null when this address or page asked for too many codes in the last minute, or the table is full.
    */
-  newCode(pageKey, { ip = '' } = {}) {
+  newCode(pageKey, { ip } = {}) {
+    if (typeof pageKey !== 'string' || pageKey === '') throw new TypeError('newCode needs a pageKey');
+    if (typeof ip !== 'string' || ip === '') throw new TypeError('newCode needs the visitor\'s address in options.ip (see the docs)');
     const now = this._now();
     this._sweep(now);
-    const times = this._asked.get(ip) ?? [];
-    while (times.length > 0 && now - times[0] >= 60_000) times.shift();
-    if (times.length >= this.limits.codesPerMinute || this._codes.size >= this.limits.maxCodes) return null;
-    times.push(now);
-    this._asked.set(ip, times);
+    const byAddress = this._recent(this._asked, addressKey(ip), now);
+    const byPage = this._recent(this._askedPage, pageKey, now);
+    if (byAddress.length >= this.limits.codesPerMinute || byPage.length >= this.limits.codesPerPageMinute
+      || this._codes.size >= this.limits.maxCodes) return null;
+    byAddress.push(now);
+    byPage.push(now);
     const code = { value: secret(), pageKey, expires: now + CODE_LIFE_MS, used: false, cancelled: false, pairing: null };
     this._codes.set(code.value, code);
     return { code: code.value, link: connectLink(this.endpoint, this.manifestB64, code.value), expiresAt: new Date(code.expires).toISOString() };
+  }
+
+  _recent(map, key, now) {
+    const times = map.get(key) ?? [];
+    while (times.length > 0 && now - times[0] >= 60_000) times.shift();
+    map.set(key, times);
+    return times;
   }
 
   /** Has the wallet come with this code? `waiting`, `connected` (with the pairing token for the page to keep) or `expired`. */
@@ -244,36 +336,50 @@ export class Relay extends EventEmitter {
     if (!p) return false;
     this._pairings.delete(pairing);
     p.live?.bye();
+    this.emit('forgotten', pairing);
     return true;
   }
 
   get pairingCount() { return this._pairings.size; }
 
+  /** Open WebSockets, welcomed or not. */
+  get socketCount() { return this._sockets.size; }
+
   /**
-   * Starts serving wallet connections on a Node `http.Server` (or `https.Server`) at `path`.
+   * Starts serving wallet connections on a Node `http.Server` (or `https.Server`) at `path`. Call it once per server.
    * Behind a reverse proxy, forward the WebSocket upgrade for that path (Apache: `ProxyPass /byoa/ws ws://127.0.0.1:PORT/byoa/ws`).
    */
   async attach(server, path = '/byoa/ws') {
     const { WebSocketServer } = await importWs();
-    this._wss = new WebSocketServer({ noServer: true, maxPayload: MAX_FRAME_BYTES });
-    server.on('upgrade', (request, socket, head) => {
+    this._wss ??= new WebSocketServer({ noServer: true, maxPayload: MAX_FRAME_BYTES });
+    const onUpgrade = (request, socket, head) => {
       const pathname = (request.url ?? '').split('?')[0];
       if (pathname !== path) return; // not ours; let other upgrade handlers see it
+      if (this._sockets.size >= this.limits.maxSockets) { socket.destroy(); return; }
       this._wss.handleUpgrade(request, socket, head, (ws) => this._serve(ws));
-    });
+    };
+    server.on('upgrade', onUpgrade);
+    this._servers.push({ server, onUpgrade });
     return this;
+  }
+
+  /** Stops listening for wallets on every attached server (open connections stay until `closeAll`). */
+  detach() {
+    for (const { server, onUpgrade } of this._servers.splice(0)) server.off('upgrade', onUpgrade);
   }
 
   /** Serves one already-accepted `ws` WebSocket (for frameworks that do their own upgrade). */
   serve(ws) { return this._serve(ws); }
 
-  /** Closes every wallet connection (shutdown). */
+  /** Closes every wallet connection, welcomed or not, and stops the housekeeping timer (shutdown). */
   closeAll() {
-    for (const p of this._pairings.values()) p.live?.close(1001, 'server stopping');
+    clearInterval(this._sweeper);
+    for (const ws of this._sockets) { try { ws.close(1001, 'server stopping'); } catch { /* already gone */ } }
   }
 
   _serve(ws) {
     const conn = new WalletConnection(ws, this.connection);
+    this._sockets.add(ws);
     conn._helloTimer = setTimeout(() => conn.close(1008, 'no hello'), this.connection.helloMs);
     const armIdle = () => {
       clearTimeout(conn._idleTimer);
@@ -290,12 +396,21 @@ export class Relay extends EventEmitter {
         return;
       }
       armIdle();
-      if (frame.type === 'result') conn._result(frame);
-      else if (frame.type === 'bye') conn.close(1000, 'bye');
+      if (frame.type === 'result') {
+        conn._result(frame);
+        this._touch(conn);
+      } else if (frame.type === 'bye') {
+        conn.close(1000, 'bye');
+      }
       // ping and anything else: nothing to do
     });
-    ws.on('close', () => { this._gone(conn); conn._ended(); });
+    ws.on('close', () => { this._sockets.delete(ws); this._gone(conn); conn._ended(); });
     ws.on('error', () => conn.terminate());
+  }
+
+  _touch(conn) {
+    const p = conn.pairing ? this._pairings.get(conn.pairing) : undefined;
+    if (p?.live === conn) p.lastUsed = this._now();
   }
 
   _hello(conn, frame, armIdle) {
@@ -313,6 +428,8 @@ export class Relay extends EventEmitter {
     conn.grant = { skills, expiresAt: typeof frame.grant?.expiresAt === 'string' ? frame.grant.expiresAt : null };
     conn._send({ type: 'welcome', pairing: welcome.pairing, manifest: welcome.manifest });
     armIdle();
+    // a long-lived connection is let go now and then; the wallet comes back by itself with its pairing
+    conn._lifeTimer = setTimeout(() => conn.bye(), this.limits.maxLifetimeMs);
     this.emit('connected', conn);
   }
 
@@ -334,7 +451,7 @@ export class Relay extends EventEmitter {
     if (typeof pairing === 'string' && (session === null || session === undefined)) {
       const p = this._pairings.get(pairing);
       if (!p) return null;
-      if (p.live && p.live !== conn) p.live.bye(); // at most one connection per pairing: the newest wins
+      if (p.live && p.live !== conn) { p.live.replaced = true; p.live.bye(); } // at most one connection per pairing: the newest wins
       p.live = conn;
       p.lastUsed = now;
       return { pairing: p.token, manifest: this.manifestB64 };
@@ -349,28 +466,34 @@ export class Relay extends EventEmitter {
     if (conn.welcomed) this.emit('disconnected', conn);
   }
 
-  // a full table makes room instead of refusing: the oldest pairing without a wallet goes first
+  // A full table makes room instead of refusing: first the oldest pairing without a wallet; failing that, the live
+  // pairing that has been used least recently (a connection that only pings is never "used", so it goes first).
   _makeRoom() {
     if (this._pairings.size < this.limits.maxPairings) return true;
     let victim = null;
     for (const p of this._pairings.values()) {
-      if (!p.live && (!victim || p.lastUsed < victim.lastUsed)) victim = p;
+      const rank = (x) => (x.live ? 1 : 0);
+      if (!victim || rank(p) < rank(victim) || (rank(p) === rank(victim) && p.lastUsed < victim.lastUsed)) victim = p;
     }
-    if (!victim) return false; // every pairing has a live wallet
+    if (!victim) return false;
     this._pairings.delete(victim.token);
+    if (victim.live) { victim.live.bye(); }
+    this.emit('evicted', victim.token);
     return true;
   }
 
   _sweep(now) {
     for (const [value, c] of this._codes) {
-      if (now - c.expires > 10 * 60_000) this._codes.delete(value); // a used code is kept a while: the page may still ask
+      if (now >= c.expires && (!c.used || now - c.expires > 10 * 60_000)) this._codes.delete(value); // a used code is kept a while: the page may still ask
     }
     for (const [token, p] of this._pairings) {
       if (!p.live && now - p.lastUsed > PAIRING_IDLE_MS) this._pairings.delete(token);
     }
-    for (const [ip, times] of this._asked) {
-      while (times.length > 0 && now - times[0] >= 60_000) times.shift();
-      if (times.length === 0) this._asked.delete(ip);
+    for (const map of [this._asked, this._askedPage]) {
+      for (const [key, times] of map) {
+        while (times.length > 0 && now - times[0] >= 60_000) times.shift();
+        if (times.length === 0) map.delete(key);
+      }
     }
   }
 }

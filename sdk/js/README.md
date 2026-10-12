@@ -99,7 +99,7 @@ import { createRelay } from 'bringyourownagent/relay';
 const relay = createRelay({ manifest, endpoint: 'wss://your-host/byoa/ws' });   // the manifest is validated now
 await relay.attach(httpServer, '/byoa/ws');                                      // the wallet connects here
 
-// your routes: POST /byoa/code      -> relay.newCode(pageKey, { ip })     { code, link }
+// your routes: POST /byoa/code      -> relay.newCode(pageKey, { ip })     { code, link }   (ip: the connection's, or your proxy's header)
 //              GET  /byoa/state     -> relay.codeState(pageKey, code)     { state, pairing? }
 //              POST /byoa/cancel    -> relay.cancel(pageKey, code)
 
@@ -108,7 +108,7 @@ const answer = await wallet?.call('text.generate', { messages }, { maxTokens: 8,
 // { ok: true, output: { text }, receipt } or { ok: false }; never an exception. The answer is user input.
 ```
 
-The relay keeps codes (192 random bits, 120 s, single use, rate limited per address) and pairings in memory, sends nothing before a valid `hello`, echoes the manifest in `welcome`, allows 4 calls in flight per wallet, and gives the first call after a connect a longer wait. Behind a reverse proxy, forward the WebSocket path (Apache: `ProxyPass /byoa/ws ws://127.0.0.1:PORT/byoa/ws`).
+The relay keeps codes (192 random bits, 120 s, single use, rate limited per address and per page) and pairings in memory, sends nothing before a valid `hello`, echoes the manifest in `welcome`, allows 4 calls in flight per wallet (a bounded queue behind them; the wait counts from the call), gives the first call after a connect a longer wait, drops a silent or over-old connection, caps open sockets, and cuts what a wallet hands back down to what the skill defines (a receipt of two short strings, an `output` under 64 KB). `wallet.on('failing')` tells you when three calls in a row failed. The pairing is a secret of your server: keep it server-side, not in script the page can read. Behind a reverse proxy, forward the WebSocket path (Apache: `ProxyPass /byoa/ws ws://127.0.0.1:PORT/byoa/ws`).
 
 ## Development
 

@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { afterEach, describe, test } from 'node:test';
 import {
-  callWithExtension, connectWithoutExtension, hasExtension, openWalletLink, requestWithExtension,
+  callWithExtension, connectWithoutExtension, hasExtension, openWalletLink, requestWithExtension, whenExtensionReady,
 } from '../src/site/browser.js';
 
 const realFetch = globalThis.fetch;
@@ -56,6 +56,7 @@ describe('extension path', () => {
     assert.equal(window.location.href, 'bringyourownagent://connect?v=0.1');
     assert.throws(() => openWalletLink('https://example.org'), /not a BYOA link/);
     assert.throws(() => openWalletLink('byoa://connect'), /not a BYOA link/);
+    assert.throws(() => openWalletLink('bringyourownagent://other'), /not a BYOA link/);
   });
 });
 
@@ -101,5 +102,68 @@ describe('connect without the extension', () => {
     setTimeout(() => controller.abort(), 30);
     const result = await connectWithoutExtension({ waitMs: 5000, pollMs: 10, signal: controller.signal, open() {} });
     assert.deepEqual(result, { state: 'cancelled' });
+  });
+
+  test('a second click while one is waiting opens no second link', async () => {
+    let polls = 0;
+    fakeFetch((url) => {
+      if (url === '/byoa/code') return { json: { code: 'c', link: 'bringyourownagent://connect?session=c' } };
+      return { json: ++polls < 3 ? { state: 'waiting' } : { state: 'connected', pairing: 'P' } };
+    });
+    const opened = [];
+    const first = connectWithoutExtension({ pollMs: 5, open: (l) => opened.push(l) });
+    const second = connectWithoutExtension({ pollMs: 5, open: (l) => opened.push(l) });
+    assert.equal(first, second);
+    assert.deepEqual(await first, { state: 'connected', pairing: 'P' });
+    assert.equal(opened.length, 1);
+    const again = connectWithoutExtension({ pollMs: 5, open: (l) => opened.push(l) }); // after it ended, a new one starts
+    assert.notEqual(again, first);
+    await again;
+    assert.equal(opened.length, 2);
+  });
+
+  test('the first site\'s name for the code, "session", is accepted; a poll time of 0 is no busy loop', async () => {
+    let polls = 0;
+    fakeFetch((url) => {
+      if (url === '/byoa/code') return { json: { session: 's1', link: 'bringyourownagent://connect?session=s1' } };
+      polls++;
+      assert.match(url, /code=s1/);
+      return { json: { state: 'connected', pairing: 'P' } };
+    });
+    assert.deepEqual(await connectWithoutExtension({ pollMs: 0, open() {} }), { state: 'connected', pairing: 'P' });
+    assert.equal(polls, 1);
+  });
+
+  test('no abort listeners are left behind by the polling', async () => {
+    fakeFetch((url) => (url === '/byoa/code' ? { json: { code: 'c', link: 'bringyourownagent://connect?x' } } : { json: { state: 'waiting' } }));
+    const controller = new AbortController();
+    let added = 0;
+    let removed = 0;
+    const add = controller.signal.addEventListener.bind(controller.signal);
+    const remove = controller.signal.removeEventListener.bind(controller.signal);
+    controller.signal.addEventListener = (...a) => { added++; return add(...a); };
+    controller.signal.removeEventListener = (...a) => { removed++; return remove(...a); };
+    await connectWithoutExtension({ waitMs: 120, pollMs: 10, signal: controller.signal, open() {} });
+    assert.ok(added >= 5);
+    assert.equal(added, removed);
+  });
+});
+
+describe('whenExtensionReady', () => {
+  test('is true at once when the extension is there, true when it announces itself, false when it never does', async () => {
+    globalThis.window = { byoa: { request() {} } };
+    assert.equal(await whenExtensionReady(50), true);
+    const listeners = {};
+    globalThis.window = {
+      addEventListener: (name, fn) => { listeners[name] = fn; },
+      removeEventListener: (name) => { delete listeners[name]; },
+    };
+    const late = whenExtensionReady(500);
+    window.byoa = { request() {} };
+    listeners['byoa:ready']();
+    assert.equal(await late, true);
+    delete window.byoa;
+    assert.equal(await whenExtensionReady(30), false);
+    assert.deepEqual(Object.keys(listeners), []);
   });
 });
