@@ -79,11 +79,15 @@ sealed class ConsentWindow : CornerWindow
                 e.Handled = true;
                 Answer(false);
             }
+            else if (e.Key is Key.Enter or Key.Space)
+            {
+                e.Handled = true;
+            }
         };
         Opened += (_, _) =>
         {
             Activate();
-            (_allow.IsEnabled ? _allow : decline).Focus(NavigationMethod.Tab);
+            Focus();
         };
         Closed += (_, _) =>
         {

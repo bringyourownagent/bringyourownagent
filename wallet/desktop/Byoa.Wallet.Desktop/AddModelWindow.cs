@@ -142,6 +142,10 @@ sealed class AddModelWindow : Window
         _body.Children.Add(_runtime);
         _body.Children.Add(Ui.Text("Model", "label"));
         _body.Children.Add(_runtimeModel);
+        _body.Children.Add(Ui.Text("Endpoint", "label"));
+        _body.Children.Add(_endpoint);
+        _body.Children.Add(Ui.Text("Label", "label"));
+        _body.Children.Add(_label);
         if (_runtimes.Count > 8) _body.Children.Add(_search);
         var stopped = _runtimes.Where(r => !r.Running).ToList();
         if (_runtimes.Count == 0 && !_scanning) _body.Children.Add(Ui.Wrap("No runtimes answered. Start LM Studio or Ollama, then scan again.", "muted"));
@@ -162,6 +166,7 @@ sealed class AddModelWindow : Window
         _body.Children.Add(Ui.Row(9, Ui.Text("Provider", "label"), Ui.Text("OpenRouter", "strong")));
         _body.Children.Add(Ui.Row(9, Ui.Text("Model", "label"), _model));
         _body.Children.Add(Ui.Row(9, Ui.Text("API key", "label"), _key));
+        _body.Children.Add(Ui.Row(9, Ui.Text("Label", "label"), _label));
         _body.Children.Add(Ui.Wrap("key saved ✓ appears after Save; the field is cleared.", "muted", "small"));
     }
 

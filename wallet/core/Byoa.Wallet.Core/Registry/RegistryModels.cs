@@ -1,5 +1,6 @@
 using Byoa.Wallet.Sources;
 using Byoa.Wallet.Settings;
+using Microsoft.Win32.SafeHandles;
 
 namespace Byoa.Wallet.Registry;
 
@@ -67,28 +68,74 @@ public sealed record RegistryOperationResult(bool Ok, string Message, string? Id
     public static RegistryOperationResult Failure(string message) => new(false, message);
 }
 
-public sealed record RegistryTestResult(bool Ok, string Message, string? Detail = null);
+    public sealed record RegistryTestResult(bool Ok, string Message, string? Detail = null, long? LatencyMs = null);
 
-public sealed record ApiKeyEntryRequest(string SourceId, string SourceName, string Actor);
+public sealed record ApiKeyEntryRequest(string SourceId, string SourceName, string Actor,
+    bool AgentInitiated = false, bool FullAccess = false)
+{
+    /// <summary>The wallet-observed agent id; rate limits must not depend on an agent-controlled display name.</summary>
+    public string? AgentId { get; init; }
+}
+
+public sealed record SecretDeletionRequest(string SourceId, string SourceName, string Actor);
 
 public sealed record RegistryChangedEvent(string Action, string? SourceId, string Actor);
 
 public sealed record AgentIdentity(string Id, string Name, string ExecutablePath)
 {
-    public static AgentIdentity Create(string? name, string? executablePath) =>
-        AgentIdentityFactory.Create(name, executablePath);
+    /// <summary>The image path of the bridge process observed by the wallet.</summary>
+    public string ClientExecutablePath { get; init; } = "(path unavailable)";
+
+    /// <summary>The image path of the process that launched the bridge, when the wallet could resolve it.</summary>
+    public string? ObservedParentPath { get; init; }
+
+    public static AgentIdentity CreateObserved(string? displayName, string? clientPath, string? parentPath) =>
+        AgentIdentityFactory.CreateObserved(displayName, clientPath, parentPath);
 }
 
 static class AgentIdentityFactory
 {
-    public static AgentIdentity Create(string? name, string? executablePath)
+    public static AgentIdentity CreateObserved(string? name, string? clientPath, string? parentPath)
     {
-        var display = string.IsNullOrWhiteSpace(name) ? "Unnamed AI agent" : name.Trim();
-        var path = string.IsNullOrWhiteSpace(executablePath) ? "(path unavailable)" : executablePath.Trim();
-        var bytes = System.Text.Encoding.UTF8.GetBytes(display.ToUpperInvariant() + "\n" + path.ToUpperInvariant());
+        var display = Clean(name, "Unnamed AI agent");
+        var client = CleanPath(clientPath);
+        var parent = CleanPath(parentPath);
+        var identityPath = parent ?? client ?? "(unknown parent)";
+        var bytes = System.Text.Encoding.UTF8.GetBytes(identityPath.ToUpperInvariant());
         var id = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes), 0, 12).ToLowerInvariant();
-        return new AgentIdentity(id, display, path);
+        return new AgentIdentity(id, display, identityPath)
+        {
+            ClientExecutablePath = client ?? "(path unavailable)",
+            ObservedParentPath = parent,
+        };
     }
+
+    static string Clean(string? value, string fallback)
+    {
+        return SourceLabels.Clean(value) ?? fallback;
+    }
+
+    static string? CleanPath(string? path) => string.IsNullOrWhiteSpace(path) ? null : path.Trim();
+}
+
+public sealed record ObservedAgentProcess(string? ClientImagePath, string? ParentImagePath);
+
+/// <summary>Reads process facts from the wallet side of the management pipe. Tests inject a fake implementation.</summary>
+public interface IAgentProcessInfo
+{
+    ObservedAgentProcess Read(SafePipeHandle pipe);
+}
+
+public sealed record EndpointConfirmationRequest(string AgentName, string Endpoint, string Model, string? Label);
+
+public interface IEndpointConfirmationUi
+{
+    Task<bool> ConfirmEndpointAsync(EndpointConfirmationRequest request, CancellationToken ct);
+}
+
+public interface ISecretDeletionUi
+{
+    Task<bool> ConfirmSecretDeletionAsync(SecretDeletionRequest request, CancellationToken ct);
 }
 
 public sealed record AgentConsentModel(AgentIdentity Identity, bool FullAccessWasPreviouslyGranted);
@@ -100,7 +147,10 @@ public enum AgentConsentDecision
     Block,
 }
 
-public sealed record AgentConsentAnswer(AgentConsentDecision Decision, bool FullAccess);
+public sealed record AgentConsentAnswer(AgentConsentDecision Decision, bool FullAccess)
+{
+    public string? Error { get; init; }
+}
 
 /// <summary>Lets Core request an agent consent window without taking a dependency on Avalonia.</summary>
 public interface IAgentConsentUi

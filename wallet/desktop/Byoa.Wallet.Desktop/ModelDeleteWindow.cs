@@ -15,7 +15,7 @@ sealed class ModelDeleteWindow : Window
     readonly TaskCompletionSource<bool> _result = new(TaskCreationOptions.RunContinuationsAsynchronously);
     bool _closed;
 
-    public ModelDeleteWindow(string modelName, long? sizeBytes)
+    public ModelDeleteWindow(string modelName, long? sizeBytes, string? note = null)
     {
         Title = "Delete downloaded model";
         Width = 540;
@@ -34,6 +34,7 @@ sealed class ModelDeleteWindow : Window
         var content = Ui.Column(14,
             Ui.Text("Delete downloaded model", "h1"),
             question,
+            note is null ? Ui.Text("", "small") : Ui.Wrap(note, "muted", "small"),
             Ui.Wrap("Only a model downloaded by this wallet can be removed.", "muted"),
             Ui.Row(8, delete, cancel));
         content.Width = 480;
@@ -42,10 +43,10 @@ sealed class ModelDeleteWindow : Window
 
         KeyDown += (_, e) =>
         {
-            if (e.Key != Key.Escape) return;
-            e.Handled = true;
-            Answer(false);
+            if (e.Key == Key.Escape) { e.Handled = true; Answer(false); }
+            else if (e.Key is Key.Enter or Key.Space) e.Handled = true;
         };
+        Opened += (_, _) => { Activate(); Focus(); };
         Closed += (_, _) =>
         {
             _closed = true;

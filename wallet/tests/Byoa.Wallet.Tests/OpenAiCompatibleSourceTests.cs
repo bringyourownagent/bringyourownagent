@@ -185,7 +185,7 @@ public class OpenAiCompatibleSourceTests
     {
         var source = new OpenAiCompatibleSource(SourceKinds.LmStudio, "qwen/qwen3.5-4b", null, "http://127.0.0.1:5321/v1", NoRedirects());
         Assert.Contains("lmstudio:qwen/qwen3.5-4b@http://127.0.0.1:5321/v1", source.Id);
-        Assert.Equal("qwen/qwen3.5-4b in LM Studio", source.Name);
+        Assert.Equal("qwen/qwen3.5-4b · this computer", source.Name);
         Assert.Equal(SourceState.Ready, source.State);
         Assert.Equal("ready when LM Studio runs", source.StateText);          // not checked yet
         source.Up = true;
@@ -197,7 +197,7 @@ public class OpenAiCompatibleSourceTests
         Assert.Equal("LM Studio does not offer qwen/qwen3.5-4b", source.StateText);
 
         var labelled = new OpenAiCompatibleSource(SourceKinds.OpenAiCompatible, "mistral-7b", "Quiz model", "http://192.168.1.50:8000/v1", NoRedirects());
-        Assert.Equal("Quiz model", labelled.Name);
+        Assert.Equal("Quiz model · 192.168.1.50:8000", labelled.Name);
         Assert.Equal("OpenAI-compatible server", labelled.RuntimeName);
         Assert.Equal("another computer (192.168.1.50)", labelled.Runs); // not a loopback address
         Assert.Equal("home-server", labelled.ProviderKind);

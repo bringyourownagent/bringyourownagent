@@ -14,16 +14,20 @@ public sealed class WhisperCpuSource : WhisperSource
     /// <summary>Small beats base on non-English words (measured, see docs/text-generate.md) and still fits a first download.</summary>
     public const string ModelFile = "ggml-small-q5_1.bin";
 
+    readonly string? _modelsRoot;
+
     public WhisperCpuSource(Func<IReadOnlyList<FoundModel>> found, HttpClient http, CpuFeatureSet? cpuFeatures = null,
-        bool? processGpuOverride = false)
+        bool? processGpuOverride = false, string? modelsRoot = null)
         : base(() => ModelFile, found, http, cpuFeatures, processGpuOverride)
     {
+        _modelsRoot = modelsRoot;
     }
 
     public override string Id => Router.CpuWhisperId;
     public override string Name => base.Name + " (CPU)";
-    protected override string ModelDir => Path.Combine(WalletPaths.Home, "models", "whisper");
+    protected override string ModelDir => Path.Combine(_modelsRoot ?? Path.Combine(WalletPaths.Home, "models"), "whisper");
     protected override bool UseGpu => false;
     protected override string? RuntimeLabel() => "this PC (CPU)";
+    protected override double InitialSeconds => 3.0;
     protected override int ThreadCount => Math.Clamp(Environment.ProcessorCount, 2, 16);
 }

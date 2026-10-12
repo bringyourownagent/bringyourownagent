@@ -1,4 +1,5 @@
 using Byoa.Wallet.Protocol;
+using Byoa.Wallet.Registry;
 using Byoa.Wallet.Secrets;
 using Byoa.Wallet.Settings;
 using Byoa.Wallet.Sources;
@@ -97,6 +98,8 @@ public sealed class SourceSet : IDisposable
         OpenRouter = new OpenRouterSource(http, () => secrets.Get(OpenRouterSource.SecretName), () => secrets.Has(OpenRouterSource.SecretName));
         All = [GigaAm, Whisper, WhisperCpu, OpenRouter];
         Scanner = new RuntimeScanner(TextHttp, AddedEndpoints);
+        // Older settings used an Ollama id without /v1. Canonicalise those ids once before route repair.
+        _store.Update(NormalizeAddedSourceIds);
         // The registry normally adds the route in the same settings update as the source. For older settings,
         // repair the route once before subscribing to Changed; a rebuild must never write settings.json again.
         _store.Update(Router.EnsureTextChainFromSettings);
@@ -211,8 +214,16 @@ public sealed class SourceSet : IDisposable
     public ITextSource? CreateTextSource(SourceSetting setting, string? transientApiKey)
     {
         if (setting.Kind is null || string.IsNullOrWhiteSpace(setting.Model)) return null;
+        var kind = setting.Kind.Trim().ToLowerInvariant();
+        var endpoint = kind == SourceKinds.OpenRouter
+            ? "https://openrouter.ai/api/v1"
+            : setting.Endpoint?.Trim() is { Length: > 0 } configured
+                ? configured
+                : OpenAiCompatibleSource.DefaultEndpoint(kind);
+        var endpointPolicy = EndpointPolicy.Check(endpoint);
+        if (!endpointPolicy.Allowed) throw new ArgumentException(endpointPolicy.Message);
         var testKey = string.IsNullOrWhiteSpace(transientApiKey) ? null : transientApiKey.Trim();
-        return setting.Kind.Trim().ToLowerInvariant() switch
+        return kind switch
         {
             SourceKinds.LmStudio or SourceKinds.Ollama
                 => new OpenAiCompatibleSource(setting.Kind, setting.Model.Trim(), setting.Label, setting.Endpoint, TextHttp),
@@ -233,7 +244,37 @@ public sealed class SourceSet : IDisposable
     /// <summary>The endpoints the scanner should watch besides the two built-in ports.</summary>
     IEnumerable<(string Kind, string Endpoint)> AddedEndpoints() => _store.Snapshot().Sources
         .Where(s => s.Enabled && s.Kind is SourceKinds.LmStudio or SourceKinds.Ollama or SourceKinds.OpenAiCompatible)
+        .Where(s => s.EndpointConfirmed || IsLoopbackEndpoint(s.Endpoint))
         .Select(s => (s.Kind!, ScannerEndpoint(s.Kind!, s.Endpoint)));
+
+    static bool IsLoopbackEndpoint(string? endpoint) => Uri.TryCreate(endpoint, UriKind.Absolute, out var uri) &&
+        (OpenAiCompatibleSource.IsLoopback(uri.Host) || uri.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase));
+
+    static void NormalizeAddedSourceIds(WalletSettings settings)
+    {
+        foreach (var source in settings.Sources.Where(s => s.Kind is not null))
+        {
+            if (source.Kind!.Equals(SourceKinds.OpenRouter, StringComparison.OrdinalIgnoreCase))
+                source.Endpoint = "https://openrouter.ai/api/v1";
+            if (IsLoopbackEndpoint(source.Endpoint)) source.EndpointConfirmed = true;
+        }
+        var replacements = settings.Sources.Where(s => s.Kind is not null && !string.IsNullOrWhiteSpace(s.Model))
+            .Select(s => (Old: s.Id, New: s.Kind!.Equals(SourceKinds.OpenRouter, StringComparison.OrdinalIgnoreCase)
+                ? SourceKinds.OpenRouter + ":" + s.Model!.Trim()
+                : OpenAiCompatibleSource.MakeId(s.Kind!, s.Model!, s.Endpoint)))
+            .Where(pair => pair.Old != pair.New).ToArray();
+        foreach (var (oldId, newId) in replacements)
+        {
+            var source = settings.Sources.FirstOrDefault(s => s.Id == oldId);
+            if (source is null || settings.Sources.Any(s => s.Id == newId && s != source)) continue;
+            source.Id = newId;
+            if (Uri.TryCreate(source.Endpoint, UriKind.Absolute, out var uri) &&
+                (OpenAiCompatibleSource.IsLoopback(uri.Host) || uri.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase)))
+                source.EndpointConfirmed = true;
+            foreach (var chain in settings.Chains)
+                foreach (var stop in chain.Stops.Where(stop => stop.SourceId == oldId)) stop.SourceId = newId;
+        }
+    }
 
     /// <summary>The base address a runtime is watched on: the kind's default, or the setting without its /v1 tail.</summary>
     public static string ScannerEndpoint(string kind, string? endpoint)
@@ -316,7 +357,7 @@ public sealed class SourceSet : IDisposable
     {
         _store.Changed -= RebuildText;
         _scans.Cancel();
-        try { _scanLoop?.Wait(TimeSpan.FromSeconds(2)); }
+        try { _scanLoop?.WaitAsync(TimeSpan.FromSeconds(2)).GetAwaiter().GetResult(); }
         catch (Exception) { /* disposal must not bring down the tray */ }
         _scans.Dispose();
         GigaAm.Dispose();

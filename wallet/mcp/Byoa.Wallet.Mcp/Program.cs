@@ -1,7 +1,5 @@
-using System.Diagnostics;
 using System.IO.Pipes;
-using System.Runtime.InteropServices;
-using System.Text;
+using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Byoa.Wallet.Help;
@@ -21,42 +19,107 @@ static class Program
 
 sealed class StdioMcpServer
 {
+    readonly TextReader _input;
+    readonly TextWriter _output;
     AgentPipeClient? _wallet;
     string _clientName = "MCP client";
+    readonly CancellationTokenSource _stop = new();
+    readonly SemaphoreSlim _writeGate = new(1, 1);
+    readonly ConcurrentDictionary<string, CancellationTokenSource> _requests = new(StringComparer.Ordinal);
+    readonly List<Task> _pending = [];
+
+    public StdioMcpServer(TextReader? input = null, TextWriter? output = null)
+    {
+        _input = input ?? Console.In;
+        _output = output ?? Console.Out;
+    }
 
     public async Task RunAsync()
     {
-        while (await Console.In.ReadLineAsync().ConfigureAwait(false) is { } line)
+        while (await _input.ReadLineAsync().ConfigureAwait(false) is { } line)
         {
             if (string.IsNullOrWhiteSpace(line)) continue;
-            JsonObject? request;
-            try { request = JsonNode.Parse(line) as JsonObject; }
+            JsonNode? node;
+            try { node = JsonNode.Parse(line); }
             catch (JsonException)
             {
                 await WriteAsync(Error(null, -32700, "The MCP request was not valid JSON.")).ConfigureAwait(false);
                 continue;
             }
 
-            if (request is null) continue;
-            var response = await HandleAsync(request).ConfigureAwait(false);
-            if (response is not null) await WriteAsync(response).ConfigureAwait(false);
+            if (node is JsonArray)
+            {
+                await WriteAsync(Error(null, -32600, "Batch messages are not supported; send one JSON object per line.")).ConfigureAwait(false);
+                continue;
+            }
+            if (node is not JsonObject request)
+            {
+                await WriteAsync(Error(null, -32600, "The MCP request must be a JSON object.")).ConfigureAwait(false);
+                continue;
+            }
+
+            if (IsCancellation(request))
+            {
+                CancelRequest(request);
+                continue;
+            }
+
+            var requestCancellation = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token);
+            var requestKey = request.ContainsKey("id") ? RequestKey(request["id"]) : null;
+            if (requestKey is not null) _requests[requestKey] = requestCancellation;
+            var work = ProcessAsync(request, requestCancellation, requestKey);
+            _pending.Add(work);
         }
 
+        _stop.Cancel();
+        try { await Task.WhenAll(_pending).ConfigureAwait(false); } catch { }
         _wallet?.Dispose();
+        _writeGate.Dispose();
+        _stop.Dispose();
     }
 
-    async Task<JsonObject?> HandleAsync(JsonObject request)
+    async Task ProcessAsync(JsonObject request, CancellationTokenSource requestCancellation, string? requestKey)
     {
+        try
+        {
+            var response = await HandleAsync(request, requestCancellation.Token).ConfigureAwait(false);
+            if (request.ContainsKey("id") && response is not null)
+                await WriteAsync(response).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (requestCancellation.IsCancellationRequested)
+        {
+            if (request.ContainsKey("id"))
+                await WriteAsync(Error(request["id"], -32800, "The MCP request was cancelled.")).ConfigureAwait(false);
+        }
+        catch (Exception e) when (e is not OutOfMemoryException)
+        {
+            if (request.ContainsKey("id"))
+                await WriteAsync(Error(request["id"], -32603, "The bridge could not handle this request. Try the tool again.")).ConfigureAwait(false);
+        }
+        finally
+        {
+            if (requestKey is not null) _requests.TryRemove(new KeyValuePair<string, CancellationTokenSource>(requestKey, requestCancellation));
+            requestCancellation.Dispose();
+        }
+    }
+
+    async Task<JsonObject?> HandleAsync(JsonObject request, CancellationToken ct)
+    {
+        if (request["jsonrpc"] is not JsonValue version || !version.TryGetValue<string>(out var jsonrpc) || jsonrpc != "2.0")
+            return request.ContainsKey("id") ? Error(request["id"], -32600, "The MCP request must use JSON-RPC 2.0.") : null;
         var method = String(request, "method");
         var id = request["id"]?.DeepClone();
+        if (request.ContainsKey("params") && request["params"] is not JsonObject)
+            return request.ContainsKey("id") ? Error(id, -32602, "The MCP request parameters must be a JSON object.") : null;
         var parameters = request["params"] as JsonObject ?? new JsonObject();
         if (method is "notifications/initialized" or "notifications/cancelled") return null;
+        if (method is null) return request.ContainsKey("id") ? Error(id, -32600, "The MCP request needs a method.") : null;
 
         switch (method)
         {
             case "initialize":
                 _clientName = String(parameters["clientInfo"] as JsonObject, "name") ?? "MCP client";
-                await ConnectWalletAsync().ConfigureAwait(false);
+                await ConnectWalletAsync(ct).ConfigureAwait(false);
                 return Result(id, new JsonObject
                 {
                     ["protocolVersion"] = "2025-06-18",
@@ -69,21 +132,41 @@ sealed class StdioMcpServer
             case "tools/list":
                 return Result(id, new JsonObject { ["tools"] = ToolCatalog.All() });
             case "tools/call":
-                return await ToolCallAsync(id, parameters).ConfigureAwait(false);
+                return await ToolCallAsync(id, parameters, ct).ConfigureAwait(false);
             case "shutdown":
                 return Result(id, JsonValue.Create((string?)null));
             default:
-                return Error(id, -32601, "The MCP method '" + method + "' is not supported.");
+                return request.ContainsKey("id") ? Error(id, -32601, "The MCP method '" + method + "' is not supported.") : null;
         }
     }
 
-    async Task<JsonObject?> ToolCallAsync(JsonNode? id, JsonObject parameters)
+    static bool IsCancellation(JsonObject request) =>
+        String(request, "method") == "notifications/cancelled";
+
+    void CancelRequest(JsonObject request)
+    {
+        if (request["params"] is not JsonObject parameters) return;
+        var id = parameters["requestId"];
+        if (id is null) return;
+        _requests.TryGetValue(RequestKey(id), out var cancellation);
+        cancellation?.Cancel();
+    }
+
+    static string RequestKey(JsonNode? id) => id?.ToJsonString() ?? "null";
+
+    async Task<JsonObject?> ToolCallAsync(JsonNode? id, JsonObject parameters, CancellationToken ct)
     {
         var name = String(parameters, "name");
         if (name is null) return Error(id, -32602, "tools/call needs a tool name.");
+        if (parameters.ContainsKey("arguments") && parameters["arguments"] is not JsonObject)
+            return Error(id, -32602, "tools/call arguments must be a JSON object.");
         var arguments = parameters["arguments"] as JsonObject ?? new JsonObject();
         JsonObject result;
-        if (_wallet is null && name == "help")
+        if (!ToolCatalog.Contains(name))
+        {
+            result = AgentPipeProtocol.Error("Unknown wallet tool '" + name + "'. Call tools/list and choose one of the listed tools.");
+        }
+        else if (_wallet is null && name == "help")
         {
             var topic = arguments["topic"]?.GetValue<string>();
             try
@@ -101,7 +184,7 @@ sealed class StdioMcpServer
         }
         else
         {
-            result = await _wallet.CallAsync(name, arguments).ConfigureAwait(false);
+            result = await _wallet.CallAsync(name, arguments, ct).ConfigureAwait(false);
         }
 
         var ok = result["ok"] is JsonValue v && v.TryGetValue<bool>(out var yes) && yes;
@@ -111,10 +194,10 @@ sealed class StdioMcpServer
         return Result(id, toolResult);
     }
 
-    async Task ConnectWalletAsync()
+    async Task ConnectWalletAsync(CancellationToken ct)
     {
         _wallet?.Dispose();
-        _wallet = await AgentPipeClient.ConnectAsync(_clientName).ConfigureAwait(false);
+        _wallet = await AgentPipeClient.ConnectAsync(_clientName, ct).ConfigureAwait(false);
     }
 
     static string ToolText(JsonObject result, bool ok)
@@ -127,11 +210,16 @@ sealed class StdioMcpServer
         return clone.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
     }
 
-    static async Task WriteAsync(JsonObject message)
+    async Task WriteAsync(JsonObject message)
     {
         // MCP stdio is one JSON-RPC object per line. Never write diagnostics to stdout.
-        await Console.Out.WriteLineAsync(message.ToJsonString()).ConfigureAwait(false);
-        await Console.Out.FlushAsync().ConfigureAwait(false);
+        await _writeGate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            await _output.WriteLineAsync(message.ToJsonString()).ConfigureAwait(false);
+            await _output.FlushAsync().ConfigureAwait(false);
+        }
+        finally { _writeGate.Release(); }
     }
 
     static JsonObject Result(JsonNode? id, JsonNode? value) => new() { ["jsonrpc"] = "2.0", ["id"] = id?.DeepClone(), ["result"] = value?.DeepClone() };
@@ -145,21 +233,26 @@ sealed class AgentPipeClient : IDisposable
 
     AgentPipeClient(NamedPipeClientStream pipe) => _pipe = pipe;
 
-    public static async Task<AgentPipeClient?> ConnectAsync(string clientName)
+    public static async Task<AgentPipeClient?> ConnectAsync(string clientName, CancellationToken ct = default)
     {
         var pipe = new NamedPipeClientStream(".", WalletPaths.McpPipeName(), PipeDirection.InOut,
             PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
         try
         {
-            await pipe.ConnectAsync(1000).ConfigureAwait(false);
+            using var connectTimeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            connectTimeout.CancelAfter(TimeSpan.FromSeconds(1));
+            await pipe.ConnectAsync(connectTimeout.Token).ConfigureAwait(false);
             var hello = new JsonObject
             {
                 ["type"] = AgentPipeProtocol.Hello,
                 ["name"] = clientName,
-                ["executablePath"] = ParentExecutablePath(),
+                ["executablePath"] = Environment.ProcessPath,
             };
             await Framing.WriteAsync(pipe, AgentPipeProtocol.Serialize(hello)).ConfigureAwait(false);
-            var bytes = await Framing.ReadAsync(pipe, 256 * 1024).ConfigureAwait(false);
+            using var helloTimeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            helloTimeout.CancelAfter(TimeSpan.FromSeconds(10));
+            var bytes = await Framing.ReadAsync(pipe, 256 * 1024, helloTimeout.Token)
+                .WaitAsync(TimeSpan.FromSeconds(10), helloTimeout.Token).ConfigureAwait(false);
             var answer = bytes is null ? null : AgentPipeProtocol.Parse(bytes);
             if (answer is null)
             {
@@ -170,6 +263,8 @@ sealed class AgentPipeClient : IDisposable
             // Keep the connection even when the visitor said Not now: tool calls receive the wallet's plain refusal.
             return new AgentPipeClient(pipe);
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { await pipe.DisposeAsync().ConfigureAwait(false); throw; }
+        catch (OperationCanceledException) { await pipe.DisposeAsync().ConfigureAwait(false); return null; }
         catch (Exception e) when (e is TimeoutException or IOException or UnauthorizedAccessException or InvalidDataException)
         {
             await pipe.DisposeAsync().ConfigureAwait(false);
@@ -177,7 +272,7 @@ sealed class AgentPipeClient : IDisposable
         }
     }
 
-    public async Task<JsonObject> CallAsync(string operation, JsonObject arguments)
+    public async Task<JsonObject> CallAsync(string operation, JsonObject arguments, CancellationToken ct = default)
     {
         try
         {
@@ -187,10 +282,19 @@ sealed class AgentPipeClient : IDisposable
                 ["id"] = Guid.NewGuid().ToString("N"),
                 ["operation"] = operation,
                 ["arguments"] = arguments.DeepClone(),
-            })).ConfigureAwait(false);
-            var bytes = await Framing.ReadAsync(_pipe).ConfigureAwait(false);
+            }), ct).ConfigureAwait(false);
+            var bytes = await Framing.ReadAsync(_pipe, Framing.MaxIncoming, ct)
+                .WaitAsync(TimeSpan.FromSeconds(120), ct).ConfigureAwait(false);
             return bytes is null ? AgentPipeProtocol.Error("The wallet connection closed. Open the wallet and try again.")
                 : AgentPipeProtocol.Parse(bytes) ?? AgentPipeProtocol.Error("The wallet returned an invalid response.");
+        }
+        catch (TimeoutException)
+        {
+            return AgentPipeProtocol.Error("The wallet took too long to answer. Check the wallet and try again.");
+        }
+        catch (OperationCanceledException)
+        {
+            return AgentPipeProtocol.Error("The wallet call was cancelled.");
         }
         catch (Exception e) when (e is IOException or ObjectDisposedException or InvalidDataException)
         {
@@ -200,117 +304,35 @@ sealed class AgentPipeClient : IDisposable
 
     public void Dispose() => _pipe.Dispose();
 
-    static string ParentExecutablePath()
-    {
-        try
-        {
-            var basic = new ProcessBasicInformation();
-            var status = NtQueryInformationProcess(GetCurrentProcess(), 0, ref basic,
-                (uint)Marshal.SizeOf<ProcessBasicInformation>(), out _);
-            if (status == 0 && basic.InheritedFromUniqueProcessId != IntPtr.Zero)
-                return QueryPath((uint)basic.InheritedFromUniqueProcessId.ToInt64()) ?? "(path unavailable)";
-
-            var snapshot = CreateToolhelp32Snapshot(SnapshotFlags.Process, 0);
-            if (snapshot == IntPtr.Zero || snapshot == new IntPtr(-1)) return "(path unavailable)";
-            var current = Process.GetCurrentProcess().Id;
-            var entry = new ProcessEntry { Size = (uint)Marshal.SizeOf<ProcessEntry>() };
-            try
-            {
-                if (!Process32First(snapshot, ref entry)) return "(path unavailable)";
-                do
-                {
-                    if (entry.ProcessId == current)
-                    {
-                        var path = QueryPath(entry.ParentProcessId);
-                        if (path is not null) return path;
-                        var parent = new ProcessEntry { Size = (uint)Marshal.SizeOf<ProcessEntry>() };
-                        if (Process32First(snapshot, ref parent))
-                        {
-                            do
-                            {
-                                if (parent.ProcessId == entry.ParentProcessId)
-                                    return parent.ExeFile;
-                            } while (Process32Next(snapshot, ref parent));
-                        }
-
-                        return "process " + entry.ParentProcessId;
-                    }
-                } while (Process32Next(snapshot, ref entry));
-            }
-            finally { CloseProcessHandle(snapshot); }
-        }
-        catch
-        {
-            return "(path unavailable)";
-        }
-        return "(path unavailable)";
-    }
-
-    static string? QueryPath(uint processId)
-    {
-        var handle = OpenProcess(ProcessQueryLimitedInformation, false, processId);
-        if (handle == IntPtr.Zero) return null;
-        try
-        {
-            var path = new StringBuilder(1024);
-            var length = (uint)path.Capacity;
-            return QueryFullProcessImageName(handle, 0, path, ref length) ? path.ToString() : null;
-        }
-        finally { CloseProcessHandle(handle); }
-    }
-
-    [Flags] enum SnapshotFlags : uint { Process = 0x00000002 }
-    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-    struct ProcessEntry
-    {
-        public uint Size, Usage, ProcessId;
-        public IntPtr DefaultHeapId;
-        public uint ModuleId, Threads, ParentProcessId;
-        public int BasePriority;
-        public uint Flags;
-        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)] public string ExeFile;
-    }
-    [StructLayout(LayoutKind.Sequential)]
-    struct ProcessBasicInformation
-    {
-        public IntPtr Reserved1, PebBaseAddress, Reserved2_0, Reserved2_1, UniqueProcessId, InheritedFromUniqueProcessId;
-    }
-    const uint ProcessQueryLimitedInformation = 0x1000;
-    [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr CreateToolhelp32Snapshot(SnapshotFlags flags, uint processId);
-    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool Process32First(IntPtr snapshot, ref ProcessEntry entry);
-    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool Process32Next(IntPtr snapshot, ref ProcessEntry entry);
-    [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr OpenProcess(uint access, bool inheritHandle, uint processId);
-    [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
-    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool QueryFullProcessImageName(IntPtr process, uint flags, StringBuilder name, ref uint size);
-    [DllImport("kernel32.dll", EntryPoint = "CloseHandle")] static extern bool CloseProcessHandle(IntPtr handle);
-    [DllImport("ntdll.dll")] static extern int NtQueryInformationProcess(IntPtr process, int informationClass, ref ProcessBasicInformation information, uint informationLength, out uint returnLength);
-
 }
 
 static class ToolCatalog
 {
     public static JsonArray All() => new(JsonArrayTools());
 
+    public static bool Contains(string name) => JsonArrayTools().Any(tool =>
+        tool["name"] is JsonValue value && value.TryGetValue<string>(out var candidate) && candidate == name);
+
     static JsonNode[] JsonArrayTools() =>
     [
         Tool("help", "Explain the BYOA wallet and how to manage it. Call this first when you do not know the wallet. Optional topic returns one embedded article.",
             [Prop("topic", "string", "Optional help topic. Without it, return a short overview and the topic list.")]),
-        Tool("status", "Show skills, sources and their state, source order, connected site names and states, today's spend, and whether this agent has Full access.", []),
-        Tool("list_runtimes", "Scan this computer for LM Studio, Ollama, and configured OpenAI-compatible runtimes. Shows running or not running and each model offered.", []),
+        Tool("status", "Show skills, sources and their state, source order, connected-site counts by state unless you have Full access, today's spend, and whether this agent has Full access. Without Full access no site names are returned.", []),
+        Tool("list_runtimes", "Scan this computer for LM Studio, Ollama, and confirmed OpenAI-compatible runtimes. It returns running state and a model count; model names are returned only for loopback or visitor-confirmed endpoints.", []),
         Tool("list_downloadable_models", "List speech models the wallet knows how to download, their size, languages, hardware needs, and download state.", []),
-        Tool("add_source", "Add a model source to the wallet. Prefer a local runtime. After adding, call test_source and set_order.",
-            [Prop("kind", "string", "Source kind: lmstudio, ollama, openai-compatible, or openrouter."), Prop("model", "string", "The model id offered by the runtime or provider."), Prop("endpoint", "string", "Optional base endpoint, for example http://127.0.0.1:1234/v1."), ArrayProp("skills", "Optional skills this source serves, usually text.generate."), ArrayProp("languages", "Optional primary language tags; an empty list means any language."), Prop("label", "string", "Optional friendly name shown in the wallet.")], ["kind", "model"]),
-        Tool("update_source", "Edit an added source. Omitted optional parameters stay unchanged; built-in sources cannot be edited.",
+        Tool("add_source", "Add a model source to the wallet. Prefer a local runtime. A loopback endpoint is allowed immediately; an endpoint on another computer is shown to the visitor in a wallet window and is saved, scanned, and contacted only after the visitor allows it. After adding, call test_source and set_order.",
+            [Prop("kind", "string", "Source kind: lmstudio, ollama, openai-compatible, or openrouter."), Prop("model", "string", "The model id offered by the runtime or provider."), Prop("endpoint", "string", "Optional complete http or https base endpoint. Loopback is this computer; another host needs visitor confirmation and plain http is not encrypted."), ArrayProp("skills", "Optional skills this source serves, usually text.generate."), ArrayProp("languages", "Optional primary language tags; an empty list means any language."), Prop("label", "string", "Optional friendly name shown in the wallet; the wallet cleans it and adds the endpoint location.")], ["kind", "model"]),
+        Tool("update_source", "Edit an added source. Omitted optional parameters stay unchanged; built-in sources cannot be edited. Changing to another computer needs the visitor's confirmation in a wallet window before the setting changes.",
             [Prop("source_id", "string", "The source id returned by add_source or shown by status."), Prop("kind", "string", "Optional replacement source kind."), Prop("model", "string", "Optional replacement model id."), Prop("endpoint", "string", "Optional replacement endpoint."), ArrayProp("skills", "Optional replacement skill list."), ArrayProp("languages", "Optional replacement language list."), Prop("label", "string", "Optional replacement friendly label.")], ["source_id"]),
-        Tool("remove_source", "Remove an added source from wallet settings and its route stops. Built-in sources must be disabled instead.", [Prop("source_id", "string", "The added source id to remove.")], ["source_id"]),
-        Tool("enable_source", "Enable or disable a source without removing it.", [Prop("source_id", "string", "The source id."), Prop("enabled", "boolean", "True to enable the source; false to skip it in routing.")], ["source_id", "enabled"]),
-        Tool("test_source", "Make one tiny test call through the wallet's source test path and return a plain pass or failure reason.", [Prop("source_id", "string", "The source id to test.")], ["source_id"]),
-        Tool("download_model", "Download one speech model into the wallet's own models folder. The wallet shows progress; this tool returns when it finishes.", [Prop("model_id", "string", "The downloadable model id from list_downloadable_models.")], ["model_id"]),
-        Tool("remove_model", "Remove a model that this wallet downloaded into its own models folder. This acts immediately on the visitor's request without another confirmation; the wallet refuses files outside its own active models folder or files it did not download.", [Prop("model_id", "string", "The model id from list_downloadable_models. Use that list first and choose a model whose downloaded value is true.")], ["model_id"]),
-        Tool("set_order", "Set the fallback order for one skill and optional language. The first source is tried first.", [Prop("skill", "string", "Skill name, such as audio.transcribe or text.generate."), Prop("language", "string", "Optional language tag; omit for the default route."), ArrayProp("source_ids", "The complete ordered list of source ids.")], ["skill", "source_ids"]),
-        Tool("request_api_key_entry", "Open a key field in the wallet so the visitor types the provider key. Prefer this: the agent never sees the key.", [Prop("source_id", "string", "The API-key source id.")], ["source_id"]),
-        Tool("set_api_key", "Write an API key supplied by the visitor into the wallet. Prefer request_api_key_entry; this value is never returned or read back.", [Prop("source_id", "string", "The API-key source id."), Prop("key", "string", "The key handed to you by the visitor; do not guess or print it.")], ["source_id", "key"]),
-        Tool("activity", "Show recent wallet activity newest first. It never includes audio, prompts, transcripts, or keys.", [Prop("limit", "integer", "Optional number of entries, 1 to 500; default 50."), Prop("since", "string", "Optional ISO date/time; return entries at or after it.")]),
+        Tool("remove_source", "Remove an added source from wallet settings and its route stops. A source with a saved key needs Full access and asks the visitor whether to delete or keep that key. Built-in sources must be disabled instead.", [Prop("source_id", "string", "The added source id to remove.")], ["source_id"]),
+        Tool("enable_source", "Enable or disable a source without removing it. Changing a built-in speech or paid source needs Full access; an added model source can be changed after normal agent approval.", [Prop("source_id", "string", "The source id."), Prop("enabled", "boolean", "True to enable the source; false to skip it in routing.")], ["source_id", "enabled"]),
+        Tool("test_source", "Make one tiny test call through the wallet's source test path. Return ok or not ok, latency, and the first 80 answer characters only for a loopback or visitor-confirmed source; never return an answer from an unconfirmed remote endpoint.", [Prop("source_id", "string", "The source id to test.")], ["source_id"]),
+        Tool("download_model", "Download one speech model into the wallet's own models folder. Only one download runs at a time, at least 5 GB must remain free, and Activity records that the agent started it; the wallet shows progress and this tool returns when it finishes.", [Prop("model_id", "string", "The downloadable model id from list_downloadable_models.")], ["model_id"]),
+        Tool("remove_model", "Ask the visitor in a wallet window before removing a model that this wallet downloaded into its own models folder. The wallet refuses files outside its active models folder, redirected folders, or files it did not download; the window warns if this is the only listed source for a skill.", [Prop("model_id", "string", "The model id from list_downloadable_models. Use that list first and choose a model whose downloaded value is true.")], ["model_id"]),
+        Tool("set_order", "Set the fallback order for one skill and optional language. The first source is tried first. The wallet refuses unknown ids or an order that leaves the skill with no source able to serve it, and records the change.", [Prop("skill", "string", "Skill name, such as audio.transcribe or text.generate."), Prop("language", "string", "Optional language tag; omit for the default route."), ArrayProp("source_ids", "The complete ordered list of source ids that can serve this skill.")], ["skill", "source_ids"]),
+        Tool("request_api_key_entry", "Open a key field in the wallet so the visitor types the provider key. Prefer this: the agent never sees the key. A second request for the same source is refused, and an agent may open at most three such fields per hour.", [Prop("source_id", "string", "The API-key source id.")], ["source_id"]),
+        Tool("set_api_key", "Write an API key supplied by the visitor into the wallet. Prefer request_api_key_entry; this value is never returned or read back. Replacing an existing key needs Full access; a new key does not.", [Prop("source_id", "string", "The API-key source id."), Prop("key", "string", "The key handed to you by the visitor; do not guess or print it.")], ["source_id", "key"]),
+        Tool("activity", "Show recent wallet activity newest first. Without Full access, site origins become stable site hash labels and free-text notes are omitted; with Full access, site names and full entries are returned. It never includes audio, prompts, transcripts, or keys.", [Prop("limit", "integer", "Optional number of entries, 1 to 500; default 50."), Prop("since", "string", "Optional ISO date/time; return entries at or after it.")]),
         Tool("list_sites", "Full access only: list site names and access states.", []),
         Tool("set_site_access", "Full access only: pause, resume, revoke, block, or unblock a site's access. Visitor consent cannot be bypassed.", [Prop("origin", "string", "The site's exact origin, such as https://example.com."), Prop("action", "string", "One of revoke, block, unblock, pause, resume, or allow. Allow still requires the visitor consent window.")], ["origin", "action"]),
         Tool("set_limits", "Full access only: change wallet or site budgets/call limits. Ask the visitor first in normal use.", [Prop("origin", "string", "Optional exact site origin for site-specific limits."), Prop("wallet_per_day", "string", "Optional whole-wallet daily money limit, for example 1.00 USD."), Prop("site_per_day", "string", "Optional default site daily money limit."), Prop("site_calls_per_day", "integer", "Optional default calls per site per day."), Prop("default_session_budget", "string", "Optional default budget per session."), Prop("budget", "string", "Optional site budget per session when origin is supplied."), Prop("per_day", "string", "Optional site daily money limit when origin is supplied."), Prop("calls_per_day", "integer", "Optional site daily call limit when origin is supplied.")]),

@@ -36,7 +36,7 @@ public sealed class OpenRouterTextSource : ITextSource
         Func<string?> key, Func<bool> hasKey, Uri? baseUrl = null)
     {
         Model = model;
-        Label = label;
+        Label = SourceLabels.Clean(label);
         SecretRef = string.IsNullOrWhiteSpace(secretRef) ? SecretName : secretRef;
         _http = http;
         _key = key;
@@ -48,7 +48,7 @@ public sealed class OpenRouterTextSource : ITextSource
     public string? Label { get; }
     public string? SecretRef { get; }
     public string Id => SourceKinds.OpenRouter + ":" + Model;
-    public string Name => Label is { Length: > 0 } ? Label : Model + " (OpenRouter)";
+    public string Name => (Label ?? Model) + " · " + _baseUrl.Authority;
     public string Runs => Sources.Runs.ApiKey;
     public string ProviderKind => "api-key";
     public IReadOnlyList<string>? Languages => null;

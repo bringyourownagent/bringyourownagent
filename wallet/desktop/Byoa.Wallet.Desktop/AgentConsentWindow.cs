@@ -15,7 +15,7 @@ sealed class AgentConsentWindow : Window
     readonly CheckBox _full = new() { Content = "Full access (also site access, limits, paid approvals, and other agents)", IsChecked = false };
     bool _closed;
 
-    public AgentConsentWindow(AgentConsentModel model)
+    public AgentConsentWindow(AgentConsentModel model, Func<int>? waitingCount = null)
     {
         Title = "Connect an AI agent";
         Width = 540;
@@ -28,14 +28,18 @@ sealed class AgentConsentWindow : Window
 
         var name = Ui.Runs((model.Identity.Name, true), (" wants to manage your wallet", false));
         AutomationProperties.SetName(name, model.Identity.Name + " wants to manage your wallet");
-        var path = Ui.Box("field", Ui.Wrap(model.Identity.ExecutablePath, "mono", "small"));
+        var path = Ui.Box("field", Ui.Wrap(model.Identity.ClientExecutablePath, "mono", "small"));
         var body = Ui.Column(12,
             Ui.Row(12, Ui.Tile(Ui.Screen, 38), Ui.Column(3, name, Ui.Text("First connection", "muted", "small"))),
-            Ui.Wrap("This agent can view wallet status and activity, add or remove model sources, set source order, and ask the wallet to download a model.", "muted"),
+            Ui.Wrap("It can manage sources and routes (you confirm any source on another computer).", "muted"),
+            Ui.Wrap("It can download models and, after your confirmation, delete them.", "muted"),
+            Ui.Wrap("It can write API keys (it cannot read them).", "muted"),
+            Ui.Wrap("It can read the activity log (site names only with Full access).", "muted"),
             Ui.Wrap("It cannot open a site's access, change your limits, approve another agent, or approve paid use unless you turn on Full access below.", "muted"),
-            Ui.Column(5, Ui.Text("Executable", "label"), path),
+            Ui.Column(5, Ui.Text(model.Identity.ObservedParentPath is null ? "Parent program (unknown parent; observed by wallet)" : "Parent program (observed by wallet)", "label"), Ui.Box("field", Ui.Wrap(model.Identity.ObservedParentPath ?? "unknown parent", "mono", "small"))),
+            Ui.Column(5, Ui.Text("Bridge process (observed by wallet)", "label"), path),
             _full,
-            Ui.Wrap("The wallet identifies this agent by its announced name and executable path. You can change Full access or Revoke it later in Settings → Agents.", "muted", "small"));
+            Ui.Wrap((waitingCount?.Invoke() is { } count && count > 1 ? (count - 1).ToString() + " more waiting. " : "") + "The wallet identifies this agent by the parent program it observed. You can change Full access or Revoke it later in Settings.", "muted", "small"));
         body.Margin = new Thickness(26, 24, 26, 18);
         var allow = Ui.Button("Allow", "allow", "AgentAllow", () => Answer(AgentConsentDecision.Allow), "small");
         var notNow = Ui.Button("Not now", "deny", "AgentNotNow", () => Answer(AgentConsentDecision.NotNow), "small");
@@ -44,7 +48,12 @@ sealed class AgentConsentWindow : Window
         var buttons = Ui.Columns("Auto,*,Auto", Ui.Row(8, allow, notNow), block);
         buttons.Margin = new Thickness(26, 0, 26, 22);
         Content = Ui.Column(0, body, buttons);
-        KeyDown += (_, e) => { if (e.Key == Avalonia.Input.Key.Escape) Answer(AgentConsentDecision.NotNow); };
+        KeyDown += (_, e) =>
+        {
+            if (e.Key == Avalonia.Input.Key.Escape) Answer(AgentConsentDecision.NotNow);
+            else if (e.Key is Avalonia.Input.Key.Enter or Avalonia.Input.Key.Space) e.Handled = true;
+        };
+        Opened += (_, _) => { Activate(); Focus(); };
         Closed += (_, _) =>
         {
             _closed = true;

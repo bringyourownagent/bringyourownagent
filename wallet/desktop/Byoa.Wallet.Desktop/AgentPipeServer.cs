@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO.Pipes;
 using System.Security.Cryptography;
 using System.Text.Json.Nodes;
@@ -16,24 +17,48 @@ namespace Byoa.Wallet.Desktop;
 /// </summary>
 sealed class AgentPipeServer : IDisposable
 {
+    const int MaxAllowedServerInstances = 8;
+    static readonly TimeSpan HelloTimeout = TimeSpan.FromSeconds(10);
+    static readonly TimeSpan IdleTimeout = TimeSpan.FromMinutes(15);
     static readonly HashSet<string> FullAccessTools = new(StringComparer.Ordinal)
     {
         "list_sites", "set_site_access", "set_limits",
     };
+    static readonly HashSet<string> NormalAccessTools = new(StringComparer.Ordinal)
+    {
+        "help", "status", "list_runtimes", "list_downloadable_models", "add_source", "update_source",
+        "remove_source", "enable_source", "test_source", "download_model", "remove_model", "set_order",
+        "request_api_key_entry", "set_api_key", "activity",
+    };
+
+    /// <summary>One explicit classification for every tool. Tests compare it with the public MCP catalog.</summary>
+    internal static IReadOnlyCollection<string> ClassifiedTools => NormalAccessTools.Concat(FullAccessTools).ToArray();
+
+    internal static bool IsClassifiedTool(string operation) =>
+        NormalAccessTools.Contains(operation) || FullAccessTools.Contains(operation);
+
+    internal static bool RequiresFullAccess(string operation) => FullAccessTools.Contains(operation);
 
     readonly WalletServices _w;
     readonly IAgentConsentUi _ui;
+    readonly IAgentProcessInfo _processInfo;
     readonly CancellationTokenSource _stop = new();
+    readonly SemaphoreSlim _connectionSlots = new(MaxAllowedServerInstances, MaxAllowedServerInstances);
+    readonly object _authorizationGate = new();
+    readonly Dictionary<string, Task<AgentAccess>> _authorizing = new(StringComparer.Ordinal);
+    readonly Dictionary<string, DateTimeOffset> _notNow = new(StringComparer.Ordinal);
 
-    public AgentPipeServer(WalletServices services, IAgentConsentUi ui)
+    public AgentPipeServer(WalletServices services, IAgentConsentUi ui, IAgentProcessInfo? processInfo = null)
     {
         _w = services;
         _ui = ui;
+        _processInfo = processInfo ?? new WindowsAgentProcessInfo();
     }
 
     public void Start() => _ = Task.Run(async () =>
     {
         try { await AcceptLoopAsync().ConfigureAwait(false); }
+        catch (OperationCanceledException) when (_stop.IsCancellationRequested) { }
         catch (Exception e) when (e is not OutOfMemoryException) { ErrorLog.Write(WalletPaths.Home, e); }
     });
 
@@ -42,7 +67,13 @@ sealed class AgentPipeServer : IDisposable
         var name = WalletPaths.McpPipeName();
         while (!_stop.IsCancellationRequested)
         {
-            var pipe = new NamedPipeServerStream(name, PipeDirection.InOut, NamedPipeServerStream.MaxAllowedServerInstances,
+            if (!_connectionSlots.Wait(0))
+            {
+                await Task.Delay(100, _stop.Token).ConfigureAwait(false);
+                continue;
+            }
+
+            var pipe = new NamedPipeServerStream(name, PipeDirection.InOut, MaxAllowedServerInstances,
                 PipeTransmissionMode.Byte, PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
             try
             {
@@ -51,11 +82,13 @@ sealed class AgentPipeServer : IDisposable
             catch (OperationCanceledException)
             {
                 await pipe.DisposeAsync().ConfigureAwait(false);
+                _connectionSlots.Release();
                 break;
             }
             catch (IOException)
             {
                 await pipe.DisposeAsync().ConfigureAwait(false);
+                _connectionSlots.Release();
                 await Task.Delay(200).ConfigureAwait(false);
                 continue;
             }
@@ -64,6 +97,7 @@ sealed class AgentPipeServer : IDisposable
             {
                 try { await ServeAsync(pipe).ConfigureAwait(false); }
                 catch (Exception e) when (e is not OutOfMemoryException) { ErrorLog.Write(WalletPaths.Home, e); }
+                finally { _connectionSlots.Release(); }
             });
         }
     }
@@ -71,18 +105,29 @@ sealed class AgentPipeServer : IDisposable
     async Task ServeAsync(NamedPipeServerStream pipe)
     {
         AgentSession? session = null;
+        using var connection = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token);
+        var monitor = MonitorConnectionAsync(pipe, connection);
         try
         {
-            var helloBytes = await Framing.ReadAsync(pipe, 256 * 1024, _stop.Token).ConfigureAwait(false);
+            using var helloTimeout = CancellationTokenSource.CreateLinkedTokenSource(connection.Token);
+            helloTimeout.CancelAfter(HelloTimeout);
+            var helloBytes = await Framing.ReadAsync(pipe, 256 * 1024, helloTimeout.Token).ConfigureAwait(false);
             var hello = helloBytes is null ? null : AgentPipeProtocol.Parse(helloBytes);
             if (hello is null || !string.Equals(String(hello, "type"), AgentPipeProtocol.Hello, StringComparison.Ordinal))
             {
-                await SendAsync(pipe, AgentPipeProtocol.Error("The MCP bridge did not identify itself."), CancellationToken.None).ConfigureAwait(false);
+                await SendAsync(pipe, AgentPipeProtocol.Error("The MCP bridge did not identify itself."), connection.Token).ConfigureAwait(false);
                 return;
             }
 
-            var identity = AgentIdentity.Create(String(hello, "name"), String(hello, "executablePath"));
-            var access = await AuthorizeAsync(identity, _stop.Token).ConfigureAwait(false);
+            var observed = _processInfo.Read(pipe.SafePipeHandle);
+            if (!IsInstalledBridge(observed.ClientImagePath))
+            {
+                await SendAsync(pipe, AgentPipeProtocol.Error("This program is not the wallet's MCP bridge."), connection.Token).ConfigureAwait(false);
+                return;
+            }
+
+            var identity = AgentIdentity.CreateObserved(String(hello, "name"), observed.ClientImagePath, observed.ParentImagePath);
+            var access = await AuthorizeAsync(identity, connection.Token).ConfigureAwait(false);
             session = new AgentSession(identity, access);
             await SendAsync(pipe, new JsonObject
             {
@@ -91,20 +136,54 @@ sealed class AgentPipeServer : IDisposable
                 ["ok"] = access.Allowed,
                 ["fullAccess"] = access.FullAccess,
                 ["error"] = access.Allowed ? null : access.Error,
-            }, CancellationToken.None).ConfigureAwait(false);
+            }, connection.Token).ConfigureAwait(false);
 
-            while (!_stop.IsCancellationRequested)
+            while (!connection.IsCancellationRequested)
             {
-                var bytes = await Framing.ReadAsync(pipe, Framing.MaxIncoming, _stop.Token).ConfigureAwait(false);
+                byte[]? bytes;
+                try
+                {
+                    bytes = await Framing.ReadAsync(pipe, Framing.MaxIncoming, connection.Token)
+                        .WaitAsync(IdleTimeout, connection.Token).ConfigureAwait(false);
+                }
+                catch (TimeoutException)
+                {
+                    break;
+                }
                 if (bytes is null) break;
-                var message = AgentPipeProtocol.Parse(bytes);
-                if (message is null) continue;
-                var requestId = message["id"]?.DeepClone();
-                var response = await HandleAsync(session, message, _stop.Token).ConfigureAwait(false);
+                var hasId = false;
+                JsonObject? response;
+                try
+                {
+                    var message = AgentPipeProtocol.Parse(bytes);
+                    if (message is null)
+                    {
+                        response = Failure("The wallet expected one JSON object per message.");
+                    }
+                    else
+                    {
+                        hasId = message.ContainsKey("id");
+                        response = await HandleAsync(session, message, connection.Token).ConfigureAwait(false);
+                        response["_requestId"] = message["id"]?.DeepClone();
+                    }
+                }
+                catch (Exception e) when (e is not OutOfMemoryException)
+                {
+                    response = Failure("The wallet could not apply that request: " + e.GetType().Name + ". Check the arguments and try again.");
+                }
+
+                // A notification has no id property and must never receive a response. Explicit null remains a
+                // request id and is echoed as null by the response envelope.
+                if (!hasId || response is null) continue;
                 response["type"] = AgentPipeProtocol.Response;
-                response["requestId"] = requestId?.DeepClone();
-                if (!response.ContainsKey("id")) response["id"] = requestId?.DeepClone();
-                await SendAsync(pipe, response, CancellationToken.None).ConfigureAwait(false);
+                response["id"] = null; // replaced below without ever confusing it with a source/model id
+                // HandleAsync places the request id in this private marker so application ids stay separate.
+                if (response["_requestId"] is { } requestId)
+                {
+                    response.Remove("_requestId");
+                    response["id"] = requestId.DeepClone();
+                }
+                await SendAsync(pipe, response, connection.Token).ConfigureAwait(false);
             }
         }
         catch (Exception e) when (e is IOException or InvalidDataException or OperationCanceledException or ObjectDisposedException)
@@ -113,8 +192,42 @@ sealed class AgentPipeServer : IDisposable
         }
         finally
         {
+            connection.Cancel();
+            try { await monitor.ConfigureAwait(false); } catch { }
             await pipe.DisposeAsync().ConfigureAwait(false);
         }
+    }
+
+    async Task MonitorConnectionAsync(NamedPipeServerStream pipe, CancellationTokenSource connection)
+    {
+        try
+        {
+            while (!connection.IsCancellationRequested)
+            {
+                await Task.Delay(250, connection.Token).ConfigureAwait(false);
+                if (!pipe.IsConnected)
+                {
+                    connection.Cancel();
+                    return;
+                }
+            }
+        }
+        catch (OperationCanceledException) { }
+    }
+
+    static bool IsInstalledBridge(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path) || !Path.IsPathFullyQualified(path) ||
+            !string.Equals(Path.GetFileName(path), "byoa-mcp.exe", StringComparison.OrdinalIgnoreCase))
+            return false;
+        try
+        {
+            var configured = Environment.GetEnvironmentVariable("BYOA_WALLET_MCP_PATH");
+            var folder = string.IsNullOrWhiteSpace(configured) ? AppContext.BaseDirectory : configured;
+            if (string.Equals(Path.GetExtension(folder), ".exe", StringComparison.OrdinalIgnoreCase)) folder = Path.GetDirectoryName(folder)!;
+            return string.Equals(Path.GetFullPath(Path.GetDirectoryName(path)!), Path.GetFullPath(folder), StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception e) when (e is ArgumentException or IOException or NotSupportedException) { return false; }
     }
 
     async Task<AgentAccess> AuthorizeAsync(AgentIdentity identity, CancellationToken ct)
@@ -137,6 +250,37 @@ sealed class AgentPipeServer : IDisposable
             return new AgentAccess(true, existing.FullAccess, null);
         }
 
+        Task<AgentAccess> task;
+        lock (_authorizationGate)
+        {
+            if (_notNow.TryGetValue(identity.Id, out var until))
+            {
+                if (until > DateTimeOffset.UtcNow)
+                    return new AgentAccess(false, false, "The visitor said Not now for this agent. Try again after a minute or ask the visitor in the wallet.");
+                _notNow.Remove(identity.Id);
+            }
+
+            if (_authorizing.TryGetValue(identity.Id, out var pending))
+                task = pending;
+            else
+            {
+                task = AuthorizeNewAsync(identity, ct);
+                _authorizing[identity.Id] = task;
+                _ = task.ContinueWith(_ =>
+                {
+                    lock (_authorizationGate) _authorizing.Remove(identity.Id);
+                }, TaskScheduler.Default);
+            }
+        }
+        return await task.WaitAsync(ct).ConfigureAwait(false);
+    }
+
+    async Task<AgentAccess> AuthorizeNewAsync(AgentIdentity identity, CancellationToken ct)
+    {
+        // Recheck after another connection may have completed the approval while this one was queued.
+        var existing = _w.Store.Snapshot().Agents.FirstOrDefault(a => a.Id == identity.Id);
+        if (existing is { Status: "allowed" }) return new AgentAccess(true, existing.FullAccess, null);
+
         AgentConsentAnswer answer;
         try
         {
@@ -147,8 +291,14 @@ sealed class AgentPipeServer : IDisposable
             return new AgentAccess(false, false, "The wallet did not receive the visitor's answer. Open the wallet and try again.");
         }
 
+        if (answer.Error is not null)
+            return new AgentAccess(false, false, answer.Error);
+
         if (answer.Decision == AgentConsentDecision.NotNow)
+        {
+            lock (_authorizationGate) _notNow[identity.Id] = DateTimeOffset.UtcNow.AddSeconds(60);
             return new AgentAccess(false, false, "The visitor chose Not now. Ask the visitor to allow this agent in the wallet.");
+        }
 
         _w.Store.Update(s =>
         {
@@ -193,6 +343,9 @@ sealed class AgentPipeServer : IDisposable
         if (FullAccessTools.Contains(operation) && !access.FullAccess)
             return Failure("This action needs Full access. Ask the visitor to give you Full access in Settings → Agents.");
 
+        if (!NormalAccessTools.Contains(operation) && !FullAccessTools.Contains(operation))
+            return Failure("This wallet tool is not classified for agent access. Call tools/list and choose a listed tool.");
+
         var args = message["arguments"] as JsonObject ?? new JsonObject();
         var actor = "agent: " + session.Identity.Name;
         try
@@ -203,17 +356,17 @@ sealed class AgentPipeServer : IDisposable
                 "status" => Status(access),
                 "list_runtimes" => await RuntimesAsync(ct).ConfigureAwait(false),
                 "list_downloadable_models" => DownloadableModels(),
-                "add_source" => AddSource(args, actor),
-                "update_source" => UpdateSource(args, actor),
-                "remove_source" => RemoveSource(args, actor),
-                "enable_source" => EnableSource(args, actor),
+                "add_source" => await AddSourceAsync(args, actor, session, ct).ConfigureAwait(false),
+                "update_source" => await UpdateSourceAsync(args, actor, session, ct).ConfigureAwait(false),
+                "remove_source" => await RemoveSourceAsync(args, actor, access, ct).ConfigureAwait(false),
+                "enable_source" => EnableSource(args, actor, access),
                 "test_source" => await TestSourceAsync(args, ct).ConfigureAwait(false),
                 "download_model" => await DownloadModelAsync(args, actor, ct).ConfigureAwait(false),
                 "remove_model" => await RemoveModelAsync(args, actor, ct).ConfigureAwait(false),
                 "set_order" => SetOrder(args, actor),
-                "request_api_key_entry" => await RequestKeyAsync(args, actor, ct).ConfigureAwait(false),
-                "set_api_key" => await SetKeyAsync(args, actor).ConfigureAwait(false),
-                "activity" => Activity(args),
+                "request_api_key_entry" => await RequestKeyAsync(args, actor, access, session, ct).ConfigureAwait(false),
+                "set_api_key" => await SetKeyAsync(args, actor, access).ConfigureAwait(false),
+                "activity" => Activity(args, access),
                 "list_sites" => ListSites(),
                 "set_site_access" => SetSiteAccess(args, actor),
                 "set_limits" => SetLimits(args, actor),
@@ -257,12 +410,21 @@ sealed class AgentPipeServer : IDisposable
     {
         var settings = _w.Store.Snapshot();
         var (spent, calls) = _w.Activity.Today(DateTimeOffset.UtcNow);
-        var sites = settings.Sites.Select(site => SiteSummary(site)).ToArray();
         var result = Success();
         result["skills"] = new JsonArray(_w.Registry.ServedSkills.Select(skill => (JsonNode?)JsonValue.Create(skill)).ToArray());
         result["sources"] = SourcesJson(_w.Registry.ListSources());
         result["chains"] = ChainsJson(_w.Registry.ListChains());
-        result["connectedSites"] = new JsonArray(sites.Select(x => (JsonNode)x).ToArray());
+        if (access.FullAccess)
+        {
+            var sites = settings.Sites.Select(site => SiteSummary(site)).ToArray();
+            result["connectedSites"] = new JsonArray(sites.Select(x => (JsonNode)x).ToArray());
+        }
+        else
+        {
+            result["connectedSites"] = new JsonArray(settings.Sites
+                .GroupBy(site => SiteState(site), StringComparer.Ordinal)
+                .Select(group => (JsonNode)new JsonObject { ["state"] = group.Key, ["count"] = group.Count() }).ToArray());
+        }
         result["today"] = new JsonObject { ["spent"] = Money.Show(spent), ["calls"] = calls };
         result["fullAccess"] = access.FullAccess;
         return result;
@@ -271,19 +433,36 @@ sealed class AgentPipeServer : IDisposable
     async Task<JsonObject> RuntimesAsync(CancellationToken ct)
     {
         var runtimes = await _w.Registry.ListRuntimesAsync(ct).ConfigureAwait(false);
+        var settings = _w.Store.Snapshot();
         var result = Success();
-        result["runtimes"] = new JsonArray(runtimes.Select(r => (JsonNode)new JsonObject
+        var runtimeNodes = new List<JsonNode>();
+        foreach (var runtime in runtimes)
         {
-            ["kind"] = r.Kind,
-            ["endpoint"] = r.Endpoint,
-            ["running"] = r.Running,
-            ["state"] = r.Running ? "running" : "not running — start it or download it",
-            ["models"] = new JsonArray(r.Models.Select(m => (JsonNode)new JsonObject
+            var visible = EndpointPolicy.Check(runtime.Endpoint).IsLoopback || settings.Sources.Any(s =>
+                s.EndpointConfirmed && string.Equals(ProvidersEndpoint(s.Endpoint), ProvidersEndpoint(runtime.Endpoint), StringComparison.OrdinalIgnoreCase));
+            runtimeNodes.Add(new JsonObject
             {
-                ["id"] = m.Id, ["name"] = m.Name, ["sizeBytes"] = m.SizeBytes, ["loaded"] = m.Loaded,
-            }).ToArray()),
-        }).ToArray());
+                ["kind"] = runtime.Kind,
+                ["endpoint"] = runtime.Endpoint,
+                ["running"] = runtime.Running,
+                ["state"] = runtime.Running ? "running" : "not running — start it or download it",
+                ["modelCount"] = runtime.Models.Count,
+                ["models"] = visible
+                    ? new JsonArray(runtime.Models.Select(m => (JsonNode)new JsonObject
+                    {
+                        ["id"] = m.Id, ["name"] = m.Name, ["sizeBytes"] = m.SizeBytes, ["loaded"] = m.Loaded,
+                    }).ToArray())
+                    : new JsonArray(),
+            });
+        }
+        result["runtimes"] = new JsonArray(runtimeNodes.ToArray());
         return result;
+    }
+
+    static string ProvidersEndpoint(string? endpoint)
+    {
+        var clean = endpoint?.Trim().TrimEnd('/') ?? "";
+        return clean.EndsWith("/v1", StringComparison.OrdinalIgnoreCase) ? clean[..^3].TrimEnd('/') : clean;
     }
 
     JsonObject DownloadableModels()
@@ -298,52 +477,85 @@ sealed class AgentPipeServer : IDisposable
         return result;
     }
 
-    JsonObject AddSource(JsonObject args, string actor)
+    async Task<JsonObject> AddSourceAsync(JsonObject args, string actor, AgentSession session, CancellationToken ct)
     {
         var draft = new SourceDraft(String(args, "kind"), StringOrNull(args, "model"), StringOrNull(args, "endpoint"),
             StringsOrNull(args, "skills"), StringsOrNull(args, "languages"), StringOrNull(args, "label"));
-        return Operation(_w.Registry.AddSource(draft, actor));
+        return Operation(await _w.Registry.AddSourceAsync(draft, actor, session.Identity.Name, ct).ConfigureAwait(false));
     }
 
-    JsonObject UpdateSource(JsonObject args, string actor)
+    async Task<JsonObject> UpdateSourceAsync(JsonObject args, string actor, AgentSession session, CancellationToken ct)
     {
         var update = new SourceUpdate(StringOrNull(args, "kind"), StringOrNull(args, "model"), StringOrNull(args, "endpoint"),
             StringsOrNull(args, "skills"), StringsOrNull(args, "languages"), StringOrNull(args, "label"));
-        return Operation(_w.Registry.UpdateSource(String(args, "source_id"), update, actor));
+        return Operation(await _w.Registry.UpdateSourceAsync(String(args, "source_id"), update, actor, session.Identity.Name, ct).ConfigureAwait(false));
     }
 
-    JsonObject RemoveSource(JsonObject args, string actor) => Operation(_w.Registry.RemoveSource(String(args, "source_id"), actor));
+    async Task<JsonObject> RemoveSourceAsync(JsonObject args, string actor, AgentAccess access, CancellationToken ct) =>
+        Operation(await _w.Registry.RemoveSourceAsync(String(args, "source_id"), actor, access.FullAccess, ct).ConfigureAwait(false));
 
-    JsonObject EnableSource(JsonObject args, string actor) => Operation(_w.Registry.EnableSource(String(args, "source_id"), Bool(args, "enabled"), actor));
+    JsonObject EnableSource(JsonObject args, string actor, AgentAccess access)
+    {
+        var id = String(args, "source_id");
+        var source = _w.Registry.ListSources().FirstOrDefault(s => s.Id == id);
+        if (source is { BuiltIn: true } && !access.FullAccess)
+            return Failure("Enabling or disabling a built-in source needs Full access. Ask the visitor to give you Full access in Settings → Agents.");
+        return Operation(_w.Registry.EnableSource(id, Bool(args, "enabled"), actor));
+    }
 
     async Task<JsonObject> TestSourceAsync(JsonObject args, CancellationToken ct)
     {
-        var result = await _w.Registry.TestSourceAsync(String(args, "source_id"), ct).ConfigureAwait(false);
+        var id = String(args, "source_id");
+        var source = _w.Registry.ListSources().FirstOrDefault(s => s.Id == id);
+        if (source is null) return Failure("There is no source with id '" + id + "'. Add it first.");
+        var watch = Stopwatch.StartNew();
+        var result = await _w.Registry.TestSourceAsync(id, ct).ConfigureAwait(false);
+        result = result with { LatencyMs = watch.ElapsedMilliseconds };
+        var endpoint = EndpointPolicy.Check(source.Endpoint);
+        var confirmed = _w.Store.Snapshot().Sources.FirstOrDefault(s => s.Id == id)?.EndpointConfirmed == true;
+        if (result.Ok && !endpoint.IsLoopback && !confirmed)
+        {
+            var answer = Success("Source answered; the wallet did not return its remote response.");
+            if (result.LatencyMs is { } remoteLatency) answer["latencyMs"] = remoteLatency;
+            return answer;
+        }
         return Test(result);
     }
 
     async Task<JsonObject> DownloadModelAsync(JsonObject args, string actor, CancellationToken ct)
     {
+        var model = _w.Registry.ListDownloadableModels().FirstOrDefault(m => m.Id == String(args, "model_id"));
+        if (model is null) return Failure("There is no downloadable model with that id. Call list_downloadable_models first.");
         var result = await _w.Registry.DownloadModelAsync(String(args, "model_id"), null, actor, ct).ConfigureAwait(false);
-        return Operation(result);
+        return Operation(result, "modelId");
     }
 
     async Task<JsonObject> RemoveModelAsync(JsonObject args, string actor, CancellationToken ct)
     {
+        var model = _w.Registry.ListDownloadableModels().FirstOrDefault(m => m.Id == String(args, "model_id"));
+        if (model is null) return Failure("There is no downloadable model with that id. Call list_downloadable_models first.");
+        if (!model.Downloaded || string.IsNullOrWhiteSpace(model.OwnedPath))
+            return Failure("That model is not a downloaded file owned by this wallet, so there is nothing to remove.");
+        var note = _w.Registry.ListSources().Count(source => source.BuiltIn && source.Skills.Contains(model.Skill, StringComparer.Ordinal)) == 1
+            ? "This is the only listed source for " + model.Skill + ". The skill may be unavailable until you add another source."
+            : null;
+        if (!await _w.Ui.ConfirmModelDeleteAsync(model, note, ct).ConfigureAwait(false))
+            return Failure("The visitor declined to delete this model.");
         var result = await _w.Registry.RemoveDownloadedModelAsync(String(args, "model_id"), actor, ct).ConfigureAwait(false);
-        return Operation(result);
+        return Operation(result, "modelId");
     }
 
     JsonObject SetOrder(JsonObject args, string actor) => Operation(_w.Registry.SetOrder(String(args, "skill"), StringOrNull(args, "language"),
         Strings(args, "source_ids"), actor));
 
-    async Task<JsonObject> RequestKeyAsync(JsonObject args, string actor, CancellationToken ct) =>
-        Operation(await _w.Registry.RequestApiKeyEntryAsync(String(args, "source_id"), actor, ct).ConfigureAwait(false));
+    async Task<JsonObject> RequestKeyAsync(JsonObject args, string actor, AgentAccess access, AgentSession session, CancellationToken ct) =>
+        Operation(await _w.Registry.RequestApiKeyEntryAsync(String(args, "source_id"), actor, ct,
+            access.FullAccess, visitorInitiated: false, agentId: session.Identity.Id).ConfigureAwait(false));
 
-    async Task<JsonObject> SetKeyAsync(JsonObject args, string actor) =>
-        Operation(await _w.Registry.SetApiKeyAsync(String(args, "source_id"), String(args, "key"), actor).ConfigureAwait(false));
+    async Task<JsonObject> SetKeyAsync(JsonObject args, string actor, AgentAccess access) =>
+        Operation(await _w.Registry.SetApiKeyAsync(String(args, "source_id"), String(args, "key"), actor, access.FullAccess, visitorInitiated: false).ConfigureAwait(false));
 
-    JsonObject Activity(JsonObject args)
+    JsonObject Activity(JsonObject args, AgentAccess access)
     {
         var limit = Math.Clamp(Int(args, "limit", 50), 1, 500);
         var sinceText = StringOrNull(args, "since");
@@ -354,12 +566,19 @@ sealed class AgentPipeServer : IDisposable
         else if (sinceText is not null) since = parsed;
         var entries = _w.Activity.Recent(500).Where(e => since is null || e.At >= since).Take(limit).ToArray();
         var result = Success();
-        result["entries"] = new JsonArray(entries.Select(e => (JsonNode)new JsonObject
-        {
-            ["at"] = e.At, ["origin"] = e.Origin, ["kind"] = e.Kind, ["skill"] = e.Skill,
-            ["outcome"] = e.Outcome, ["source"] = e.Source, ["fallback"] = e.Fallback, ["cost"] = e.Cost,
-            ["actor"] = e.Actor, ["change"] = e.Change, ["note"] = e.Note,
-        }).ToArray());
+        result["entries"] = new JsonArray(entries.Select(e => access.FullAccess
+            ? (JsonNode)new JsonObject
+            {
+                ["at"] = e.At, ["origin"] = e.Origin, ["kind"] = e.Kind, ["skill"] = e.Skill,
+                ["outcome"] = e.Outcome, ["source"] = e.Source, ["fallback"] = e.Fallback, ["cost"] = e.Cost,
+                ["actor"] = e.Actor, ["change"] = e.Change, ["note"] = e.Note,
+            }
+            : new JsonObject
+            {
+                ["at"] = e.At, ["origin"] = SiteLabel(e.Origin), ["kind"] = e.Kind, ["skill"] = e.Skill,
+                ["outcome"] = e.Outcome, ["source"] = e.Source, ["fallback"] = e.Fallback, ["cost"] = e.Cost,
+                ["actor"] = e.Actor,
+            }).ToArray());
         return result;
     }
 
@@ -373,6 +592,8 @@ sealed class AgentPipeServer : IDisposable
     JsonObject SetSiteAccess(JsonObject args, string actor)
     {
         var origin = String(args, "origin");
+        if (!Origins.TryParse(origin, out _, out _))
+            return Failure("The origin must be a clean https://host[:port] origin, or the wallet's allowed loopback http origin.");
         var action = String(args, "action").ToLowerInvariant();
         switch (action)
         {
@@ -398,6 +619,10 @@ sealed class AgentPipeServer : IDisposable
     JsonObject SetLimits(JsonObject args, string actor)
     {
         var origin = StringOrNull(args, "origin");
+        if (args.ContainsKey("origin") && origin is null)
+            return Failure("The origin parameter must be a string.");
+        if (origin is not null && !Origins.TryParse(origin, out _, out _))
+            return Failure("The origin must be a clean https://host[:port] origin, or the wallet's allowed loopback http origin.");
         var changed = new List<string>();
         _w.Store.Update(s =>
         {
@@ -419,8 +644,23 @@ sealed class AgentPipeServer : IDisposable
         return Success("Changed " + string.Join(", ", changed) + ".");
     }
 
-    JsonObject Operation(RegistryOperationResult result) => result.Ok ? Success(result.Message, result.Id) : Failure(result.Message);
-    static JsonObject Test(RegistryTestResult result) => result.Ok ? Success(result.Message, result.Detail) : Failure(result.Message);
+    JsonObject Operation(RegistryOperationResult result, string? applicationIdName = null)
+    {
+        if (!result.Ok) return Failure(result.Message);
+        var response = Success(result.Message);
+        if (result.Id is not null) response[applicationIdName ?? "sourceId"] = result.Id;
+        return response;
+    }
+
+    static JsonObject Test(RegistryTestResult result)
+    {
+        if (!result.Ok) return Failure(result.Message);
+        var output = result.Detail is null ? null : CleanResult(result.Detail, 80);
+        var answer = Success(result.Message);
+        if (output is not null) answer["answer"] = output;
+        if (result.LatencyMs is { } latency) answer["latencyMs"] = latency;
+        return answer;
+    }
 
     static JsonObject Success(string? text = null, string? id = null)
     {
@@ -429,6 +669,16 @@ sealed class AgentPipeServer : IDisposable
         if (id is not null) result["id"] = id;
         return result;
     }
+
+    static string CleanResult(string value, int limit)
+    {
+        var cleaned = new string(value.Where(c => !char.IsControl(c)).ToArray()).Trim();
+        return cleaned.Length <= limit ? cleaned : cleaned[..limit];
+    }
+
+    static string Size(long? bytes) => bytes is null ? "size unknown" :
+        bytes.Value >= 1_000_000_000 ? (bytes.Value / 1_000_000_000d).ToString("0.0", System.Globalization.CultureInfo.InvariantCulture) + " GB" :
+        Math.Ceiling(bytes.Value / 1_000_000d).ToString(System.Globalization.CultureInfo.InvariantCulture) + " MB";
 
     static JsonObject Failure(string text) => new() { ["ok"] = false, ["error"] = text };
 
@@ -453,6 +703,20 @@ sealed class AgentPipeServer : IDisposable
         if (site.Paused || _w.Engine.PausedNow(site) is not null) state = "paused";
         if (_w.Engine.ActiveSessions(site.Origin) > 0) state = "connected";
         return new JsonObject { ["name"] = name, ["state"] = state };
+    }
+
+    string SiteState(SiteRecord site)
+    {
+        if (site.Paused || _w.Engine.PausedNow(site) is not null) return "paused";
+        if (_w.Engine.ActiveSessions(site.Origin) > 0) return "connected";
+        return site.Status.ToString().ToLowerInvariant();
+    }
+
+    static string SiteLabel(string? origin)
+    {
+        if (string.IsNullOrWhiteSpace(origin)) return "site-unknown";
+        var hash = SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(origin));
+        return "site-" + Convert.ToHexString(hash, 0, 2).ToLowerInvariant();
     }
 
     static string String(JsonObject obj, string name) => StringOrNull(obj, name) ?? throw new ArgumentException("Tell the wallet the '" + name + "' parameter.");

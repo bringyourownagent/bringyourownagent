@@ -416,6 +416,7 @@ sealed class SettingsWindow : Window
         if (invalid is not null && info is not null) info = info with { StateText = "invalid: " + invalid.Message };
         var detail = (info?.StateText ?? "configured") + " · " + string.Join(", ", source.Skills.Count == 0 ? ["text.generate"] : source.Skills)
             + (source.Languages.Count == 0 ? " · any language" : " · " + string.Join(", ", source.Languages));
+        detail += source.LabelFromAgent ? " · label supplied by agent" : "";
         var buttons = Ui.Row(8, enabled, edit, remove);
         var order = AddedSourceOrder(source);
         return Ui.Box("card", Ui.Column(7,
@@ -491,6 +492,7 @@ sealed class SettingsWindow : Window
                             try
                             {
                                 if (model.Id == "gigaam:gigaam-v3") _w.Ui.DownloadStarted(_w.Sources.GigaAm);
+                                else if (model.Id == "whisper:" + WhisperCpuSource.ModelFile) _w.Ui.DownloadStarted(_w.Sources.WhisperCpu);
                                 else if (model.Id.StartsWith("whisper:", StringComparison.Ordinal)) _w.Ui.DownloadStarted(_w.Sources.Whisper);
                                 var result = await _w.Registry.DownloadModelAsync(model.Id);
                                 DesktopUi.PostSafe(() => { _w.Ui.ShowInfo(new InfoModel(result.Ok ? "Model downloaded" : "Model download", result.Message)); Render(); });
@@ -514,9 +516,7 @@ sealed class SettingsWindow : Window
     {
         try
         {
-            var confirmation = new ModelDeleteWindow(model.Name, model.SizeBytes);
-            confirmation.Show();
-            if (!await confirmation.Result.ConfigureAwait(true)) return;
+            if (!await _w.Ui.ConfirmModelDeleteAsync(model, null, CancellationToken.None).ConfigureAwait(true)) return;
             var result = await _w.Registry.RemoveDownloadedModelAsync(model.Id).ConfigureAwait(true);
             _w.Ui.ShowInfo(new InfoModel(result.Ok ? "Model removed" : "Model removal", result.Message));
             Render();
@@ -642,6 +642,7 @@ sealed class SettingsWindow : Window
         ("ggml-large-v3-turbo-q8_0.bin", "faster, weaker on Slovak, 0.9 GB"),
         ("ggml-medium-q8_0.bin", "smaller, 0.8 GB"),
         ("ggml-small-q8_0.bin", "for computers without a GPU, 0.3 GB"),
+        (WhisperCpuSource.ModelFile, "CPU fallback, 0.2 GB"),
     ];
 
     Control KeyExtras()
@@ -801,7 +802,7 @@ sealed class SettingsWindow : Window
         var j = i + by;
         if (i < 0 || j < 0 || j >= ids.Count) return;
         (ids[i], ids[j]) = (ids[j], ids[i]);
-        _w.Registry.SetOrder(skill, primary, ids);
+        _w.Registry.SetOrder(skill, language, ids);
         Render();
     }
 
@@ -912,7 +913,7 @@ sealed class SettingsWindow : Window
             var state = agent.Status == "blocked" ? "Blocked" : "Allowed";
             page.Children.Add(Ui.Box("card", Ui.Column(8,
                 Ui.Columns("*,Auto", Ui.Column(3, Ui.Text(agent.Name, "h2"), Ui.Chip(state, agent.Status == "blocked" ? "ink" : "")), Ui.Row(10, full, revoke)),
-                Ui.Wrap(agent.ExecutablePath, "mono", "small"),
+                Ui.Wrap("Observed parent (wallet observed): " + agent.ExecutablePath, "mono", "small"),
                 Ui.Text("Last used " + last, "muted", "small"))));
         }
     }

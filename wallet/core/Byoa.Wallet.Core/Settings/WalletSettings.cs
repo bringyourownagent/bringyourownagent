@@ -146,6 +146,12 @@ public sealed class SourceSetting
 
     /// <summary>The name of its API key in the secret store (never the key itself); null when it needs none.</summary>
     public string? SecretRef { get; set; }
+
+    /// <summary>True after the visitor explicitly accepted a non-loopback endpoint for this source.</summary>
+    public bool EndpointConfirmed { get; set; }
+
+    /// <summary>Marks a display label supplied by an agent, rather than typed by the visitor.</summary>
+    public bool LabelFromAgent { get; set; }
 }
 
 /// <summary>An ordered chain of sources for one skill: the first that fits answers, the next ones are fallbacks.</summary>
@@ -188,7 +194,7 @@ public sealed class LimitSettings
 /// <summary>The persisted identity and access granted to one local AI agent using the MCP bridge.</summary>
 public sealed class AgentRecord
 {
-    /// <summary>A stable hash of the announced name and executable path.</summary>
+    /// <summary>A stable hash of the wallet-observed parent image path, or the bridge image when the parent is unknown.</summary>
     public string Id { get; set; } = "";
 
     public string Name { get; set; } = "";

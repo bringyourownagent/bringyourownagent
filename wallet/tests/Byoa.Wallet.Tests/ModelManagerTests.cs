@@ -13,6 +13,22 @@ namespace Byoa.Wallet.Tests;
 public sealed class ModelManagerTests
 {
     [Fact]
+    public void DownloadCatalogIncludesTheWalletOwnedCpuWhisperFile()
+    {
+        var dir = TestFolder.New();
+        using var http = new HttpClient();
+        using var whisper = new WhisperSource(() => "ggml-small-q8_0.bin", () => [], http);
+        using var cpu = new WhisperCpuSource(() => [], http, modelsRoot: Path.Combine(dir, "models"));
+        var manager = new WalletModelManager(new SettingsStore(null), whisper, cpu, null, Path.Combine(dir, "models"));
+
+        var model = Assert.Single(manager.Models, item => item.Id == "whisper:" + WhisperCpuSource.ModelFile);
+
+        Assert.Equal(190_085_487, model.SizeBytes);
+        Assert.True(model.CanDownload);
+        Assert.Contains("CPU", model.Hardware, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task RegistryDownloadsListsAndRemovesWalletOwnedGigaAmFolder()
     {
         var dir = TestFolder.New();

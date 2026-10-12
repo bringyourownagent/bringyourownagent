@@ -16,10 +16,12 @@ sealed class WalletModelManager : IWalletModelManager
         ("ggml-large-v3-turbo-q5_0.bin", "smaller turbo model", 574_041_195, "GPU recommended; CPU works"),
         ("ggml-medium-q8_0.bin", "smaller multilingual model", 1_533_763_059, "GPU or a patient CPU"),
         ("ggml-small-q8_0.bin", "small computer-friendly model", 487_601_967, "CPU works; GPU helps"),
+        (WhisperCpuSource.ModelFile, "CPU fallback", 190_085_487, "CPU; no GPU required"),
     ];
 
     readonly SettingsStore _store;
     readonly WhisperSource _whisper;
+    readonly WhisperCpuSource? _cpuWhisper;
     readonly GigaAmSource? _gigaAm;
     readonly string _modelsRoot;
     readonly string _whisperRoot;
@@ -31,19 +33,27 @@ sealed class WalletModelManager : IWalletModelManager
     const string GigaAmLedger = "gigaam:" + GigaAmSource.ModelFolderName;
 
     public WalletModelManager(SettingsStore store, WhisperSource whisper, string? modelsRoot = null)
-        : this(store, whisper, null, modelsRoot)
+        : this(store, whisper, null, null, modelsRoot)
     {
     }
 
     public WalletModelManager(SettingsStore store, WhisperSource whisper, GigaAmSource? gigaAm, string? modelsRoot = null)
+        : this(store, whisper, null, gigaAm, modelsRoot)
+    {
+    }
+
+    public WalletModelManager(SettingsStore store, WhisperSource whisper, WhisperCpuSource? cpuWhisper,
+        GigaAmSource? gigaAm, string? modelsRoot = null)
     {
         _store = store;
         _whisper = whisper;
+        _cpuWhisper = cpuWhisper;
         _gigaAm = gigaAm;
         _modelsRoot = Path.GetFullPath(modelsRoot ?? WalletPaths.Models);
         _whisperRoot = Path.Combine(_modelsRoot, "whisper");
         _gigaAmRoot = Path.Combine(_modelsRoot, "gigaam");
         _whisper.ProgressChanged += TrackAutomaticDownload;
+        if (_cpuWhisper is not null) _cpuWhisper.ProgressChanged += TrackAutomaticCpuDownload;
         if (_gigaAm is not null) _gigaAm.ProgressChanged += TrackAutomaticGigaAmDownload;
     }
 
@@ -82,43 +92,48 @@ sealed class WalletModelManager : IWalletModelManager
         if (modelId == "gigaam:gigaam-v3") return await DownloadGigaAmAsync(progress, ct).ConfigureAwait(false);
         var model = WhisperModels.FirstOrDefault(m => "whisper:" + m.File == modelId);
         if (model.File is null) return RegistryOperationResult.Failure("That model is not in the wallet's download catalog.");
+        var source = string.Equals(model.File, WhisperCpuSource.ModelFile, StringComparison.Ordinal)
+            ? _cpuWhisper
+            : _whisper;
+        if (source is null) return RegistryOperationResult.Failure("The CPU Whisper source is not available in this wallet build.");
         var folder = EnsureOwnedFolder();
         if (!folder.Ok) return folder;
         var target = Path.Combine(_whisperRoot, model.File);
         if (File.Exists(target) && !IsOwnedModel(target, _store.Snapshot()))
             return RegistryOperationResult.Failure("A file with that model name exists, but this wallet did not download it.");
-        if (_whisper.ModelPath is { } existing && !PathsEqual(existing, target))
+        if (source.ModelPath is { } existing && !PathsEqual(existing, target))
             return RegistryOperationResult.Failure("A model with that name was found outside this wallet's own models folder.");
 
-        _store.Update(s => s.WhisperModel = model.File);
+        if (!string.Equals(model.File, WhisperCpuSource.ModelFile, StringComparison.Ordinal))
+            _store.Update(s => s.WhisperModel = model.File);
         if (IsOwnedModel(target, _store.Snapshot()))
             return RegistryOperationResult.Success("Downloaded " + model.File + ".", modelId);
 
-        void Report() => progress?.Report(new ModelDownloadProgress(modelId, _whisper.DownloadProgress,
-            _whisper.DownloadProgress is { } f ? (long)(f * model.Size) : null, _whisper.DownloadSize ?? model.Size));
-        _whisper.ProgressChanged += Report;
+        void Report() => progress?.Report(new ModelDownloadProgress(modelId, source.DownloadProgress,
+            source.DownloadProgress is { } f ? (long)(f * model.Size) : null, source.DownloadSize ?? model.Size));
+        source.ProgressChanged += Report;
         try
         {
             Report();
-            await _whisper.EnsureDownloadedAsync(ct).ConfigureAwait(false);
+            await source.EnsureDownloadedAsync(ct).ConfigureAwait(false);
             Report();
-            if (_whisper.State == SourceState.Ready && IsWalletFile(target))
+            if (source.State == SourceState.Ready && IsWalletFile(target))
             {
                 _store.Update(s =>
                 {
                     if (!s.DownloadedModelFiles.Contains(model.File, StringComparer.Ordinal))
                         s.DownloadedModelFiles.Add(model.File);
                 });
-                return RegistryOperationResult.Success("Downloaded " + _whisper.Name + ".", modelId);
+                return RegistryOperationResult.Success("Downloaded " + source.Name + ".", modelId);
             }
 
-            return _whisper.State == SourceState.Ready
+            return source.State == SourceState.Ready
                 ? RegistryOperationResult.Failure("The model is ready, but the wallet could not verify that it downloaded the file.")
-                : RegistryOperationResult.Failure("The download did not finish: " + _whisper.StateText);
+                : RegistryOperationResult.Failure("The download did not finish: " + source.StateText);
         }
         finally
         {
-            _whisper.ProgressChanged -= Report;
+            source.ProgressChanged -= Report;
         }
     }
 
@@ -288,6 +303,27 @@ sealed class WalletModelManager : IWalletModelManager
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or NotSupportedException)
         {
             // The source will report the download result; an unclaimable file remains non-removable by the wallet.
+        }
+    }
+
+    void TrackAutomaticCpuDownload()
+    {
+        if (_cpuWhisper?.State is not (SourceState.Downloading or SourceState.Ready)) return;
+        var target = Path.Combine(_whisperRoot, WhisperCpuSource.ModelFile);
+        var folder = EnsureOwnedFolder();
+        if (!folder.Ok) return;
+        try
+        {
+            if (!File.Exists(target)) return;
+            _store.Update(s =>
+            {
+                if (!s.DownloadedModelFiles.Contains(WhisperCpuSource.ModelFile, StringComparer.OrdinalIgnoreCase))
+                    s.DownloadedModelFiles.Add(WhisperCpuSource.ModelFile);
+            });
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or NotSupportedException)
+        {
+            // The source still reports its result; an unclaimable file stays non-removable.
         }
     }
 

@@ -10,6 +10,35 @@ namespace Byoa.Wallet.Tests;
 public sealed class SourceSetTests
 {
     [Fact]
+    public void OllamaWithoutV1UsesOneCanonicalIdForTheProviderAndRoute()
+    {
+        var home = TestFolder.New();
+        var oldHome = Environment.GetEnvironmentVariable(WalletPaths.HomeVariable);
+        Environment.SetEnvironmentVariable(WalletPaths.HomeVariable, home);
+        try
+        {
+            var store = new SettingsStore(null, settings => settings.Sources.Add(new SourceSetting
+            {
+                Id = "old-ollama-id",
+                Kind = SourceKinds.Ollama,
+                Model = "qwen2.5:3b",
+                Endpoint = "http://127.0.0.1:11434",
+                Skills = [Vocabulary.Generate],
+            }));
+            using var sources = new SourceSet(store, new SecretStore(Path.Combine(home, "secrets.dat")), new HttpClient());
+
+            var canonical = OpenAiCompatibleSource.MakeId(SourceKinds.Ollama, "qwen2.5:3b", "http://127.0.0.1:11434");
+            Assert.Single(sources.Text, source => source.Id == canonical);
+            Assert.Equal(canonical, Assert.Single(store.Snapshot().Sources).Id);
+            Assert.Contains(store.Snapshot().Chain(Vocabulary.Generate).Stops, stop => stop.SourceId == canonical);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(WalletPaths.HomeVariable, oldHome);
+        }
+    }
+
+    [Fact]
     public async Task RebuildKeepsTheListStableHandlesBadEndpointsAndSeparatesRuntimes()
     {
         var home = TestFolder.New();

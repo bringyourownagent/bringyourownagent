@@ -52,6 +52,23 @@ public sealed class RegistryTests
     }
 
     [Fact]
+    public void AgentRouteChangeNamesTheAgentInActivity()
+    {
+        var dir = TestFolder.New();
+        var activity = new ActivityLog(null, DateTimeOffset.UtcNow);
+        var store = new SettingsStore(null);
+        var registry = new WalletRegistry(store, new SecretStore(Path.Combine(dir, "secrets.dat")), activity,
+            [new FakeSource("speech")], [], new FakeRuntimeScanner(), new FakeModelManager([]));
+        var added = registry.AddSource(new SourceDraft(SourceKinds.LmStudio, "local", "http://127.0.0.1:1234/v1", [Vocabulary.Generate]));
+
+        Assert.True(added.Ok, added.Message);
+        var changed = registry.SetOrder(Vocabulary.Generate, null, [added.Id!], "agent: test runner");
+
+        Assert.True(changed.Ok, changed.Message);
+        Assert.Contains(activity.Recent(20), entry => entry.Change == "agent test runner changed the order of text.generate");
+    }
+
+    [Fact]
     public async Task ApiKeyIsWriteOnlyFromTheRegistry()
     {
         var dir = TestFolder.New();
@@ -67,6 +84,34 @@ public sealed class RegistryTests
         Assert.True(safe.HasApiKey);
         Assert.DoesNotContain("secret-value", System.Text.Json.JsonSerializer.Serialize(safe), StringComparison.Ordinal);
         Assert.Equal("secret-value-that-must-not-return", new SecretStore(secretFile).Get("source-key:" + added.Id));
+    }
+
+    [Fact]
+    public void OpenRouterAlwaysUsesItsRealEndpoint()
+    {
+        var dir = TestFolder.New();
+        var registry = NewRegistry(new SettingsStore(null), Path.Combine(dir, "secrets.dat"));
+
+        var added = registry.AddSource(new SourceDraft(SourceKinds.OpenRouter, "test/model", "http://127.0.0.1:5310/v1", [Vocabulary.Generate]));
+
+        Assert.True(added.Ok, added.Message);
+        var source = Assert.Single(registry.ListSources(), item => item.Id == added.Id);
+        Assert.Equal("https://openrouter.ai/api/v1", source.Endpoint);
+    }
+
+    [Fact]
+    public void AgentLabelIsCleanedAndItsLocationIsAlwaysShown()
+    {
+        var dir = TestFolder.New();
+        var registry = NewRegistry(new SettingsStore(null), Path.Combine(dir, "secrets.dat"));
+
+        var added = registry.AddSource(new SourceDraft(SourceKinds.OpenAiCompatible, "model", "http://192.168.1.20:5310/v1",
+            [Vocabulary.Generate], Label: "  friendly\nname  "));
+
+        Assert.True(added.Ok, added.Message);
+        var source = Assert.Single(registry.ListSources(), item => item.Id == added.Id);
+        Assert.Equal("friendly name · 192.168.1.20:5310", source.Name);
+        Assert.True(registry.ListSources().Single(item => item.Id == added.Id).Name.Length <= 60 + 3 + 32);
     }
 
     [Fact]
@@ -137,6 +182,33 @@ public sealed class RegistryTests
         Assert.Empty(new SecretStore(Path.Combine(dir, "secrets.dat")).Get("source-key:openrouter:test-model") ?? "");
     }
 
+    [Fact]
+    public async Task RemoteAgentSourceIsNotSavedOrScannedBeforeVisitorConfirmation()
+    {
+        var dir = TestFolder.New();
+        var settings = new SettingsStore(null);
+        var scanner = new CountingRuntimeScanner();
+        var registry = new WalletRegistry(settings, new SecretStore(Path.Combine(dir, "secrets.dat")),
+            new ActivityLog(null, DateTimeOffset.UtcNow), runtimeScanner: scanner);
+        var asked = 0;
+        registry.EndpointConfirmationRequested += (_, _) =>
+        {
+            asked++;
+            Assert.Empty(settings.Snapshot().Sources);
+            Assert.Equal(0, scanner.Calls);
+            return Task.FromResult(asked > 1);
+        };
+
+        var draft = new SourceDraft(SourceKinds.OpenAiCompatible, "home-model", "http://192.168.1.20:5310/v1", [Vocabulary.Generate]);
+        var declined = await registry.AddSourceAsync(draft, "agent: test", "test agent");
+        Assert.False(declined.Ok);
+        Assert.Empty(settings.Snapshot().Sources);
+
+        var added = await registry.AddSourceAsync(draft, "agent: test", "test agent");
+        Assert.True(added.Ok, added.Message);
+        Assert.True(settings.Snapshot().Sources.Single().EndpointConfirmed);
+    }
+
     static WalletRegistry NewRegistry(SettingsStore store, string secretPath, IWalletModelManager? models = null, string? modelsRoot = null)
     {
         var secret = new SecretStore(secretPath);
@@ -147,6 +219,16 @@ public sealed class RegistryTests
     sealed class FakeRuntimeScanner : IRuntimeScanner
     {
         public Task<IReadOnlyList<RuntimeInfo>> ScanAsync(CancellationToken ct) => Task.FromResult<IReadOnlyList<RuntimeInfo>>([]);
+    }
+
+    sealed class CountingRuntimeScanner : IRuntimeScanner
+    {
+        public int Calls { get; private set; }
+        public Task<IReadOnlyList<RuntimeInfo>> ScanAsync(CancellationToken ct)
+        {
+            Calls++;
+            return Task.FromResult<IReadOnlyList<RuntimeInfo>>([]);
+        }
     }
 
     sealed class PassingTester : IRegistrySourceTester

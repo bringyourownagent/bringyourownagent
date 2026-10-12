@@ -15,6 +15,7 @@ public sealed class VulkanProbe : IDisposable
     const int Success = 0;
     const int DeviceTypeIntegrated = 1;
     const int DeviceTypeDiscrete = 2;
+    const int DeviceTypeVirtual = 3;
     const int PropertiesBytes = 4096;
     const int TimeoutMilliseconds = 500;
 
@@ -131,7 +132,7 @@ public sealed class VulkanProbe : IDisposable
     }
 
     internal static bool IsUsablePhysicalDevice(int type, string? name) =>
-        type is DeviceTypeIntegrated or DeviceTypeDiscrete && !IsSoftware(name);
+        type is DeviceTypeIntegrated or DeviceTypeDiscrete or DeviceTypeVirtual && !IsSoftware(name);
 
     static bool IsSoftware(string? name) => name is not null && SoftwareNames.Any(x => name.Contains(x, StringComparison.OrdinalIgnoreCase));
 

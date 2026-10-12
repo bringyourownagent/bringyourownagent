@@ -35,12 +35,14 @@ public sealed class OpenAiCompatibleSource : ITextSource, ILiveness, ITextSource
         _http = http;
         var address = endpoint?.Trim() is { Length: > 0 } given ? given : DefaultEndpoint(kind);
         // Ollama speaks the OpenAI protocol under /v1; the others give the /v1 in their endpoint already.
-        if (kind == SourceKinds.Ollama && !address.EndsWith("/v1", StringComparison.Ordinal)) address = address.TrimEnd('/') + "/v1";
+        if (kind.Equals(SourceKinds.Ollama, StringComparison.OrdinalIgnoreCase) &&
+            !address.EndsWith("/v1", StringComparison.OrdinalIgnoreCase))
+            address = address.TrimEnd('/') + "/v1";
         if (!Uri.TryCreate(address, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https") || string.IsNullOrWhiteSpace(uri.Host))
             throw new ArgumentException("The endpoint must be an absolute http or https URL.", nameof(endpoint));
         _loopback = IsLoopback(uri.Host);
         _base = new Uri(address.TrimEnd('/') + "/", UriKind.Absolute);
-        Label = label;
+        Label = SourceLabels.Clean(label);
     }
 
     public static string DefaultEndpoint(string kind) => kind switch
@@ -59,15 +61,11 @@ public sealed class OpenAiCompatibleSource : ITextSource, ILiveness, ITextSource
 
     /// <summary>Stable id for two settings that offer the same model at different endpoints.</summary>
     public static string MakeId(string kind, string model, string? endpoint)
-    {
-        var address = endpoint?.Trim().TrimEnd('/') ?? DefaultEndpoint(kind);
-        if (kind == SourceKinds.Ollama && !address.EndsWith("/v1", StringComparison.OrdinalIgnoreCase))
-            address += "/v1";
-        return kind.Trim().ToLowerInvariant() + ":" + model.Trim() + "@" + address.ToLowerInvariant();
-    }
+        => SourceIds.OpenAiCompatible(kind, model, endpoint);
 
     public static bool IsLoopback(string host)
     {
+        if (host.Equals("localhost", StringComparison.OrdinalIgnoreCase)) return true;
         if (!IPAddress.TryParse(host, out var address)) return false;
         if (IPAddress.IsLoopback(address)) return true;
         // IsLoopback has not treated every IPv4-mapped IPv6 spelling consistently across supported Windows builds.
@@ -79,7 +77,7 @@ public sealed class OpenAiCompatibleSource : ITextSource, ILiveness, ITextSource
         SourceKinds.Ollama => "Ollama",
         _ => "OpenAI-compatible server",
     };
-    public string Name => Label is { Length: > 0 } ? Label : Model + " in " + RuntimeName;
+    public string Name => (Label ?? Model) + " · " + (_loopback ? "this computer" : DisplayAuthority(_base));
 
     public string Runs => _loopback ? Sources.Runs.ThisDevice : "another computer (" + _base.Host + ")";
     public string ProviderKind => _loopback ? "local-model" : "home-server";
@@ -101,6 +99,14 @@ public sealed class OpenAiCompatibleSource : ITextSource, ILiveness, ITextSource
         : !_loopback && Up == true ? "ready on another computer (" + _base.Host + ")"
         : Up == true ? "ready · " + RuntimeName
         : "ready when " + RuntimeName + " runs";
+
+    static string DisplayAuthority(Uri uri)
+    {
+        var host = uri.Host;
+        if (host.Contains(':', StringComparison.Ordinal) && !host.StartsWith("[", StringComparison.Ordinal))
+            host = "[" + host + "]";
+        return host + (uri.IsDefaultPort ? "" : ":" + uri.Port.ToString(CultureInfo.InvariantCulture));
+    }
 
     public decimal EstimateCost(TextRequest request) => 0;
 

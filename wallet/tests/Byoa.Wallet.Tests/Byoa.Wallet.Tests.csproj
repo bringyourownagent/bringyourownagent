@@ -19,6 +19,7 @@
     <ProjectReference Include="..\..\host\Byoa.Wallet.Host\Byoa.Wallet.Host.csproj" />
     <ProjectReference Include="..\..\core\Byoa.Wallet.Providers\Byoa.Wallet.Providers.csproj" />
     <ProjectReference Include="..\..\desktop\Byoa.Wallet.Desktop\Byoa.Wallet.Desktop.csproj" />
+    <ProjectReference Include="..\..\mcp\Byoa.Wallet.Mcp\Byoa.Wallet.Mcp.csproj" />
   </ItemGroup>
 
   <ItemGroup>

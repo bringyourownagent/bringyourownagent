@@ -15,7 +15,7 @@ namespace Byoa.Wallet.Desktop;
 /// the consent window and the settings window. Called from any thread; everything runs on the UI thread.
 /// </summary>
 [SupportedOSPlatform("windows")]
-sealed class DesktopUi : IWalletUi, IAgentConsentUi
+sealed class DesktopUi : IWalletUi, IAgentConsentUi, IEndpointConfirmationUi, ISecretDeletionUi
 {
     readonly WalletServices _w;
     TrayIcon? _tray;
@@ -25,6 +25,11 @@ sealed class DesktopUi : IWalletUi, IAgentConsentUi
     HelpWindow? _help;
     ToastWindow? _download;
     PreparingHandle? _preparing;
+    readonly SemaphoreSlim _promptQueue = new(1, 1);
+    int _waitingPrompts;
+    readonly object _keyGate = new();
+    readonly HashSet<string> _keyWindows = new(StringComparer.Ordinal);
+    readonly Dictionary<string, Queue<DateTimeOffset>> _keyHistory = new(StringComparer.Ordinal);
 
     public DesktopUi(WalletServices services) => _w = services;
 
@@ -153,25 +158,86 @@ sealed class DesktopUi : IWalletUi, IAgentConsentUi
 
     public void QuietRequest(string origin) => PostSafe(UpdateBadge);
 
-    public Task<AgentConsentAnswer> AskAgentAsync(AgentConsentModel model, CancellationToken ct) => OnUi(async () =>
-    {
-        var window = new AgentConsentWindow(model);
-        window.Show();
-        using var registration = ct.Register(() => PostSafe(window.Close));
-        return await window.Result;
-    });
+    public Task<AgentConsentAnswer> AskAgentAsync(AgentConsentModel model, CancellationToken ct) =>
+        PromptAsync(ct, async () =>
+        {
+            var window = new AgentConsentWindow(model, () => Volatile.Read(ref _waitingPrompts));
+            window.Show();
+            using var registration = ct.Register(() => PostSafe(window.Close));
+            return await window.Result;
+        }, new AgentConsentAnswer(AgentConsentDecision.NotNow, false)
+        {
+            Error = "The visitor is busy answering another request. Try again later."
+        });
 
-    public Task<RegistryOperationResult> RequestApiKeyEntryAsync(ApiKeyEntryRequest request, CancellationToken ct) => OnUi(async () =>
+    public async Task<RegistryOperationResult> RequestApiKeyEntryAsync(ApiKeyEntryRequest request, CancellationToken ct)
     {
-        var window = new ApiKeyEntryWindow(request.SourceName);
-        window.Show();
-        using var registration = ct.Register(() => PostSafe(window.Close));
-        var key = await window.Result;
-        if (key is null) return RegistryOperationResult.Failure("The visitor cancelled the API-key entry. Ask them to try again in the wallet.");
-        var result = await _w.Registry.SetApiKeyAsync(request.SourceId, key, request.Actor);
-        if (!result.Ok) ShowInfo(new InfoModel("API key", result.Message));
-        return result;
-    });
+        var key = request.AgentId ?? request.Actor;
+        lock (_keyGate)
+        {
+            if (request.AgentInitiated && !_keyWindows.Add(request.SourceId))
+                return RegistryOperationResult.Failure("An API-key entry window for this source is already open. Wait for the visitor to finish.");
+            if (request.AgentInitiated)
+            {
+                if (!_keyHistory.TryGetValue(key, out var history)) _keyHistory[key] = history = new Queue<DateTimeOffset>();
+                while (history.Count > 0 && history.Peek() < DateTimeOffset.UtcNow.AddHours(-1)) history.Dequeue();
+                if (history.Count >= 3)
+                {
+                    _keyWindows.Remove(request.SourceId);
+                    return RegistryOperationResult.Failure("This agent has opened the API-key field three times in the last hour. Ask the visitor to use Sources in the wallet.");
+                }
+                history.Enqueue(DateTimeOffset.UtcNow);
+            }
+        }
+
+        try
+        {
+            return await PromptAsync(ct, async () =>
+            {
+                var window = new ApiKeyEntryWindow(request.SourceName);
+                window.Show();
+                using var registration = ct.Register(() => PostSafe(window.Close));
+                var entered = await window.Result;
+                if (entered is null) return RegistryOperationResult.Failure("The visitor cancelled the API-key entry. Ask them to try again in the wallet.");
+                var result = await _w.Registry.SetApiKeyAsync(request.SourceId, entered, request.Actor,
+                    fullAccess: request.FullAccess, visitorInitiated: !request.AgentInitiated);
+                if (!result.Ok) ShowInfo(new InfoModel("API key", result.Message));
+                return result;
+            }, RegistryOperationResult.Failure("The visitor is busy answering another request. Try again later."));
+        }
+        finally
+        {
+            if (request.AgentInitiated)
+                lock (_keyGate) _keyWindows.Remove(request.SourceId);
+        }
+    }
+
+    public Task<bool> ConfirmEndpointAsync(EndpointConfirmationRequest request, CancellationToken ct) =>
+        PromptAsync(ct, async () =>
+        {
+            var window = new EndpointConfirmationWindow(request);
+            window.Show();
+            using var registration = ct.Register(() => PostSafe(window.Close));
+            return await window.Result;
+        }, false);
+
+    public Task<bool> ConfirmModelDeleteAsync(DownloadableModelInfo model, string? note, CancellationToken ct) =>
+        PromptAsync(ct, async () =>
+        {
+            var window = new ModelDeleteWindow(model.Name, model.SizeBytes, note);
+            window.Show();
+            using var registration = ct.Register(() => PostSafe(window.Close));
+            return await window.Result;
+        }, false);
+
+    public Task<bool> ConfirmSecretDeletionAsync(SecretDeletionRequest request, CancellationToken ct) =>
+        PromptAsync(ct, async () =>
+        {
+            var window = new SecretDeleteWindow(request.SourceName);
+            window.Show();
+            using var registration = ct.Register(() => PostSafe(window.Close));
+            return await window.Result;
+        }, false);
 
     public void DownloadStarted(ISpeechSource source) => PostSafe(() =>
     {
@@ -233,6 +299,24 @@ sealed class DesktopUi : IWalletUi, IAgentConsentUi
         {
             ErrorLog.Write(WalletPaths.Home, e);
             throw;
+        }
+    }
+
+    async Task<T> PromptAsync<T>(CancellationToken ct, Func<Task<T>> work, T busy)
+    {
+        Interlocked.Increment(ref _waitingPrompts);
+        var acquired = false;
+        try
+        {
+            acquired = await _promptQueue.WaitAsync(TimeSpan.FromSeconds(30), ct).ConfigureAwait(false);
+            if (!acquired) return busy;
+            return await OnUi(work).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) { return busy; }
+        finally
+        {
+            if (acquired) _promptQueue.Release();
+            Interlocked.Decrement(ref _waitingPrompts);
         }
     }
 }

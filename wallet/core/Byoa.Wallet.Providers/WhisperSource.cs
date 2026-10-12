@@ -53,6 +53,18 @@ public class WhisperSource : ISpeechSource, IDownloadableSource, IWarmable, IDis
         ["ggml-base-q5_1.bin"] = 59_707_625,
     };
 
+    // SHA-256 content hashes from the Hugging Face LFS metadata for ggerganov/whisper.cpp.
+    // The size and the tree metadata remain a second check; these pins are what the wallet trusts.
+    static readonly IReadOnlyDictionary<string, string> PinnedSha256 = new Dictionary<string, string>(StringComparer.Ordinal)
+    {
+        ["ggml-large-v3-q5_0.bin"] = "d75795ecff3f83b5faa89d1900604ad8c780abd5739fae406de19f23ecd98ad1",
+        ["ggml-large-v3-turbo-q8_0.bin"] = "317eb69c11673c9de1e1f0d459b253999804ec71ac4c23c17ecf5fbe24e259a1",
+        ["ggml-large-v3-turbo-q5_0.bin"] = "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2",
+        ["ggml-medium-q8_0.bin"] = "42a1ffcbe4167d224232443396968db4d02d4e8e87e213d3ee2e03095dea6502",
+        ["ggml-small-q8_0.bin"] = "49c8fb02b65e6049d5fa6c04f81f53b867b5ec9540406812c643f177317f779f",
+        ["ggml-small-q5_1.bin"] = "ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb",
+    };
+
     static readonly RuntimeDecisionLatch RuntimeLatch = new();
 
     readonly Func<string> _modelFile;
@@ -70,7 +82,7 @@ public class WhisperSource : ISpeechSource, IDownloadableSource, IWarmable, IDis
     long? _size;
     string? _error;
     string? _runtime;
-    double _seconds = 0.8;
+    double _seconds;
 
     /// <param name="modelFile">The ggml file name chosen in the settings.</param>
     /// <param name="found">The models found in the visitor's model folders.</param>
@@ -82,6 +94,7 @@ public class WhisperSource : ISpeechSource, IDownloadableSource, IWarmable, IDis
         _http = http;
         _cpuFeatures = cpuFeatures ?? CpuFeatures.Current;
         _processGpuOverride = processGpuOverride;
+        _seconds = InitialSeconds;
     }
 
     public event Action? ProgressChanged;
@@ -105,6 +118,9 @@ public class WhisperSource : ISpeechSource, IDownloadableSource, IWarmable, IDis
 
     /// <summary>The folder the wallet downloads its ggml file into; the CPU source keeps its own copy in the wallet home.</summary>
     protected virtual string ModelDir => Path.Combine(WalletPaths.Models, "whisper");
+
+    /// <summary>The first consent estimate before this source has measured a real phrase.</summary>
+    protected virtual double InitialSeconds => 0.8;
 
     /// <summary>The model file: in the wallet's own models folder, or found in one of the visitor's model folders.</summary>
     public string? ModelPath
@@ -193,7 +209,6 @@ public class WhisperSource : ISpeechSource, IDownloadableSource, IWarmable, IDis
                 throw new IOException($"downloaded content is {given} bytes, expected {known}");
             _size = total;
             _progress = 0;
-            ProgressChanged?.Invoke();
             using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
             long done = 0;
             var lastShown = -1;
@@ -201,6 +216,9 @@ public class WhisperSource : ISpeechSource, IDownloadableSource, IWarmable, IDis
             await using (var output = new FileStream(part, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 20,
                 FileOptions.Asynchronous | FileOptions.SequentialScan))
             {
+                // Report zero only after the .part file exists. The toast and the ownership ledger then describe
+                // the same download, rather than showing a finished source with a stale zero-byte staging file.
+                ProgressChanged?.Invoke();
                 var buffer = new byte[1 << 20];
                 int n;
                 while ((n = await source.ReadAsync(buffer).ConfigureAwait(false)) > 0)
@@ -268,7 +286,9 @@ public class WhisperSource : ISpeechSource, IDownloadableSource, IWarmable, IDis
                 {
                     if (item?["path"]?.GetValue<string>() != file) continue;
                     var lfs = item["lfs"];
-                    return (lfs?["size"]?.GetValue<long>() ?? item["size"]?.GetValue<long>(), lfs?["oid"]?.GetValue<string>());
+                    var size = lfs?["size"]?.GetValue<long>() ?? item["size"]?.GetValue<long>();
+                    var sha = PinnedSha256.TryGetValue(file, out var pinned) ? pinned : lfs?["oid"]?.GetValue<string>();
+                    return (size ?? (KnownSizes.TryGetValue(file, out var known) ? known : null), sha);
                 }
             }
         }
@@ -277,7 +297,8 @@ public class WhisperSource : ISpeechSource, IDownloadableSource, IWarmable, IDis
             // verify by size from the response only
         }
 
-        return (null, null);
+        return (KnownSizes.TryGetValue(file, out var knownSize) ? knownSize : null,
+            PinnedSha256.TryGetValue(file, out var knownSha) ? knownSha : null);
     }
 
     // ------------------------------------------------------------------------------------------------

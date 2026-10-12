@@ -26,11 +26,13 @@ sealed class WalletServices : IDisposable
         Sources = new SourceSet(Store, Secrets, Http);
         Ui = new DesktopUi(this);
         Engine = new WalletEngine(Store, Sources.All, Activity, Ui, textSources: Sources.Text, preferGpu: WhisperSource.ProcessUsesGpu);
-        var modelManager = new WalletModelManager(Store, Sources.Whisper, Sources.GigaAm);
+        var modelManager = new WalletModelManager(Store, Sources.Whisper, Sources.WhisperCpu, Sources.GigaAm);
         Registry = new WalletRegistry(Store, Secrets, Activity, Sources.All, Sources.Text,
             Sources.Scanner, modelManager, engine: Engine, textFactory: Sources.CreateTextSource,
             draftTextFactory: Sources.CreateTextSource);
         Registry.ApiKeyEntryRequested += Ui.RequestApiKeyEntryAsync;
+        Registry.EndpointConfirmationRequested += Ui.ConfirmEndpointAsync;
+        Registry.SecretDeletionRequested += Ui.ConfirmSecretDeletionAsync;
         Pairings = new PairingStore(Path.Combine(home, "pairings.dat"));
         Direct = new DirectTransport(Engine, Pairings, new DirectOptions { DevLocal = DirectLink.DevLocalFromEnvironment });
         Pipe = new PipeServer(Engine, OpenLink);
