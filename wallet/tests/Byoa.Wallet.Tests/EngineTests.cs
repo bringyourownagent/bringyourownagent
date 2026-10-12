@@ -143,11 +143,11 @@ public class EngineTests
     [Fact]
     public async Task ARequiredSkillNoSourceCanServeCannotBeAllowed()
     {
-        var result = await _engine.HandleAsync(Clips.Request(Site, click: true, Manifest(extraSkill: ",\"text.generate\":{\"required\":true}")));
+        var result = await _engine.HandleAsync(Clips.Request(Site, click: true, Manifest(extraSkill: ",\"text.embed\":{\"required\":true}")));
         Assert.Null(result);
         var consent = _ui.Consents[^1];
         Assert.True(consent.MissingRequired);
-        Assert.False(consent.Rows.Single(r => r.Skill == "text.generate").CanServe);
+        Assert.False(consent.Rows.Single(r => r.Skill == "text.embed").CanServe);
     }
 
     [Theory]

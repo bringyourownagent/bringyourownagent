@@ -21,9 +21,9 @@ public class RoutingTests
         Router.Plan(s.Chain(Vocabulary.Transcribe), All, id => s.Source(id).Enabled, language);
 
     [Fact]
-    public void DefaultChainIsGigaAmWhisperThenPaid()
+    public void DefaultChainIsGigaAmWhisperCpuThenPaid()
     {
-        Assert.Equal(["gigaam-v3", "whisper", "openrouter-scribe"], Defaults().Chain(Vocabulary.Transcribe).Stops.Select(s => s.SourceId));
+        Assert.Equal(["gigaam-v3", "whisper", "whisper-cpu", "openrouter-scribe"], Defaults().Chain(Vocabulary.Transcribe).Stops.Select(s => s.SourceId));
     }
 
     [Fact]
