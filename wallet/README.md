@@ -16,7 +16,20 @@ The design and the security notes are in [docs/wallet-0.1.md](../docs/wallet-0.1
 
 **Without the extension.** A site can also show a `bringyourownagent://connect?...` link. A click on it starts the wallet (or hands the link to the running one); the wallet reads the site's manifest from the link itself, shows the same notice and consent, and only after Allow contacts the site at all: it opens its own WebSocket to the site's server, which then sends its calls straight to the wallet. Same grants, limits and routing; the activity marks these "via link". Details: [docs/wallet-0.1.md, section 10](../docs/wallet-0.1.md#10-transports).
 
-## Install for your own Chrome
+## Install from the ready package
+
+Needs Windows 10 or 11, 64-bit; nothing else (the package carries its own .NET runtime). Chrome or another Chromium browser only for sites that use the extension: sites that start the wallet with a `bringyourownagent://` link need no extension.
+
+1. Download `byoa-wallet-<version>-win-x64.zip` from <https://bringyourownagent.org/wallet> and compare its SHA-256 with the one on that page (PowerShell: `Get-FileHash .\byoa-wallet-0.1.0-win-x64.zip`).
+2. Unzip the whole package (right click, **Extract All...**) and double-click **Install.cmd** in the unzipped folder (`Install.cmd -StartWithWindows` from a command prompt also adds a Startup shortcut). It runs the same `install.ps1` as below in its package mode: no build, it copies `app\` (the wallet, the host and the runtime) into `%LOCALAPPDATA%\BYOA\wallet-app`, the extension into `%LOCALAPPDATA%\BYOA\wallet-app\extension`, and the uninstaller next to them, then registers the same three keys for your user. The copies lose the "downloaded from the internet" mark, so Windows does not ask again each time a site starts the wallet. The unzipped folder is not needed afterwards.
+3. The build is not code-signed yet, so Windows SmartScreen may say "Windows protected your PC" for Install.cmd or the wallet: choose **More info**, then **Run anyway**.
+4. Optional, for sites that use the extension: `chrome://extensions`, **Developer mode**, **Load unpacked**, and choose the `extension` folder the installer prints.
+
+To update, quit the wallet from its tray icon and run the new package's Install.cmd. To remove it, run `%LOCALAPPDATA%\BYOA\wallet-app\Uninstall.cmd` (or the one in the package): the same `uninstall.ps1` as below, which removes only the registry keys and the Startup shortcut and deletes no files.
+
+To build the package yourself: `powershell -ExecutionPolicy Bypass -File wallet\packaging\make-package.ps1 [-OutDir <empty folder>]` (needs the .NET 10 SDK). It publishes the app and the host self-contained for win-x64 under the output folder (never into the repository's `bin` and `obj`), stages the package, zips it and prints its size and SHA-256 (also written to `<zip>.sha256`).
+
+## Install from the source code
 
 Needs Windows 10 or 11, the .NET 10 SDK and Chrome (or another Chromium browser).
 
@@ -39,7 +52,7 @@ To remove it: `powershell -ExecutionPolicy Bypass -File wallet\uninstall.ps1` re
 
 | What | Where |
 |---|---|
-| App and host | `%LOCALAPPDATA%\BYOA\wallet-app` (`Byoa.Wallet.exe`, `byoa-host.exe`, `org.bringyourownagent.wallet.json`) |
+| App and host | `%LOCALAPPDATA%\BYOA\wallet-app` (`Byoa.Wallet.exe`, `byoa-host.exe`, `org.bringyourownagent.wallet.json`; from the package also `extension\`, `uninstall.ps1` and `Uninstall.cmd`) |
 | Settings | `%LOCALAPPDATA%\BYOA\wallet\settings.json` (sites, sources, routes, limits; no secrets) |
 | API keys | `%LOCALAPPDATA%\BYOA\wallet\secrets.dat` (DPAPI, current user) |
 | Pairings of direct links | `%LOCALAPPDATA%\BYOA\wallet\pairings.dat` (DPAPI, current user; only for sites with "decide on my own") |
@@ -91,7 +104,9 @@ desktop/Byoa.Wallet.Desktop  the Avalonia tray app: notice, consent, settings, t
 host/Byoa.Wallet.Host        byoa-host.exe, the native messaging host
 extension/                   the MV3 extension: page.js (MAIN world), bridge.js (isolated world), background.js, popup
 tests/                       unit tests and the end-to-end test
-install.ps1, uninstall.ps1
+packaging/                   make-package.ps1 (the ready-to-install zip), Install.cmd, Uninstall.cmd, README.txt and
+                             THIRD-PARTY-NOTICES.txt of the package
+install.ps1, uninstall.ps1   install from the source, or (next to app\ in the package) from the package
 ```
 
 Packages: Avalonia 11.3 (MIT), Whisper.net 1.9 (MIT), org.k2fsa.sherpa.onnx 1.13 (Apache-2.0), BringYourOwnAgent 0.0.2 (Apache-2.0), System.Security.Cryptography.ProtectedData (MIT); xunit (Apache-2.0) for the tests. The Barlow fonts are under the SIL Open Font License (`desktop/Byoa.Wallet.Desktop/Assets/Fonts/OFL.txt`). Model weights are not in the repository: Whisper's ggml files come from Hugging Face (MIT), GigaAM from the visitor's own folder.

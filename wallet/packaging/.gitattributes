@@ -1,0 +1,2 @@
+# cmd.exe reads batch files most reliably with CRLF line ends (make-package.ps1 writes them so in any case).
+*.cmd text eol=crlf

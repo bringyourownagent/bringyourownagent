@@ -1,0 +1,60 @@
+BYOA agent wallet {VERSION} for Windows: third-party components
+==============================================================
+
+The wallet itself is licensed under the Apache License 2.0 (LICENSE). This package also contains the components
+below, each under its own license. The license and notice files that come with them are in the licenses folder
+(one subfolder per component and version, taken from the packages the wallet was built from).
+
+Component                                    License             Copyright / authors
+-------------------------------------------  ------------------  ---------------------------------------------------
+.NET runtime 10 (Microsoft.NETCore.App)      MIT                 .NET Foundation and Contributors
+  with its own third-party notices (licenses\Microsoft.NETCore.App.Runtime.win-x64-*\THIRD-PARTY-NOTICES.TXT)
+System.Security.Cryptography.ProtectedData   MIT                 .NET Foundation and Contributors
+Microsoft.Extensions.AI.Abstractions         MIT                 .NET Foundation and Contributors
+Avalonia 11 (Avalonia.*)                     MIT                 The AvaloniaUI Project
+Avalonia.Angle.Windows.Natives (ANGLE)       BSD-3-Clause        The ANGLE Project Authors
+SkiaSharp, with Skia and its dependencies    MIT; Skia BSD-3     Microsoft Corporation; Google Inc. and others
+HarfBuzzSharp, with HarfBuzz                 MIT; HarfBuzz MIT   Microsoft Corporation; the HarfBuzz authors
+MicroCom.Runtime                             MIT                 Nikita Tsukanov
+Tmds.DBus.Protocol                           MIT                 Tom Deseyn
+Whisper.net and its native runtimes          MIT                 Sandro Hanea
+  whisper.cpp and ggml (inside them)         MIT                 Georgi Gerganov and the ggml authors
+sherpa-onnx (org.k2fsa.sherpa.onnx)          Apache-2.0          Xiaomi Corporation and the Next-gen Kaldi team
+  ONNX Runtime (onnxruntime.dll)             MIT                 Microsoft Corporation
+BringYourOwnAgent (the BYOA rules library)   Apache-2.0          the BYOA project
+Barlow fonts (inside Byoa.Wallet.dll)        SIL OFL 1.1         The Barlow Project Authors
+
+Sources:
+  .NET           https://github.com/dotnet/runtime
+  Avalonia       https://github.com/AvaloniaUI/Avalonia
+  SkiaSharp      https://github.com/mono/SkiaSharp
+  MicroCom       https://github.com/kekekeks/MicroCom
+  Tmds.DBus      https://github.com/tmds/Tmds.DBus
+  Whisper.net    https://github.com/sandrohanea/whisper.net
+  whisper.cpp    https://github.com/ggml-org/whisper.cpp
+  sherpa-onnx    https://github.com/k2-fsa/sherpa-onnx
+  ONNX Runtime   https://github.com/microsoft/onnxruntime
+  Barlow         https://github.com/jpt/barlow
+
+No model weights are included. Whisper models are downloaded on first use from Hugging Face (ggerganov/whisper.cpp,
+MIT); GigaAM is used only from a folder the visitor already has.
+
+
+The MIT License (the text the MIT-licensed components above share; each has its own copyright line)
+---------------------------------------------------------------------------------------------------
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the Software without restriction, including without limitation
+the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to
+permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of
+the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE
+WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+
+The Apache License 2.0 is in LICENSE. The SIL Open Font License 1.1 of the Barlow fonts is in licenses\Barlow-fonts\OFL.txt.
