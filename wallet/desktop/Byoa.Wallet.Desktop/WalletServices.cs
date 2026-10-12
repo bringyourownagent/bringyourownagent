@@ -4,6 +4,7 @@ using Byoa.Wallet.Direct;
 using Byoa.Wallet.Engine;
 using Byoa.Wallet.Protocol;
 using Byoa.Wallet.Providers;
+using Byoa.Wallet.Registry;
 using Byoa.Wallet.Secrets;
 using Byoa.Wallet.Settings;
 
@@ -25,9 +26,15 @@ sealed class WalletServices : IDisposable
         Sources = new SourceSet(Store, Secrets, Http);
         Ui = new DesktopUi(this);
         Engine = new WalletEngine(Store, Sources.All, Activity, Ui);
+        var modelManager = new WalletModelManager(Store, Sources.Whisper);
+        Registry = new WalletRegistry(Store, Secrets, Activity, Sources.All, [],
+            new LocalRuntimeScanner(() => Store.Read(s => s.Sources.Select(x => x.Endpoint).Where(e => e is not null).Select(e => e!).ToArray())),
+            modelManager, new WalletSourceTester(Sources.All, Http, Store));
+        Registry.ApiKeyEntryRequested += Ui.RequestApiKeyEntryAsync;
         Pairings = new PairingStore(Path.Combine(home, "pairings.dat"));
         Direct = new DirectTransport(Engine, Pairings, new DirectOptions { DevLocal = DirectLink.DevLocalFromEnvironment });
         Pipe = new PipeServer(Engine, OpenLink);
+        AgentPipe = new AgentPipeServer(this, Ui);
     }
 
     /// <summary>Acts on a bringyourownagent:// link (from the command line or handed over by a second instance).</summary>
@@ -50,14 +57,17 @@ sealed class WalletServices : IDisposable
     public SourceSet Sources { get; }
     public DesktopUi Ui { get; }
     public WalletEngine Engine { get; }
+    public WalletRegistry Registry { get; }
     public PairingStore Pairings { get; }
     public DirectTransport Direct { get; }
     public PipeServer Pipe { get; }
+    public AgentPipeServer AgentPipe { get; }
 
     public void Dispose()
     {
         Direct.Dispose();
         Pipe.Dispose();
+        AgentPipe.Dispose();
         Sources.Dispose();
         Http.Dispose();
     }

@@ -4,6 +4,7 @@ using Avalonia.Controls;
 using Avalonia.Platform;
 using Avalonia.Threading;
 using Byoa.Wallet.Engine;
+using Byoa.Wallet.Registry;
 using Byoa.Wallet.Sources;
 
 namespace Byoa.Wallet.Desktop;
@@ -13,13 +14,14 @@ namespace Byoa.Wallet.Desktop;
 /// the consent window and the settings window. Called from any thread; everything runs on the UI thread.
 /// </summary>
 [SupportedOSPlatform("windows")]
-sealed class DesktopUi : IWalletUi
+sealed class DesktopUi : IWalletUi, IAgentConsentUi
 {
     readonly WalletServices _w;
     TrayIcon? _tray;
     WindowIcon? _icon;
     WindowIcon? _badgeIcon;
     SettingsWindow? _settings;
+    HelpWindow? _help;
     ToastWindow? _download;
 
     public DesktopUi(WalletServices services) => _w = services;
@@ -34,10 +36,16 @@ sealed class DesktopUi : IWalletUi
         open.Click += (_, _) => OpenSettings("sites");
         var activity = new NativeMenuItem("Activity");
         activity.Click += (_, _) => OpenSettings("activity");
+        var help = new NativeMenuItem("Help");
+        help.Click += (_, _) => OpenHelp();
+        var agent = new NativeMenuItem("Connect your AI agent");
+        agent.Click += (_, _) => OpenSettings("connect");
         var exit = new NativeMenuItem("Quit");
         exit.Click += (_, _) => quit();
         menu.Items.Add(open);
         menu.Items.Add(activity);
+        menu.Items.Add(help);
+        menu.Items.Add(agent);
         menu.Items.Add(new NativeMenuItemSeparator());
         menu.Items.Add(exit);
         _tray = new TrayIcon { Icon = _icon, ToolTipText = "Agent wallet", Menu = menu, IsVisible = true };
@@ -52,6 +60,7 @@ sealed class DesktopUi : IWalletUi
         _w.Activity.Added += _ => Dispatcher.UIThread.Post(() => _settings?.Invalidate());
         _w.Secrets.Changed += () => Dispatcher.UIThread.Post(() => _settings?.Invalidate());
         _w.Direct.Changed += () => Dispatcher.UIThread.Post(() => _settings?.Invalidate());
+        _w.Registry.Changed += _ => Dispatcher.UIThread.Post(() => _settings?.Invalidate());
         UpdateBadge();
     }
 
@@ -127,6 +136,26 @@ sealed class DesktopUi : IWalletUi
 
     public void QuietRequest(string origin) => Dispatcher.UIThread.Post(UpdateBadge);
 
+    public Task<AgentConsentAnswer> AskAgentAsync(AgentConsentModel model, CancellationToken ct) => OnUi(async () =>
+    {
+        var window = new AgentConsentWindow(model);
+        window.Show();
+        using var registration = ct.Register(() => Dispatcher.UIThread.Post(window.Close));
+        return await window.Result;
+    });
+
+    public Task<RegistryOperationResult> RequestApiKeyEntryAsync(ApiKeyEntryRequest request, CancellationToken ct) => OnUi(async () =>
+    {
+        var window = new ApiKeyEntryWindow(request.SourceName);
+        window.Show();
+        using var registration = ct.Register(() => Dispatcher.UIThread.Post(window.Close));
+        var key = await window.Result;
+        if (key is null) return RegistryOperationResult.Failure("The visitor cancelled the API-key entry. Ask them to try again in the wallet.");
+        var result = await _w.Registry.SetApiKeyAsync(request.SourceId, key, request.Actor);
+        if (!result.Ok) ShowInfo(new InfoModel("API key", result.Message));
+        return result;
+    });
+
     public void DownloadStarted(ISpeechSource source) => Dispatcher.UIThread.Post(() =>
     {
         if (source is not IDownloadableSource download || _download is { IsVisible: true }) return;
@@ -147,6 +176,22 @@ sealed class DesktopUi : IWalletUi
         if (_settings.WindowState == WindowState.Minimized) _settings.WindowState = WindowState.Normal;
         _settings.Activate();
     });
+
+    public void OpenHelp(string? topic = null) => Dispatcher.UIThread.Post(() =>
+    {
+        if (_help is null)
+        {
+            _help = new HelpWindow(topic);
+            _help.Closed += (_, _) => _help = null;
+            _help.Show();
+        }
+        else
+        {
+            _help.Activate();
+        }
+    });
+
+    public void OpenAddModel(string? sourceId = null) => Dispatcher.UIThread.Post(() => new AddModelWindow(_w, sourceId).Show());
 
     static Task<T> OnUi<T>(Func<Task<T>> work) => Dispatcher.UIThread.InvokeAsync(work);
 }

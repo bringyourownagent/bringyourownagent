@@ -12,6 +12,12 @@ public sealed class ActivityEntry
     public DateTimeOffset At { get; set; }
     public string Origin { get; set; } = "";
 
+    /// <summary>Who caused a settings change, for example "you in the window" or "agent: Claude Code".</summary>
+    public string? Actor { get; set; }
+
+    /// <summary>A short human-readable description of a settings change. It never contains a secret or model input.</summary>
+    public string? Change { get; set; }
+
     /// <summary>"request", "call", "release", or "link" (the direct transport: a link, its connection).</summary>
     public string Kind { get; set; } = "";
 

@@ -3,12 +3,13 @@
     Builds the ready-to-install package of the BYOA agent wallet for Windows: byoa-wallet-<version>-win-x64.zip.
 
 .DESCRIPTION
-    1. Publishes the tray app (desktop\Byoa.Wallet.Desktop) and the native messaging host (host\Byoa.Wallet.Host),
-       Release, self-contained for win-x64 (the .NET runtime is included, so the visitor's PC needs no .NET),
+    1. Publishes the tray app (desktop\Byoa.Wallet.Desktop), the native messaging host (host\Byoa.Wallet.Host), and
+       the MCP bridge (mcp\Byoa.Wallet.Mcp), Release, self-contained for win-x64 (the .NET runtime is included, so
+       the visitor's PC needs no .NET),
        not trimmed and not single-file, into one folder. The build happens under -OutDir (artifacts\), never in
        the repository's own bin\ and obj\ folders.
     2. Stages the package folder byoa-wallet-<version>-win-x64\:
-         app\                  Byoa.Wallet.exe, byoa-host.exe and the runtime (native libraries for win-x64 only)
+         app\                  Byoa.Wallet.exe, byoa-host.exe, byoa-mcp.exe and the runtime (native libraries for win-x64 only)
          extension\            the unpacked Chrome extension (wallet\extension)
          install.ps1           wallet\install.ps1 itself: it notices app\ next to it and installs the package
          uninstall.ps1         wallet\uninstall.ps1 itself
@@ -67,19 +68,19 @@ $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'
 $env:DOTNET_NOLOGO = '1'
 $env:AVALONIA_TELEMETRY_OPTOUT = '1'
 
-# 1. Publish both programs into one folder. They share the same runtime and the same core library.
+# 1. Publish the wallet, host and MCP bridge into one folder. They share the same runtime and core library.
 $app = Join-Path $publish 'app'
-foreach ($project in 'desktop\Byoa.Wallet.Desktop\Byoa.Wallet.Desktop.csproj', 'host\Byoa.Wallet.Host\Byoa.Wallet.Host.csproj') {
+foreach ($project in 'desktop\Byoa.Wallet.Desktop\Byoa.Wallet.Desktop.csproj', 'host\Byoa.Wallet.Host\Byoa.Wallet.Host.csproj', 'mcp\Byoa.Wallet.Mcp\Byoa.Wallet.Mcp.csproj') {
     Write-Host "Publishing $project (Release, self-contained, $rid) ..."
     & dotnet publish (Join-Path $wallet $project) -c Release -r $rid --self-contained true `
         -p:PublishTrimmed=false -p:PublishSingleFile=false -p:Version=$Version `
         --artifacts-path $artifacts -o $app --nologo -v quiet
     if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed for $project" }
 }
-foreach ($file in 'Byoa.Wallet.exe', 'byoa-host.exe', 'hostfxr.dll', 'coreclr.dll', 'Byoa.Wallet.runtimeconfig.json', 'byoa-host.runtimeconfig.json') {
+foreach ($file in 'Byoa.Wallet.exe', 'byoa-host.exe', 'byoa-mcp.exe', 'hostfxr.dll', 'coreclr.dll', 'Byoa.Wallet.runtimeconfig.json', 'byoa-host.runtimeconfig.json', 'byoa-mcp.runtimeconfig.json') {
     if (-not (Test-Path -LiteralPath (Join-Path $app $file))) { throw "$file is missing in $app" }
 }
-foreach ($config in 'Byoa.Wallet.runtimeconfig.json', 'byoa-host.runtimeconfig.json') {
+foreach ($config in 'Byoa.Wallet.runtimeconfig.json', 'byoa-host.runtimeconfig.json', 'byoa-mcp.runtimeconfig.json') {
     # A self-contained app lists the frameworks it carries ("includedFrameworks") instead of needing one ("frameworks").
     $json = Get-Content -Raw -Path (Join-Path $app $config) | ConvertFrom-Json
     if (-not $json.runtimeOptions.includedFrameworks -or $json.runtimeOptions.frameworks) { throw "$config is not self-contained" }
@@ -141,7 +142,7 @@ if (-not $packages -or -not (Test-Path -LiteralPath $packages)) { throw 'The NuG
 $licenses = Join-Path $stage 'licenses'
 $licenseFiles = 0
 $seen = @{}
-foreach ($deps in 'Byoa.Wallet.deps.json', 'byoa-host.deps.json') {
+foreach ($deps in 'Byoa.Wallet.deps.json', 'byoa-host.deps.json', 'byoa-mcp.deps.json') {
     $libraries = (Get-Content -Raw -Path (Join-Path $app $deps) | ConvertFrom-Json).libraries
     foreach ($library in $libraries.PSObject.Properties) {
         if ($library.Value.type -notin 'package', 'runtimepack') { continue }

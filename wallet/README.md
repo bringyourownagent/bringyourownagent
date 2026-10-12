@@ -2,12 +2,13 @@
 
 The first working agent wallet for [BYOA](../README.md): a tray app on your computer, a small native messaging host and a Chrome extension. A web page asks for your AI with `window.byoa`; the wallet shows a short notice, then a short consent window, and answers the page's calls with **your** models: local speech recognition on your own GPU or CPU, or your own API key as a paid fallback that asks first.
 
-0.1 serves one skill, `audio.transcribe` (speech to text), from three sources:
+0.1 serves `audio.transcribe` (speech to text) from three built-in sources. `text.generate` is available when the
+other text provider is installed, and the same source registry manages both skills:
 
 | Source | Runs | Languages | Cost | Notes |
 |---|---|---|---|---|
 | GigaAM v3 (sherpa-onnx) | this PC, CPU | Russian only | no cloud bill | very fast and accurate for Russian; uses a model folder already on disk |
-| Whisper large-v3, q5_0 (Whisper.net / whisper.cpp) | this PC, GPU through Vulkan, CPU fallback | 100 | no cloud bill | downloads once (1.1 GB) into `%LOCALAPPDATA%\BYOA\models` on first use, with progress shown |
+| Whisper large-v3, q5_0 (Whisper.net / whisper.cpp) | this PC, GPU through Vulkan, CPU fallback | 100 | no cloud bill | downloads once (1.1 GB) into `%LOCALAPPDATA%\BYOA\wallet\models` on first use, with progress shown |
 | ElevenLabs Scribe v2 through OpenRouter | your API key | 99 | paid, about $0.00004 a second | the last fallback; asks before it runs |
 
 The default route for a call: GigaAM when the page says the language is `ru`, Whisper for other languages and as the fallback, OpenRouter last. You can reorder the route, switch sources off and decide whether the paid one asks.
@@ -15,6 +16,14 @@ The default route for a call: GigaAM when the page says the language is `ru`, Wh
 The design and the security notes are in [docs/wallet-0.1.md](../docs/wallet-0.1.md). The page API is the BYOA 0.1 contract: `window.byoa.request(manifest)`, `call(grantId, skill, input, params)`, `release(grantId)`.
 
 **Without the extension.** A site can also show a `bringyourownagent://connect?...` link. A click on it starts the wallet (or hands the link to the running one); the wallet reads the site's manifest from the link itself, shows the same notice and consent, and only after Allow contacts the site at all: it opens its own WebSocket to the site's server, which then sends its calls straight to the wallet. Same grants, limits and routing; the activity marks these "via link". Details: [docs/wallet-0.1.md, section 10](../docs/wallet-0.1.md#10-transports).
+
+## Manage the wallet from your AI agent
+
+The package includes `byoa-mcp.exe`, a small MCP server for Claude Code, Codex, OpenCode, and other MCP clients. Open **Settings → Connect your AI agent**, copy the command or config snippet, and keep the wallet running. The bridge uses a per-user named pipe tied to `BYOA_WALLET_HOME`; it does not start the wallet and it does not hold settings or secrets.
+
+On the first connection the wallet shows the agent's announced name and executable path. **Allow** gives source, model, route, test, download, and activity tools. **Full access** is a separate visitor choice for site access, limits, paid approvals, and approving other agents; it is off by default. Settings → Agents shows last use, the Full access switch, and Revoke. API keys are write-only: prefer `request_api_key_entry`, where the visitor types the key in the wallet. The agent never receives it.
+
+The MCP entry point is `help`; it returns the same embedded articles shown by the wallet's Help page. `status`, `list_runtimes`, `add_source`, `test_source`, `set_order`, and `activity` cover the normal “add my local model” path. If the wallet is not running, the bridge says so and never starts it.
 
 ## Install from the ready package
 
@@ -52,12 +61,12 @@ To remove it: `powershell -ExecutionPolicy Bypass -File wallet\uninstall.ps1` re
 
 | What | Where |
 |---|---|
-| App and host | `%LOCALAPPDATA%\BYOA\wallet-app` (`Byoa.Wallet.exe`, `byoa-host.exe`, `org.bringyourownagent.wallet.json`; from the package also `extension\`, `uninstall.ps1` and `Uninstall.cmd`) |
+| App, host and MCP bridge | `%LOCALAPPDATA%\BYOA\wallet-app` (`Byoa.Wallet.exe`, `byoa-host.exe`, `byoa-mcp.exe`, `org.bringyourownagent.wallet.json`; from the package also `extension\`, `uninstall.ps1` and `Uninstall.cmd`) |
 | Settings | `%LOCALAPPDATA%\BYOA\wallet\settings.json` (sites, sources, routes, limits; no secrets) |
 | API keys | `%LOCALAPPDATA%\BYOA\wallet\secrets.dat` (DPAPI, current user) |
 | Pairings of direct links | `%LOCALAPPDATA%\BYOA\wallet\pairings.dat` (DPAPI, current user; only for sites with "decide on my own") |
 | Activity | `%LOCALAPPDATA%\BYOA\wallet\activity-YYYY-MM-DD.jsonl` (no audio, no text) |
-| Downloaded models | `%LOCALAPPDATA%\BYOA\models` |
+| Downloaded models | `%LOCALAPPDATA%\BYOA\wallet\models` (under the active `BYOA_WALLET_HOME`) |
 | Model folders searched | the models folder above, plus `<drive>:\AI-MODELS`, `<drive>:\models` and `%USERPROFILE%\models` when they exist; add more in **Sources** |
 
 `BYOA_WALLET_HOME` points the wallet (and the host it is started by) at a separate data folder and pipe; the tests use it so that they never touch your own settings.
@@ -102,6 +111,7 @@ core/Byoa.Wallet.Core        protocol (framing, messages, paths), the engine, se
 core/Byoa.Wallet.Providers   GigaAM (sherpa-onnx), Whisper (Whisper.net), OpenRouter; the model scanner
 desktop/Byoa.Wallet.Desktop  the Avalonia tray app: notice, consent, settings, the pipe server
 host/Byoa.Wallet.Host        byoa-host.exe, the native messaging host
+mcp/Byoa.Wallet.Mcp          byoa-mcp.exe, the stdio MCP bridge for the visitor's own AI agent
 extension/                   the MV3 extension: page.js (MAIN world), bridge.js (isolated world), background.js, popup
 tests/                       unit tests and the end-to-end test
 packaging/                   make-package.ps1 (the ready-to-install zip), Install.cmd, Uninstall.cmd, README.txt and

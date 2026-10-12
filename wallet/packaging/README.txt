@@ -1,7 +1,7 @@
 BYOA agent wallet {VERSION} for Windows (x64)
 ==========================================
 
-The agent wallet lets web pages use YOUR OWN AI, within limits you set: speech recognition on your own computer
+The agent wallet lets web pages and your own AI agent use YOUR OWN AI, within limits you set: speech recognition on your own computer
 (GigaAM v3 for Russian on the CPU, Whisper large-v3 on the GPU or CPU for other languages; Whisper downloads once,
 1.1 GB, on first use), or your own OpenRouter key as a paid fallback that asks you first. A site asks only after
 your click; you see a short notice above the tray, then a consent window, and you allow or decline. A site that
@@ -29,7 +29,9 @@ Install
 4. Optional: add an OpenRouter key for the paid fallback in the wallet's Sources page.
 
 The wallet starts by itself when a site asks for it. Its icon lives in the tray; a click opens the settings
-(Sites, Sources, Skills & fallbacks, Limits, Activity).
+(Sites, Sources, Skills & fallbacks, Limits, Activity, Agents, and Connect your AI agent). The package also carries
+byoa-mcp.exe. Add its path from the Connect page to Claude Code, Codex, or OpenCode; the wallet asks before an agent
+can manage it.
 
 Windows SmartScreen: this build is not code-signed yet, so Windows may say "Windows protected your PC" when you
 run Install.cmd or the wallet for the first time. Choose "More info", then "Run anyway". Before that, you can
@@ -46,7 +48,7 @@ What it keeps, and where
   Settings:     %LOCALAPPDATA%\BYOA\wallet\settings.json (sites, sources, routes, limits; no secrets)
   API keys:     %LOCALAPPDATA%\BYOA\wallet\secrets.dat (Windows DPAPI, your account only; never shown again)
   Activity:     %LOCALAPPDATA%\BYOA\wallet\activity-*.jsonl (time, site, skill, source, cost; no audio, no text)
-  Models:       %LOCALAPPDATA%\BYOA\models (downloaded models)
+  Models:       %LOCALAPPDATA%\BYOA\wallet\models (downloaded models owned by this wallet)
 
 The wallet never stores the audio or the recognised text, and a site never sees your keys.
 

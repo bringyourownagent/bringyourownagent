@@ -29,8 +29,8 @@ public static class WalletPaths
     /// <summary>True when <see cref="HomeVariable"/> points the wallet at a separate data folder.</summary>
     public static bool IsCustomHome => !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(HomeVariable));
 
-    /// <summary>Downloaded models: <c>%LOCALAPPDATA%\BYOA\models</c> (shared by every data folder).</summary>
-    public static string Models => Path.Combine(LocalAppData, "BYOA", "models");
+    /// <summary>Downloaded models in the active wallet home.</summary>
+    public static string Models => Path.Combine(Home, "models");
 
     /// <summary>
     /// The named pipe the native host uses to reach the running wallet. It is per user (the name carries a hash of
@@ -47,6 +47,9 @@ public static class WalletPaths
 
         return name;
     }
+
+    /// <summary>The MCP management pipe, separate from the browser/native-host pipe and tied to this wallet home.</summary>
+    public static string McpPipeName(string? home = null) => PipeName(home) + "-mcp";
 
     /// <summary>A name for the single-instance mutex, per user and data folder.</summary>
     public static string MutexName() => "Local\\" + PipeName() + "-instance";

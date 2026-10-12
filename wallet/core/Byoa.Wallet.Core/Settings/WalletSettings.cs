@@ -20,6 +20,7 @@ public sealed class WalletSettings
     public List<SiteRecord> Sites { get; set; } = [];
     public List<SourceSetting> Sources { get; set; } = [];
     public List<SkillChain> Chains { get; set; } = [];
+    public List<AgentRecord> Agents { get; set; } = [];
     public LimitSettings Limits { get; set; } = new();
 
     /// <summary>Folders searched for local models (GigaAM folders, ggml Whisper files).</summary>
@@ -44,10 +45,17 @@ public sealed class WalletSettings
 
     public SkillChain Chain(string skill)
     {
-        var c = Chains.FirstOrDefault(x => x.Skill == skill);
+        return Chain(skill, null);
+    }
+
+    /// <summary>Gets the route for a skill and optional primary language.</summary>
+    public SkillChain Chain(string skill, string? language)
+    {
+        var primary = string.IsNullOrWhiteSpace(language) ? null : language.Trim().ToLowerInvariant();
+        var c = Chains.FirstOrDefault(x => x.Skill == skill && x.Language == primary);
         if (c is null)
         {
-            c = new SkillChain { Skill = skill };
+            c = new SkillChain { Skill = skill, Language = primary };
             Chains.Add(c);
         }
 
@@ -141,6 +149,8 @@ public sealed class SourceSetting
 public sealed class SkillChain
 {
     public string Skill { get; set; } = "";
+    /// <summary>Primary language for a language-specific route; null is the default route.</summary>
+    public string? Language { get; set; }
     public List<ChainStop> Stops { get; set; } = [];
 }
 
@@ -170,4 +180,20 @@ public sealed class LimitSettings
 
     /// <summary>An allowed site that has not used the wallet for this many hours is paused; 0 = never.</summary>
     public int PauseUnusedAfterHours { get; set; } = 24;
+}
+
+/// <summary>The persisted identity and access granted to one local AI agent using the MCP bridge.</summary>
+public sealed class AgentRecord
+{
+    /// <summary>A stable hash of the announced name and executable path.</summary>
+    public string Id { get; set; } = "";
+
+    public string Name { get; set; } = "";
+    public string ExecutablePath { get; set; } = "";
+    public DateTimeOffset? LastUsed { get; set; }
+    public DateTimeOffset? ApprovedAt { get; set; }
+    public bool FullAccess { get; set; }
+
+    /// <summary>"allowed" or "blocked". A missing record is asked about on the next connection.</summary>
+    public string Status { get; set; } = "allowed";
 }
