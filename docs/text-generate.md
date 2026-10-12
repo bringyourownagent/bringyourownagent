@@ -75,8 +75,8 @@ The CPU fallback (`WhisperCpuSource`) is the speech skill's safety net for machi
 
 | model | download | per clip | real time | wer all | en | es |
 |---|---|---|---|---|---|---|
-| ggml-base-q5_1 | 60 MB | 0.4 s | 10.3× | 6.2% | 8.6% | 3.3% |
-| ggml-small-q5_1 | 190 MB | 1.3 s | 3.1× | 0.0% | 0.0% | 0.0% |
+| ggml-base-q5_1 | 60 MB | 0.4 s | 10.2× | 6.2% | 8.6% | 3.3% |
+| ggml-small-q5_1 | 190 MB | 1.2–1.5 s | 2.9× | 0.0% | 0.0% | 0.0% |
 
 Base misheard real words: "She poured a" → "Cheap or to", Spanish "duerme" → "tuerme" — exactly the kind of single-word mistake the wallet's clips are full of. Small was letter-perfect in both languages, including "mañana" and "niños" with the diacritics. Three times slower is still a fifth of a second's speech in half a second — fine for a fallback, so the extra 130 MB download buys the accuracy.
 
@@ -84,7 +84,7 @@ Base misheard real words: "She poured a" → "Cheap or to", Spanish "duerme" →
 
 The router keeps the two out of each other's way: while the big Whisper is ready or already downloading, the CPU source is skipped ("the big Whisper already works on this PC"); it steps in when the GPU route cannot run.
 
-**text.generate against the real LM Studio** (qwen/qwen3.5-4b on 127.0.0.1:1234, through `OpenAiCompatibleSource`, 12 October 2026): a plain question took 2.5 s including the model's first-token warm-up; ten yes/no questions with `choices: ["yes", "no"]` came back **10/10 valid and 10/10 correct**, 0.4–0.6 s per answer, schema-constrained, no retries needed.
+**text.generate against the real LM Studio** (qwen/qwen3.5-4b on 127.0.0.1:1234, through `OpenAiCompatibleSource`, 12 October 2026): a plain question took 1.4 s (2.5 s on the day's first, cold call — the model's warm-up); ten yes/no questions with `choices: ["yes", "no"]` came back **10/10 valid and 10/10 correct**, 0.3–0.5 s per answer, schema-constrained, no retries needed.
 
 ## 7. What the tests cover
 
