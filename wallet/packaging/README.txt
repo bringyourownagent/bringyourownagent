@@ -2,8 +2,9 @@ BYOA agent wallet {VERSION} for Windows (x64)
 ==========================================
 
 The agent wallet lets web pages and your own AI agent use YOUR OWN AI, within limits you set: speech recognition on your own computer
-(GigaAM v3 for Russian on the CPU, Whisper large-v3 on the GPU or CPU for other languages; Whisper downloads once,
-1.1 GB, on first use), or your own OpenRouter key as a paid fallback that asks you first. A site asks only after
+(GigaAM v3 for Russian on the CPU, 230 MB; Whisper large-v3 on a GPU with Vulkan, 1.1 GB, or a smaller Whisper model
+on the CPU, 190 MB, for other languages; each model downloads once, the first time a site needs it, and the wallet
+shows the progress), or your own OpenRouter key as a paid fallback that asks you first. A site asks only after
 your click; you see a short notice above the tray, then a consent window, and you allow or decline. A site that
 you decline or block hears only "AI unavailable", exactly as if you had no wallet.
 
@@ -19,7 +20,8 @@ Install
 -------
 
 1. Unzip the whole package (right click the zip file, "Extract All...").
-2. Double-click Install.cmd in the unzipped folder.
+2. Open the folder byoa-wallet-{VERSION}-win-x64 inside the folder that Extract All made (the zip holds one folder),
+   and double-click Install.cmd in it.
    It copies the wallet into %LOCALAPPDATA%\BYOA\wallet-app and registers, for your Windows user only:
      - the native messaging host for Chrome and Chromium (so the extension can reach the wallet),
      - the bringyourownagent:// links (so a site can start the wallet without the extension).
@@ -33,10 +35,11 @@ The wallet starts by itself when a site asks for it. Its icon lives in the tray;
 byoa-mcp.exe. Add its path from the Connect page to Claude Code, Codex, or OpenCode; the wallet asks before an agent
 can manage it.
 
-Windows SmartScreen: this build is not code-signed yet, so Windows may say "Windows protected your PC" when you
-run Install.cmd or the wallet for the first time. Choose "More info", then "Run anyway". Before that, you can
+Windows: this build is not code-signed yet. When you run Install.cmd, Windows may first show "Open File - Security
+Warning" ("Unknown Publisher"): check the SHA-256, then click Run. Windows SmartScreen may also say "Windows
+protected your PC" when you run Install.cmd or the wallet for the first time. Choose "More info", then "Run anyway". Before that, you can
 compare the zip file's SHA-256 with the one on https://bringyourownagent.org/wallet
-(PowerShell: Get-FileHash .\byoa-wallet-{VERSION}-win-x64.zip).
+(PowerShell, in the folder where you saved the download: Get-FileHash .\byoa-wallet-win-x64.zip).
 
 To update: quit the wallet from its tray icon (right click, Quit), unzip the new package, run its Install.cmd.
 
