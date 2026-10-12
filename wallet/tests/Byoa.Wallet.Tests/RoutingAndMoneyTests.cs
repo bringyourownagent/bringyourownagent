@@ -21,9 +21,9 @@ public class RoutingTests
         Router.Plan(s.Chain(Vocabulary.Transcribe), All, id => s.Source(id).Enabled, language);
 
     [Fact]
-    public void DefaultChainIsGigaAmWhisperThenPaid()
+    public void DefaultChainIsGigaAmWhisperCpuThenPaid()
     {
-        Assert.Equal(["gigaam-v3", "whisper", "openrouter-scribe"], Defaults().Chain(Vocabulary.Transcribe).Stops.Select(s => s.SourceId));
+        Assert.Equal(["gigaam-v3", "whisper", "whisper-cpu", "openrouter-scribe"], Defaults().Chain(Vocabulary.Transcribe).Stops.Select(s => s.SourceId));
     }
 
     [Fact]
@@ -81,6 +81,22 @@ public class RoutingTests
         var s = Defaults();
         var plan = Router.Plan(s.Chain(Vocabulary.Transcribe), [giga, Whisper, paid], _ => true, "ru");
         Assert.Equal(["whisper"], plan.Steps.Select(x => x.Source.Id));
+    }
+
+    [Theory]
+    [InlineData(SourceState.Ready)]
+    [InlineData(SourceState.Downloading)]
+    public void TheCpuWhisperStepsAsideWhileTheBigWhisperWorks(SourceState gpuState)
+    {
+        var cpu = new FakeSource(Router.CpuWhisperId);
+        var gpu = new FakeSource(Router.WhisperId) { State = gpuState };
+        var plan = Router.Plan(Defaults().Chain(Vocabulary.Transcribe), [Giga, gpu, cpu, Paid], _ => true, "sk");
+        Assert.Equal("the big Whisper already works on this PC", plan.Skipped.Single(k => k.Source.Id == Router.CpuWhisperId).Why);
+        Assert.DoesNotContain(cpu.Id, plan.Steps.Select(x => x.Source.Id));
+
+        gpu.State = SourceState.NeedsDownload;                    // no GPU Whisper here: the CPU one is the fallback
+        var without = Router.Plan(Defaults().Chain(Vocabulary.Transcribe), [Giga, gpu, cpu, Paid], _ => true, "sk");
+        Assert.Contains(cpu.Id, without.Steps.Select(x => x.Source.Id));
     }
 
     [Fact]

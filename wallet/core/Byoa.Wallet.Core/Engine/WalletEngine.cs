@@ -29,6 +29,12 @@ public sealed class WalletEngine
     /// <summary>How long one source may take for one clip before the next one is tried.</summary>
     public static TimeSpan SourceTimeout { get; set; } = TimeSpan.FromSeconds(45);
 
+    /// <summary>How long one text source may take for one answer (the retry included) before the next one is tried.</summary>
+    public static TimeSpan TextSourceTimeout { get; set; } = TimeSpan.FromSeconds(120);
+
+    /// <summary>How long a text call waits for a busy source before it tries the next one.</summary>
+    public static TimeSpan BusyWait { get; set; } = TimeSpan.FromSeconds(10);
+
     /// <summary>
     /// After Allow (or a silent grant), how long the wallet may wait for the routed models to load before it answers
     /// the page, so that the page's first call is not a cold start.
@@ -39,8 +45,19 @@ public sealed class WalletEngine
     const int MaxManifestChars = 64 * 1024;
     const int MaxTextChars = 4000;
 
+    // Hard caps of a text.generate call, whatever the page asks for.
+    const int MaxMessages = 32;
+    const int MaxInputChars = 20_000;
+    const int MaxChoices = 20;
+    const int MaxChoiceChars = 100;
+    const int MaxChoiceCharsTotal = 500;
+    const int MaxTokensCap = 1024;
+    const int DefaultMaxTokens = 512;
+    const double DefaultTemperature = 0.7;
+
     readonly SettingsStore _store;
     readonly IReadOnlyList<ISpeechSource> _sources;
+    readonly IReadOnlyList<ITextSource> _textSources;
     readonly ActivityLog _activity;
     readonly IWalletUi _ui;
     readonly TimeProvider _time;
@@ -48,15 +65,20 @@ public sealed class WalletEngine
     readonly Dictionary<string, SharedAsk> _asking = new(StringComparer.Ordinal);
     readonly object _askGate = new();
 
+    // One call at a time per text source: a local runtime answers one request at a time.
+    readonly ConcurrentDictionary<string, SemaphoreSlim> _busy = new(StringComparer.Ordinal);
+
     // Daily limits count calls and money that are still running, not only the ones already in the log.
     readonly Dictionary<string, (int Calls, decimal Money)> _inflight = new(StringComparer.Ordinal);
     readonly object _dailyGate = new();
     readonly SemaphoreSlim _prompt = new(1, 1);
 
-    public WalletEngine(SettingsStore store, IReadOnlyList<ISpeechSource> sources, ActivityLog activity, IWalletUi ui, TimeProvider? time = null)
+    public WalletEngine(SettingsStore store, IReadOnlyList<ISpeechSource> sources, ActivityLog activity, IWalletUi ui,
+        TimeProvider? time = null, IReadOnlyList<ITextSource>? textSources = null)
     {
         _store = store;
         _sources = sources;
+        _textSources = textSources ?? [];
         _activity = activity;
         _ui = ui;
         _time = time ?? TimeProvider.System;
@@ -64,6 +86,7 @@ public sealed class WalletEngine
     }
 
     public IReadOnlyList<ISpeechSource> Sources => _sources;
+    public IReadOnlyList<ITextSource> TextSources => _textSources;
     public SettingsStore Store => _store;
     public ActivityLog Activity => _activity;
 
@@ -398,8 +421,10 @@ public sealed class WalletEngine
         if (!Vocabulary.Served.Contains(skill.Id))
         {
             return new ConsentRow(skill.Id, name, skill.Required, isNew, false, [], skill.Languages,
-                "None of your sources can do this yet: this wallet serves speech to text only.");
+                "None of your sources can do this yet: this wallet serves speech to text and text generation.");
         }
+
+        if (skill.Id == Vocabulary.Generate) return TextRow(skill, name, settings, isNew);
 
         var chain = settings.Chain(skill.Id);
         var languages = skill.Languages.Count > 0 ? skill.Languages.Cast<string?>().ToList() : [null];
@@ -423,7 +448,33 @@ public sealed class WalletEngine
         return new ConsentRow(skill.Id, name, skill.Required, isNew, canServe, routes, skill.Languages, string.Join(" ", whys.Distinct()));
     }
 
+    ConsentRow TextRow(RequestedSkill skill, string name, WalletSettings settings, bool isNew)
+    {
+        var textChain = settings.Chain(skill.Id);
+        var textLanguages = skill.Languages.Count > 0 ? skill.Languages.Cast<string?>().ToList() : [null];
+        var routes = new List<RouteLine>();
+        var whys = new List<string>();
+        foreach (var textLanguage in textLanguages)
+        {
+            var textPlan = Router.PlanText(textChain, _textSources, id => settings.Source(id).Enabled, textLanguage);
+            whys.Add(Router.ExplainText(textPlan));
+            if (textPlan.First is { } textFirst)
+            {
+                routes.Add(new RouteLine(textLanguage, textFirst.Source.Name, Where(textFirst.Source), textFirst.Source.Paid, true));
+            }
+            else
+            {
+                routes.Add(new RouteLine(textLanguage, "no source", "", false, false));
+            }
+        }
+
+        var canServe = routes.Count > 0 && routes.All(r => r.Fits);
+        return new ConsentRow(skill.Id, name, skill.Required, isNew, canServe, routes, skill.Languages, string.Join(" ", whys.Distinct()));
+    }
+
     public static string Where(ISpeechSource s) => s.Runs == Runs.ThisDevice ? "this PC" : "API key";
+
+    public static string Where(ITextSource s) => s.Runs == Runs.ThisDevice ? "this PC" : "API key";
 
     GrantSession? Grant(string origin, RequestedManifest manifest, IReadOnlyList<string> allowedSkills, decimal budget)
     {
@@ -553,9 +604,14 @@ public sealed class WalletEngine
             return Failed(entry, "paused", "the site is paused: its next request, after a click, asks to resume");
         }
 
-        if (skill != Vocabulary.Transcribe)
+        if (skill is not (Vocabulary.Transcribe or Vocabulary.Generate))
         {
             return Failed(entry, "failed", "skill not served: " + (skill ?? "none"));
+        }
+
+        if (skill == Vocabulary.Generate)
+        {
+            return await GenerateCallAsync(entry, session, site, payload, started, ct).ConfigureAwait(false);
         }
 
         // The input: a WAV clip, measured here and never trusted from the page.
@@ -711,7 +767,7 @@ public sealed class WalletEngine
 
             if (step.AskFirst && !site.PaidAllowed)
             {
-                var answer = await AskPaidAsync(session, site, source, estimate, route.All(), ct).ConfigureAwait(false);
+                var answer = await AskPaidAsync(session, site, source.Name, estimate, route.All(), ct).ConfigureAwait(false);
                 if (answer == PaidAnswer.No)
                 {
                     await Unreserve(session, at, estimate).ConfigureAwait(false);
@@ -780,6 +836,321 @@ public sealed class WalletEngine
             : Failed(entry, "failed", plan.Steps.Count == 0 ? "no source for this language" : "no source answered", route.All());
     }
 
+    // ------------------------------------------------------------------------------------------------
+    // call: text.generate
+
+    async Task<JsonNode?> GenerateCallAsync(ActivityEntry entry, GrantSession session, SiteRecord site, JsonObject payload, long started, CancellationToken ct)
+    {
+        // The input: the page's messages, measured here and never trusted from the page.
+        if (payload["input"]?["messages"] is not JsonArray array)
+        {
+            return Failed(entry, "invalid", "no messages in the input");
+        }
+
+        var messages = new List<ChatMessage>();
+        foreach (var node in array)
+        {
+            if (node is not JsonObject message) continue;
+            if (Str(message["role"]) is not { } role) continue;
+            if (role is not ("system" or "user" or "assistant"))
+            {
+                return Failed(entry, "invalid", "message role not allowed: " + role);
+            }
+
+            messages.Add(new ChatMessage(role, Str(message["content"]) ?? ""));
+        }
+
+        if (messages.Count == 0) return Failed(entry, "invalid", "no messages in the input");
+        if (messages.Count > MaxMessages) return Failed(entry, "invalid", "too many messages: the wallet takes at most " + MaxMessages);
+        var chars = messages.Sum(m => m.Content.Length);
+        if (chars == 0) return Failed(entry, "invalid", "the messages are empty");
+        if (chars > MaxInputChars) return Failed(entry, "invalid", "text too long for the wallet: at most " + MaxInputChars + " characters");
+
+        var parameters = payload["params"] as JsonObject ?? new JsonObject();
+        var maxTokens = Math.Clamp(Int(parameters["maxTokens"]) ?? DefaultMaxTokens, 1, MaxTokensCap);
+        var temperature = Math.Clamp(Num(parameters["temperature"]) ?? DefaultTemperature, 0, 1);
+        var language = Vocabulary.PrimaryLanguage(Str(parameters["language"]));
+        var declared = session.Manifest.Skill(Vocabulary.Generate)?.Languages ?? [];
+        language ??= declared.Count == 1 ? declared[0] : null;
+        entry.Language = language;
+
+        List<string>? choices = null;
+        if (parameters["choices"] is JsonArray choiceNodes)
+        {
+            choices = [];
+            foreach (var node in choiceNodes)
+            {
+                if (node is JsonValue v && v.TryGetValue<string>(out var choice)) choices.Add(choice);
+            }
+
+            if (choices.Count == 0) return Failed(entry, "invalid", "no usable choices in the params");
+            if (choices.Count > MaxChoices) return Failed(entry, "invalid", "too many choices: at most " + MaxChoices);
+            if (choices.Any(c => c.Length == 0 || c.Length > MaxChoiceChars))
+            {
+                return Failed(entry, "invalid", "a choice is empty or longer than " + MaxChoiceChars + " characters");
+            }
+
+            if (choices.Sum(c => c.Length) > MaxChoiceCharsTotal) return Failed(entry, "invalid", "the choices together are longer than " + MaxChoiceCharsTotal + " characters");
+        }
+
+        // The per-day limits of the wallet: the same for a text call as for a clip.
+        var limits = _store.Read(s => (
+            SitePerDay: Money.Parse(site.PerDay ?? s.Limits.SitePerDay, 0.20m),
+            CallsPerDay: site.CallsPerDay ?? s.Limits.SiteCallsPerDay,
+            WalletPerDay: Money.Parse(s.Limits.WalletPerDay, 1.00m)));
+        var hold = new DailyHold(session.Origin);
+        if (!HoldCall(hold, limits.CallsPerDay))
+        {
+            TellLimit(session, site, "calls per day", $"{limits.CallsPerDay} calls a day for this site");
+            return Failed(entry, "limit", "calls per day for this site");
+        }
+
+        try
+        {
+            return await RouteTextAsync(entry, session, site, messages, chars, maxTokens, temperature, language, choices,
+                limits.SitePerDay, limits.WalletPerDay, hold, started, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            ReleaseDaily(hold);
+        }
+    }
+
+    async Task<JsonNode?> RouteTextAsync(
+        ActivityEntry entry, GrantSession session, SiteRecord site, IReadOnlyList<ChatMessage> messages, int chars,
+        int maxTokens, double temperature, string? language, IReadOnlyList<string>? choices,
+        decimal sitePerDay, decimal walletPerDay, DailyHold hold, long started, CancellationToken ct)
+    {
+        var settings = _store.Snapshot();
+        var chain = settings.Chain(Vocabulary.Generate);
+        var plan = Router.PlanText(chain, _textSources, id => settings.Source(id).Enabled, language);
+        int Index(ITextSource s) => chain.Stops.FindIndex(x => x.SourceId == s.Id);
+
+        // The fallback route: sources before the one that answers that the visitor turned off or that failed.
+        var route = new Route();
+        foreach (var k in plan.Skipped.Where(k => k.Why == "turned off")) route.Add(Index(k.Source), k.Source.Name + ": turned off");
+
+        // What the gate sees: every character the wallet sends the provider, an added instruction included.
+        var request = new TextRequest(messages, maxTokens, temperature, language, choices);
+        var textChars = chars + (choices is null ? 0 : Texts.ChoicesInstruction(choices).Length);
+        var choiceMiss = false;
+        string? stopReason = null;
+
+        foreach (var step in plan.Steps)
+        {
+            var source = step.Source;
+
+            // One call at a time per source: a second call waits a moment, then tries the next source.
+            var busy = _busy.GetOrAdd(source.Id, _ => new SemaphoreSlim(1, 1));
+            if (!await busy.WaitAsync(BusyWait, ct).ConfigureAwait(false))
+            {
+                route.Add(Index(source), source.Name + ": busy (one call at a time)");
+                continue;
+            }
+
+            decimal estimate = 0;
+            DateTimeOffset at = default;
+            Decision decision = Decision.Blocked;
+            string codes = "";
+            try
+            {
+                estimate = source.EstimateCost(request);
+                if (estimate > 0 && !HoldMoney(hold, estimate, sitePerDay, walletPerDay))
+                {
+                    route.Add(Index(source), source.Name + ": over the daily limit");
+                    stopReason ??= "money per day";
+                    continue;
+                }
+
+                // The gate (spec/rules-0.1-draft.md) decides before the source runs; the slot and the estimate are reserved.
+                at = Now;
+                var call = new JsonObject
+                {
+                    ["skill"] = Vocabulary.Generate,
+                    ["at"] = GrantSession.Time(at),
+                    ["provider"] = source.ProviderKind,
+                    ["estimatedCost"] = Money.ToSpec(estimate),
+                    ["input"] = new JsonObject { ["clipSeconds"] = 0, ["textChars"] = textChars },
+                    ["params"] = language is null ? new JsonObject() : new JsonObject { ["language"] = language },
+                }.ToJsonString();
+
+                await session.Gate.WaitAsync(ct).ConfigureAwait(false);
+                CheckResult check;
+                try
+                {
+                    check = Gate.CheckCall(session.Manifest.Json, session.GrantJson(), call, session.StateJson(at));
+                    if (check.Decision is Decision.Allowed or Decision.Warn)
+                    {
+                        session.CallTimes.Add(at);
+                        session.Spent += estimate;
+                    }
+                }
+                finally
+                {
+                    session.Gate.Release();
+                }
+
+                decision = check.Decision;
+                codes = string.Join(", ", check.Reasons.Select(r => r.Code).Distinct());
+                if (decision == Decision.Blocked)
+                {
+                    if (check.Reasons.All(r => r.Code == "not-local"))
+                    {
+                        route.Add(Index(source), source.Name + ": not local");
+                        continue;
+                    }
+
+                    if (check.Reasons.Any(r => r.Code is "rate-exceeded" or "text-too-long" or "grant-expired"))
+                    {
+                        if (check.Reasons.Any(r => r.Code == "rate-exceeded")) TellLimit(session, site, "rate", "the site's calls per minute");
+                        return Failed(entry, "limit", codes, route.All());
+                    }
+
+                    return Failed(entry, "failed", codes, route.All());
+                }
+
+                if (decision == Decision.Ask)
+                {
+                    // budget-exceeded: the wallet never spends past the budget without a new yes.
+                    TellLimit(session, site, "budget", "the budget of " + Money.Show(session.Budget) + " per session");
+                    route.Add(Index(source), source.Name + ": " + codes);
+                    stopReason ??= "budget per session";
+                    continue;
+                }
+
+                if (step.AskFirst && !site.PaidAllowed)
+                {
+                    var answer = await AskPaidAsync(session, site, source.Name, estimate, route.All(), ct).ConfigureAwait(false);
+                    if (answer == PaidAnswer.No)
+                    {
+                        await Unreserve(session, at, estimate).ConfigureAwait(false);
+                        route.Add(Index(source), source.Name + ": you said no");
+                        return Failed(entry, "refused", "paid fallback not allowed", route.All());
+                    }
+
+                    if (answer == PaidAnswer.Always)
+                    {
+                        _store.Update(s => Site(s, session.Origin).PaidAllowed = true);
+                        site.PaidAllowed = true;
+                    }
+                }
+
+                var ran = Stopwatch.GetTimestamp();
+                var (result, miss) = await AnswerAsync(session, source, request, choices, at, estimate, route, Index(source), ct).ConfigureAwait(false);
+                if (result is null)
+                {
+                    choiceMiss |= miss;
+                    continue;
+                }
+
+                await session.Gate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+                try
+                {
+                    session.Spent += result.Cost - estimate;
+                }
+                finally
+                {
+                    session.Gate.Release();
+                }
+
+                var text = result.Text.Trim();
+                if (text.Length > MaxTextChars) text = text[..MaxTextChars];
+                entry.Outcome = "ok";
+                entry.Source = source.Name + (result.Detail is null ? "" : " · " + result.Detail);
+                var before = route.Before(Index(source));
+                entry.Fallback = before.Count > 0 ? string.Join(" → ", before) + " → " + source.Name : null;
+                entry.Cost = Money.ToSpec(result.Cost);
+                entry.Milliseconds = (int)Stopwatch.GetElapsedTime(ran).TotalMilliseconds;
+                entry.Note = decision == Decision.Warn ? "warn: " + codes : null;
+                Log(entry);
+                return new JsonObject
+                {
+                    ["ok"] = true,
+                    ["output"] = new JsonObject { ["text"] = text },
+                    ["receipt"] = new JsonObject
+                    {
+                        ["cost"] = Money.ToReceipt(result.Cost),
+                        ["provider"] = source.ProviderKind == "local-model" ? "local" : "api-key",
+                    },
+                };
+            }
+            finally
+            {
+                busy.Release();
+            }
+        }
+
+        entry.Milliseconds = (int)Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+        return stopReason is not null
+            ? Failed(entry, "limit", stopReason, route.All())
+            : Failed(entry, "failed",
+                plan.Steps.Count == 0 ? "no source can do text.generate" : choiceMiss ? "no source answered with one of the choices" : "no source answered",
+                route.All());
+    }
+
+    /// <summary>
+    /// One source answers a text request: the wallet strips any hidden reasoning and, when the page gave choices,
+    /// matches the answer against them (one retry with the instruction spelled out). A source that cannot answer
+    /// returns null, with its route note added and its reserve given back.
+    /// </summary>
+    async Task<(TextAnswer? Answer, bool ChoiceMiss)> AnswerAsync(
+        GrantSession session, ITextSource source, TextRequest request, IReadOnlyList<string>? choices,
+        DateTimeOffset at, decimal estimate, Route route, int index, CancellationToken ct)
+    {
+        try
+        {
+            using var limit = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            limit.CancelAfter(TextSourceTimeout);
+            var answer = await source.GenerateAsync(request, limit.Token).ConfigureAwait(false);
+            var text = Texts.CleanAnswer(answer.Text);
+
+            if (choices is not null)
+            {
+                var matched = Texts.MatchChoice(text, choices);
+                if (matched is null)
+                {
+                    // One more try, the instruction spelled out; then this source is out.
+                    var again = await source.GenerateAsync(RetryRequest(request, choices), limit.Token).ConfigureAwait(false);
+                    matched = Texts.MatchChoice(Texts.CleanAnswer(again.Text), choices);
+                    answer = new TextAnswer(matched ?? "", answer.Cost + again.Cost,
+                        answer.InputTokens + again.InputTokens, answer.OutputTokens + again.OutputTokens, answer.Detail);
+                    if (matched is null)
+                    {
+                        route.Add(index, source.Name + ": answered with something else");
+                        await Unreserve(session, at, estimate).ConfigureAwait(false);
+                        return (null, true);
+                    }
+                }
+
+                text = matched;
+            }
+            else if (text.Length == 0)
+            {
+                route.Add(index, source.Name + ": answered nothing");
+                await Unreserve(session, at, estimate).ConfigureAwait(false);
+                return (null, false);
+            }
+
+            return (answer with { Text = text }, false);
+        }
+        catch (Exception e)
+        {
+            if (e is OperationCanceledException && ct.IsCancellationRequested) throw;
+            await Unreserve(session, at, estimate).ConfigureAwait(false);
+            route.Add(index, source.Name + ": " + Short(e));
+            return (null, false);
+        }
+    }
+
+    /// <summary>The request again, with the choices spelled out as a last instruction.</summary>
+    static TextRequest RetryRequest(TextRequest request, IReadOnlyList<string> choices) =>
+        new([.. request.Messages, new ChatMessage("system", Texts.ChoicesInstruction(choices))],
+            request.MaxTokens, request.Temperature, request.Language, request.Choices);
+
+    static int? Int(JsonNode? node) => node is JsonValue v && v.TryGetValue<int>(out var i) ? i : null;
+
+    static double? Num(JsonNode? node) => node is JsonValue v && v.TryGetValue<double>(out var f) && double.IsFinite(f) ? f : null;
+
     /// <summary>The calls and money one call holds against the daily limits while it runs.</summary>
     sealed class DailyHold(string origin)
     {
@@ -831,7 +1202,7 @@ public sealed class WalletEngine
         }
     }
 
-    async Task<PaidAnswer> AskPaidAsync(GrantSession session, SiteRecord site, ISpeechSource source, decimal estimate, IReadOnlyList<string> route, CancellationToken ct)
+    async Task<PaidAnswer> AskPaidAsync(GrantSession session, SiteRecord site, string sourceName, decimal estimate, IReadOnlyList<string> route, CancellationToken ct)
     {
         Origins.TryParse(site.Origin, out var host, out _);
         var why = route.Count > 0 ? "Before it: " + string.Join("; ", route) + "." : "It is the first source in your chain.";
@@ -842,7 +1213,7 @@ public sealed class WalletEngine
             await _prompt.WaitAsync(timeout.Token).ConfigureAwait(false);
             try
             {
-                return await _ui.AskPaidAsync(new PaidModel(site.Origin, host, source.Name, estimate, why), timeout.Token).ConfigureAwait(false);
+                return await _ui.AskPaidAsync(new PaidModel(site.Origin, host, sourceName, estimate, why), timeout.Token).ConfigureAwait(false);
             }
             finally
             {

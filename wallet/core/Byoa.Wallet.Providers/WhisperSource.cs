@@ -12,9 +12,9 @@ namespace Byoa.Wallet.Providers;
 /// <summary>
 /// Whisper (multilingual) through Whisper.net / whisper.cpp. The ggml model downloads into
 /// <c>%LOCALAPPDATA%\BYOA\models\whisper</c> on first use, with progress shown. It runs on the GPU through Vulkan
-/// when the driver offers it and falls back to the CPU on its own.
+/// when the driver offers it and falls back to the CPU on its own. The CPU-only fallback (<see cref="WhisperCpuSource"/>) is the same engine with the GPU switched off.
 /// </summary>
-public sealed class WhisperSource : ISpeechSource, IDownloadableSource, IWarmable, IDisposable
+public class WhisperSource : ISpeechSource, IDownloadableSource, IWarmable, IDisposable
 {
     public const string SourceId = "whisper";
     const string BaseUrl = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/";
@@ -29,9 +29,12 @@ public sealed class WhisperSource : ISpeechSource, IDownloadableSource, IWarmabl
         ["ggml-large-v3-turbo.bin"] = 1_624_555_275,
         ["ggml-medium.bin"] = 1_533_763_059,
         ["ggml-small.bin"] = 487_601_967,
+        ["ggml-small-q5_1.bin"] = 190_085_487,
+        ["ggml-base-q5_1.bin"] = 59_707_625,
     };
 
-    static int _runtimeConfigured;
+    static int _gpuRuntimeConfigured;
+    static int _cpuRuntimeConfigured;
 
     readonly Func<string> _modelFile;
     readonly Func<IReadOnlyList<FoundModel>> _found;
@@ -62,8 +65,8 @@ public sealed class WhisperSource : ISpeechSource, IDownloadableSource, IWarmabl
     /// <summary>Beam search width; 0 or 1 is greedy decoding (the default: on single Slovak words beam 5 was no better and 1.5x slower).</summary>
     public int BeamSize { get; set; } = 1;
 
-    public string Id => SourceId;
-    public string Name => "Whisper " + ModelLabel(_modelFile());
+    public virtual string Id => SourceId;
+    public virtual string Name => "Whisper " + ModelLabel(_modelFile());
     public string Runs => Sources.Runs.ThisDevice;
     public string ProviderKind => "local-model";
     public IReadOnlyList<string>? Languages => null;
@@ -76,13 +79,16 @@ public sealed class WhisperSource : ISpeechSource, IDownloadableSource, IWarmabl
     /// <summary>"GPU, Vulkan" or "CPU" once loaded.</summary>
     public string? Runtime => _runtime;
 
+    /// <summary>The folder the wallet downloads its ggml file into; the CPU source keeps its own copy in the wallet home.</summary>
+    protected virtual string ModelDir => Path.Combine(WalletPaths.Models, "whisper");
+
     /// <summary>The model file: in the wallet's own models folder, or found in one of the visitor's model folders.</summary>
     public string? ModelPath
     {
         get
         {
             var file = _modelFile();
-            var own = Path.Combine(WalletPaths.Models, "whisper", file);
+            var own = Path.Combine(ModelDir, file);
             if (File.Exists(own)) return own;
             return _found().FirstOrDefault(m => m.Kind == "ggml" && Path.GetFileName(m.Path) == file)?.Path;
         }
@@ -132,7 +138,7 @@ public sealed class WhisperSource : ISpeechSource, IDownloadableSource, IWarmabl
         try
         {
             var (expectedSize, expectedSha) = await ExpectedAsync(file).ConfigureAwait(false);
-            var dir = Path.Combine(WalletPaths.Models, "whisper");
+            var dir = ModelDir;
             Directory.CreateDirectory(dir);
             var target = Path.Combine(dir, file);
             var part = target + ".part";
@@ -213,31 +219,43 @@ public sealed class WhisperSource : ISpeechSource, IDownloadableSource, IWarmabl
     // ------------------------------------------------------------------------------------------------
     // transcription
 
-    static void ConfigureRuntime()
+    static void ConfigureRuntime(bool useGpu)
     {
-        if (Interlocked.Exchange(ref _runtimeConfigured, 1) == 1) return;
-        // GPU through Vulkan first; the CPU build is the automatic fallback when Vulkan cannot load.
-        RuntimeOptions.RuntimeLibraryOrder = [RuntimeLibrary.Vulkan, RuntimeLibrary.Cpu, RuntimeLibrary.CpuNoAvx];
+        if (Interlocked.Exchange(ref useGpu ? ref _gpuRuntimeConfigured : ref _cpuRuntimeConfigured, 1) == 1) return;
+        // GPU through Vulkan first; the CPU build is the automatic fallback when Vulkan cannot load. A source that
+        // runs without the GPU never loads Vulkan at all: on some machines its driver breaks the CPU run instead.
+        RuntimeOptions.RuntimeLibraryOrder = useGpu
+            ? [RuntimeLibrary.Vulkan, RuntimeLibrary.Cpu, RuntimeLibrary.CpuNoAvx]
+            : [RuntimeLibrary.Cpu, RuntimeLibrary.CpuNoAvx];
     }
+
+    /// <summary>Whether this source may use the GPU; the CPU source loads without it.</summary>
+    protected virtual bool UseGpu => true;
+
+    /// <summary>The note the state shows once the model is loaded: which runtime answered.</summary>
+    protected virtual string? RuntimeLabel() => RuntimeOptions.LoadedLibrary switch
+    {
+        RuntimeLibrary.Vulkan => "GPU, Vulkan",
+        RuntimeLibrary.Cuda or RuntimeLibrary.Cuda12 => "GPU, CUDA",
+        null => null,
+        var other => other.ToString(),
+    };
 
     WhisperFactory Factory()
     {
         var path = ModelPath ?? throw new InvalidOperationException("the Whisper model is not downloaded yet");
         if (_factory is not null && _factoryPath == path) return _factory;
         DisposeFactory();
-        ConfigureRuntime();
-        _factory = WhisperFactory.FromPath(path, new WhisperFactoryOptions { UseGpu = true });
+        ConfigureRuntime(UseGpu);
+        _factory = WhisperFactory.FromPath(path, new WhisperFactoryOptions { UseGpu = UseGpu });
         _factoryPath = path;
-        _runtime = RuntimeOptions.LoadedLibrary switch
-        {
-            RuntimeLibrary.Vulkan => "GPU, Vulkan",
-            RuntimeLibrary.Cuda or RuntimeLibrary.Cuda12 => "GPU, CUDA",
-            null => null,
-            var other => other.ToString(),
-        };
+        _runtime = RuntimeLabel();
         if (_runtime is "Cpu" or "CpuNoAvx") _runtime = "CPU";
         return _factory;
     }
+
+    /// <summary>How many threads the transcription runs on: half of the cores while the GPU does the work.</summary>
+    protected virtual int ThreadCount => Math.Clamp(Environment.ProcessorCount / 2, 2, 8);
 
     WhisperProcessor Processor(string? language)
     {
@@ -248,7 +266,7 @@ public sealed class WhisperSource : ISpeechSource, IDownloadableSource, IWarmabl
             .WithNoContext()
             .WithSingleSegment()
             .WithTemperature(0f)
-            .WithThreads(Math.Clamp(Environment.ProcessorCount / 2, 2, 8));
+            .WithThreads(ThreadCount);
         if (BeamSize > 1) builder = builder.WithBeamSearchSamplingStrategy(b => b.WithBeamSize(BeamSize));
         p = builder.Build();
         _processors[key] = p;

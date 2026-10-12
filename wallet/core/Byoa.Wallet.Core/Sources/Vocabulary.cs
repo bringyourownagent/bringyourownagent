@@ -7,7 +7,7 @@ public static class Vocabulary
     public const string Generate = "text.generate";
 
     /// <summary>The skills this wallet can serve in 0.1.</summary>
-    public static readonly string[] Served = [Transcribe];
+    public static readonly string[] Served = [Transcribe, Generate];
 
     public static string SkillName(string skill) => skill switch
     {

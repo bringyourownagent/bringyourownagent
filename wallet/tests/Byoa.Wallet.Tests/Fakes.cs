@@ -74,6 +74,60 @@ sealed class WarmingSource(string id, IReadOnlyList<string>? languages = null) :
     }
 }
 
+/// <summary>A text source with fixed answers (one per call, the last repeats) or failures.</summary>
+class FakeTextSource : ITextSource, ILiveness
+{
+    public FakeTextSource(string id, string runs = Sources.Runs.ThisDevice, decimal costPerCall = 0)
+    {
+        Id = id;
+        Runs = runs;
+        CostPerCall = costPerCall;
+    }
+
+    public string Id { get; }
+    public string Name => "FakeText " + Id;
+    public string Runs { get; }
+    public string ProviderKind => Runs == Sources.Runs.ApiKey ? "api-key" : "local-model";
+    public IReadOnlyList<string>? Languages { get; set; }
+    public bool Paid => CostPerCall > 0;
+    public SourceState State { get; set; } = SourceState.Ready;
+    public string StateText => State.ToString();
+    public decimal CostPerCall { get; }
+    public bool? Up { get; set; } = true;
+
+    public Queue<string> Answers { get; set; } = new();
+    public bool Fail { get; set; }
+    int _calls;
+    public int Calls => Volatile.Read(ref _calls);
+    public TextRequest? LastRequest { get; private set; }
+
+    /// <summary>When set, calls wait for it before they answer: calls held in flight.</summary>
+    public TaskCompletionSource? Hold { get; set; }
+
+    public decimal EstimateCost(TextRequest request) => CostPerCall;
+
+    public Task<TextAnswer> GenerateAsync(TextRequest request, CancellationToken ct)
+    {
+        Interlocked.Increment(ref _calls);
+        LastRequest = request;
+        if (Hold is { } hold) return HeldAsync(hold, request, ct);
+        return Task.FromResult(Answer(request));
+    }
+
+    async Task<TextAnswer> HeldAsync(TaskCompletionSource hold, TextRequest request, CancellationToken ct)
+    {
+        await hold.Task.WaitAsync(ct);
+        return Answer(request);
+    }
+
+    TextAnswer Answer(TextRequest request)
+    {
+        if (Fail) throw new InvalidOperationException("fake text failure");
+        var text = Answers.Count > 1 ? Answers.Dequeue() : Answers.Peek();
+        return new TextAnswer(text, CostPerCall, 1, 1, "fake");
+    }
+}
+
 /// <summary>A visitor who answers the wallet's windows with preset answers, and counts what was shown.</summary>
 sealed class ScriptedUi : IWalletUi
 {
