@@ -38,6 +38,7 @@ sealed class SettingsWindow : Window
     readonly DispatcherTimer _refresh;
     string _page = "sites";
     bool _dirty;
+    DateTimeOffset _rendered;
 
     public SettingsWindow(WalletServices services)
     {
@@ -96,7 +97,8 @@ sealed class SettingsWindow : Window
         // Refresh at most twice a second while something changes.
         _refresh = new DispatcherTimer(TimeSpan.FromMilliseconds(500), DispatcherPriority.Background, (_, _) =>
         {
-            if (!_dirty) return;
+            // Sites also redraws every 30 s on its own: its activity dots change colour with time alone
+            if (!_dirty && !(_page == "sites" && DateTimeOffset.UtcNow - _rendered > TimeSpan.FromSeconds(30))) return;
             _dirty = false;
             Render();
         });
@@ -130,6 +132,7 @@ sealed class SettingsWindow : Window
         _todayText.Text = Money.Show(spent) + " of " + Money.Show(limit);
         _todayBar.Value = limit == 0 ? 0 : (double)Math.Min(1, spent / limit);
 
+        _rendered = DateTimeOffset.UtcNow;
         // Keep the scroll position when a page redraws itself.
         var offset = _content.Offset;
         var page = new StackPanel { Spacing = 14, Margin = new Thickness(28, 22, 28, 28) };
@@ -165,7 +168,8 @@ sealed class SettingsWindow : Window
     void SitesPage(StackPanel page)
     {
         Head(page, "Sites", "Every site that asked, and your answer. A site gets the same answer, “AI unavailable”, whether you declined, blocked it or have no wallet.");
-        var sites = _w.Store.Snapshot().Sites.OrderByDescending(s => s.LastRequest ?? DateTimeOffset.MinValue).ToList();
+        page.Children.Add(PauseSetting());
+        var sites = _w.Store.Snapshot().Sites.OrderByDescending(s => _w.Engine.LastSeen(s) ?? DateTimeOffset.MinValue).ToList();
         if (sites.Count == 0)
         {
             page.Children.Add(Ui.Wrap("No site has asked yet. When a page asks to use your AI after your click, a short notice appears above the tray.", "muted"));
@@ -175,12 +179,65 @@ sealed class SettingsWindow : Window
         foreach (var site in sites) page.Children.Add(SiteCard(site));
     }
 
+    static readonly (int Hours, string Label)[] PauseChoices = [(0, "never"), (1, "an hour"), (24, "a day"), (168, "a week")];
+
+    /// <summary>«Pause a site after it goes unused for [a day ▾]».</summary>
+    Control PauseSetting()
+    {
+        var hours = _w.Store.Read(s => s.Limits.PauseUnusedAfterHours);
+        var choice = new ComboBox { MinWidth = 110 };
+        AutomationProperties.SetAutomationId(choice, "PauseUnusedAfter");
+        AutomationProperties.SetName(choice, "Pause a site after it goes unused for");
+        foreach (var (h, label) in PauseChoices) choice.Items.Add(new ComboBoxItem { Content = label, Tag = h });
+        if (Array.FindIndex(PauseChoices, c => c.Hours == hours) < 0) choice.Items.Add(new ComboBoxItem { Content = WalletEngine.Hours(hours), Tag = hours });
+        choice.SelectedIndex = choice.Items.Cast<ComboBoxItem>().ToList().FindIndex(i => (int)i.Tag! == hours);
+        choice.SelectionChanged += (_, _) =>
+        {
+            if (choice.SelectedItem is ComboBoxItem { Tag: int h } && h != _w.Store.Read(s => s.Limits.PauseUnusedAfterHours))
+            {
+                _w.Store.Update(s => s.Limits.PauseUnusedAfterHours = h);
+                Render();
+            }
+        };
+        return Ui.Column(4,
+            Ui.Row(8, Ui.Text("Pause a site after it goes unused for", "strong"), choice),
+            Ui.Wrap("A paused site keeps what you allowed, but nothing runs for it on its own: its open sessions end, it does not reconnect by itself, "
+                + "and its next request, after your click, asks you to resume.", "muted", "small"));
+    }
+
+    /// <summary>A coloured dot for how recently the site used the wallet: green within 3 minutes, yellow within a day, grey before that.</summary>
+    static Control ActivityDot(DateTimeOffset? last, out string when)
+    {
+        var ago = last is { } t ? DateTimeOffset.Now - t : (TimeSpan?)null;
+        var (color, state) = ago switch
+        {
+            { } a when a <= TimeSpan.FromMinutes(3) => ("#2e9d57", "active now"),
+            { } a when a <= TimeSpan.FromDays(1) => ("#e0a100", "active today"),
+            _ => ("#b5bac4", "inactive"),
+        };
+        when = ago switch
+        {
+            null => "never used",
+            { TotalMinutes: < 1 } => "used just now",
+            { TotalMinutes: < 60 } a => "last used " + ((int)a.TotalMinutes).ToString(CultureInfo.InvariantCulture) + " min ago",
+            { TotalHours: < 24 } a => "last used " + ((int)a.TotalHours).ToString(CultureInfo.InvariantCulture) + " h ago",
+            { TotalDays: < 2 } => "last used yesterday",
+            { } a => "last used " + ((int)a.TotalDays).ToString(CultureInfo.InvariantCulture) + " days ago",
+        };
+        var dot = new Avalonia.Controls.Shapes.Ellipse { Width = 11, Height = 11, Fill = new SolidColorBrush(Color.Parse(color)), VerticalAlignment = VerticalAlignment.Center };
+        ToolTip.SetTip(dot, state + " · " + when);
+        AutomationProperties.SetName(dot, state);
+        return dot;
+    }
+
     Control SiteCard(SiteRecord site)
     {
         Origins.TryParse(site.Origin, out var host, out _);
         if (host.Length == 0) host = site.Origin;
+        var paused = _w.Engine.PausedNow(site);
         var (chip, kind, line) = site.Status switch
         {
+            SiteStatus.Allowed when paused is not null => ("Paused", "orange", paused + ". It keeps what you allowed; its next request, after your click, asks you to resume."),
             SiteStatus.Allowed => ("Allowed", "", site.AutoDecide ? "Allowed. Next time the wallet decides on its own, within these limits." : "Allowed within your limits. Each new visit asks again after your click."),
             SiteStatus.Declined => ("Declined", "outline", "You declined last time. It may ask again after your next click."),
             SiteStatus.Blocked => ("Blocked", "ink", "Blocked: its requests never show a notice, and it hears only “AI unavailable”."),
@@ -188,8 +245,10 @@ sealed class SettingsWindow : Window
         };
 
         var card = new StackPanel { Spacing = 8 };
-        var title = Ui.Row(9, Ui.Tile(Ui.Globe, 26), Ui.Text(host, "host"));
-        ((TextBlock)title.Children[1]).FontSize = 19;
+        var dot = ActivityDot(_w.Engine.LastSeen(site), out var when);
+        AutomationProperties.SetAutomationId(dot, "SiteActivity-" + host);
+        var title = Ui.Row(9, dot, Ui.Tile(Ui.Globe, 26), Ui.Text(host, "host"), Ui.Text(when, "muted", "small"));
+        ((TextBlock)title.Children[2]).FontSize = 19;
         card.Children.Add(Ui.Columns("*,Auto", title, Ui.Chip(chip, kind)));
         card.Children.Add(Ui.Wrap(line, "muted"));
         if (!string.IsNullOrEmpty(site.Summary))
@@ -229,6 +288,7 @@ sealed class SettingsWindow : Window
         var buttons = Ui.Row(8);
         if (site.Status == SiteStatus.Allowed)
         {
+            if (paused is null) buttons.Children.Add(Ui.Button("Pause", "deny", "SitePause-" + host, () => { _w.Engine.Pause(site.Origin); Render(); }, "small"));
             buttons.Children.Add(Ui.Button("Revoke", "deny", "SiteRevoke-" + host, () => { _w.Engine.Revoke(site.Origin); Render(); }, "small"));
         }
 
@@ -722,6 +782,7 @@ sealed class SettingsWindow : Window
             "refused" => ("Not paid", "outline"),
             "blocked" => ("Blocked", "ink"),
             "revoked" => ("Revoked", "outline"),
+            "paused" => ("Paused", "orange"),
             "connected" => ("Connected", ""),
             "ignored" => ("Ignored", "outline"),
             "error" => ("Refused", "ink"),

@@ -92,6 +92,17 @@ public sealed class SiteRecord
 
     public DateTimeOffset? LastRequest { get; set; }
     public DateTimeOffset? DecidedAt { get; set; }
+
+    /// <summary>
+    /// Paused: the site keeps what it was allowed, but nothing runs for it on its own any more: no grant without asking,
+    /// no reconnecting by itself, and calls on its old grants are refused. Its next request, after a click, asks to resume.
+    /// </summary>
+    public bool Paused { get; set; }
+
+    public DateTimeOffset? PausedAt { get; set; }
+
+    /// <summary>"you" (paused in Sites) or "unused" (no use for longer than <see cref="LimitSettings.PauseUnusedAfterHours"/>).</summary>
+    public string? PauseReason { get; set; }
 }
 
 /// <summary>The visitor's switch for one source.</summary>
@@ -131,4 +142,7 @@ public sealed class LimitSettings
 
     /// <summary>Money for the whole wallet per day, all sites together.</summary>
     public string WalletPerDay { get; set; } = "1.00 USD";
+
+    /// <summary>An allowed site that has not used the wallet for this many hours is paused; 0 = never.</summary>
+    public int PauseUnusedAfterHours { get; set; } = 24;
 }

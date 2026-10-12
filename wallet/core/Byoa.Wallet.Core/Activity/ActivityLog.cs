@@ -149,6 +149,20 @@ public sealed class ActivityLog
         Added?.Invoke(entry);
     }
 
+    /// <summary>When the site was last in the log (a request, a call, a link), as far back as the log is kept.</summary>
+    public DateTimeOffset? LastAt(string origin)
+    {
+        lock (_gate)
+        {
+            for (var i = _entries.Count - 1; i >= 0; i--)
+            {
+                if (_entries[i].Origin == origin) return _entries[i].At;
+            }
+
+            return null;
+        }
+    }
+
     /// <summary>The newest entries first.</summary>
     public IReadOnlyList<ActivityEntry> Recent(int count = 500)
     {

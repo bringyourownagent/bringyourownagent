@@ -200,7 +200,7 @@ public sealed class DirectConnection
         if (_stop.IsCancellationRequested || _token is null) return false;
         var stored = _owner.Pairings.Get(Origin);
         if (stored is null || stored.Token != _token) return false;
-        if (_owner.Engine.FindSite(Origin) is { Status: SiteStatus.Allowed, AutoDecide: true }) return true;
+        if (_owner.Engine.DecidesOnItsOwn(Origin)) return true;          // not while the site is paused
         _owner.Pairings.Forget(Origin, _token);
         return false;
     }
@@ -302,7 +302,7 @@ public sealed class DirectConnection
             {
                 _token = token;
                 // The pairing is kept only for a site with "decide on my own": only then may the wallet come back on its own.
-                if (_owner.Engine.FindSite(Origin) is { Status: SiteStatus.Allowed, AutoDecide: true })
+                if (_owner.Engine.DecidesOnItsOwn(Origin))
                 {
                     _owner.Pairings.Set(new Pairing(Origin, Endpoint.ToString(), Manifest, token, Now));
                 }

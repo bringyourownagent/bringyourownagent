@@ -119,7 +119,7 @@ public sealed class DirectTransport : IDisposable
     {
         foreach (var pairing in Pairings.All())
         {
-            if (Engine.FindSite(pairing.Origin) is not { Status: SiteStatus.Allowed, AutoDecide: true }
+            if (!Engine.DecidesOnItsOwn(pairing.Origin)
                 || !DirectLink.TryTarget(pairing.Endpoint, Options.DevLocal, out var endpoint, out var origin, out _, out _)
                 || origin != pairing.Origin
                 || !DirectLink.TryManifest(pairing.Manifest, out _, out _))

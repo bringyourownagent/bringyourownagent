@@ -132,6 +132,7 @@ public sealed class WalletEngine
     {
         var text = manifestNode.ToJsonString();
         if (text.Length > MaxManifestChars || !Manifest.Validate(text).Ok) return false;
+        if (PauseIfDue(origin)) return false;
         var site = FindSite(origin);
         if (site is not { Status: SiteStatus.Allowed }) return false;
         var diff = Difference(site, RequestedManifest.From(manifestNode));
@@ -176,6 +177,7 @@ public sealed class WalletEngine
         if (!validation.Ok) return Done(entry, "invalid", "manifest: " + string.Join(", ", validation.Errors.Select(e => e.Code).Distinct()));
         var manifest = RequestedManifest.From(manifestNode);
 
+        PauseIfDue(origin);                             // before this request counts as use: a site unused too long is paused first
         var site = _store.Read(s => s.Site(origin) is { } r ? Copy(r) : null) ?? new SiteRecord { Origin = origin };
         _store.Update(s => Site(s, origin).LastRequest = Now);
 
@@ -183,7 +185,7 @@ public sealed class WalletEngine
 
         var diff = Difference(site, manifest);
         var covered = site.Status == SiteStatus.Allowed && diff.NewSkills.Count == 0 && diff.MissingRequired.Count == 0 && !diff.CostRaised;
-        if (covered && site.AutoDecide)
+        if (covered && site.AutoDecide && !site.Paused)
         {
             var auto = Grant(origin, manifest, site.Skills, Money.Parse(site.Budget, 0.20m));
             if (auto is null) return Done(entry, "invalid", "nothing to grant");
@@ -317,6 +319,9 @@ public sealed class WalletEngine
                 r.Languages = manifest.Skills.SelectMany(k => k.Languages).Distinct().ToList();
                 r.QuietRequests = 0;
                 r.DecidedAt = Now;
+                r.Paused = false;                       // "Resume" in the consent window of a paused site
+                r.PausedAt = null;
+                r.PauseReason = null;
                 skills = r.Skills;
             });
             SitesChanged?.Invoke();
@@ -326,7 +331,8 @@ public sealed class WalletEngine
             released = true;
             // The page gets its grant once the routed models are loaded (at most WarmWait), with "Preparing your model…" meanwhile.
             var waited = await WarmBeforeResolveAsync(session, host, showPreparing: true, ct).ConfigureAwait(false);
-            entry.Note = "after a click" + (model.IsDifference ? "; only the difference was shown" : "") + (answer.AutoDecide ? "; decide on my own from now on" : "") + Ready(waited);
+            entry.Note = "after a click" + (model.PausedNote is not null ? "; resumed" : "") + (model.IsDifference ? "; only the difference was shown" : "")
+                + (answer.AutoDecide ? "; decide on my own from now on" : "") + Ready(waited);
             return Done(entry, "allowed", null, session.ToResult());
         }
         catch (OperationCanceledException)
@@ -382,7 +388,8 @@ public sealed class WalletEngine
             budget = manifest.ExpectedPerSession is { } expected && expected > 0 ? expected : defaultBudget;
         }
 
-        return new ConsentModel(origin, host, secure, manifest.Summary, rows, budget, before, site.AutoDecide, isDifference);
+        return new ConsentModel(origin, host, secure, manifest.Summary, rows, budget, before, site.AutoDecide, isDifference,
+            site.Status == SiteStatus.Allowed && site.Paused ? PauseText(site) : null);
     }
 
     ConsentRow Row(RequestedSkill skill, WalletSettings settings, bool isNew)
@@ -538,6 +545,12 @@ public sealed class WalletEngine
         {
             _sessions.TryRemove(session.Id, out _);
             return Failed(entry, "failed", "the grant was revoked");
+        }
+
+        if (PauseIfDue(origin))
+        {
+            _sessions.TryRemove(session.Id, out _);
+            return Failed(entry, "paused", "the site is paused: its next request, after a click, asks to resume");
         }
 
         if (skill != Vocabulary.Transcribe)
@@ -918,6 +931,90 @@ public sealed class WalletEngine
         if (blocked) SiteClosed?.Invoke(origin);
     }
 
+    /// <summary>
+    /// Sites → Pause: the site keeps what it was allowed, but its grants end, it stops reconnecting by itself and gets nothing
+    /// on its own; its next request, after a click, shows the notice and asks to resume.
+    /// </summary>
+    public void Pause(string origin)
+    {
+        var paused = false;
+        _store.Update(s =>
+        {
+            var r = Site(s, origin);
+            if (r.Status != SiteStatus.Allowed || r.Paused) return;
+            r.Paused = true;
+            r.PausedAt = Now;
+            r.PauseReason = "you";
+            paused = true;
+        });
+        if (!paused) return;
+        DropSessions(origin);
+        Log(new ActivityEntry { Origin = origin, Kind = Wire.Request, Outcome = "paused", Note = "paused in the settings" });
+        SitesChanged?.Invoke();
+        SiteClosed?.Invoke(origin);
+    }
+
+    /// <summary>An allowed site that may get a grant and reconnect without asking: "decide on my own" on, and not paused.</summary>
+    public bool DecidesOnItsOwn(string origin) => !PauseIfDue(origin) && FindSite(origin) is { Status: SiteStatus.Allowed, AutoDecide: true, Paused: false };
+
+    /// <summary>When the site was last heard from: its newest entry in the activity log, its last request or the last decision.</summary>
+    public DateTimeOffset? LastSeen(SiteRecord site) =>
+        new[] { _activity.LastAt(site.Origin), site.LastRequest, site.DecidedAt }.Where(t => t is not null).Max();
+
+    /// <summary>The pause that applies to an allowed site now: the visitor's own, or one that is due because the site went unused
+    /// (shown in Sites even before the wallet stores it on the site's next request or call). Null when it is not paused.</summary>
+    public string? PausedNow(SiteRecord site)
+    {
+        if (site.Status != SiteStatus.Allowed) return null;
+        if (site.Paused) return PauseText(site);
+        return UnusedSince(site) is { } since ? PauseText(new SiteRecord { PauseReason = "unused", PausedAt = since }) : null;
+    }
+
+    /// <summary>When an allowed site's unused time ran out (the moment it counts as paused), or null while it is in use.</summary>
+    DateTimeOffset? UnusedSince(SiteRecord site)
+    {
+        var hours = _store.Read(s => s.Limits.PauseUnusedAfterHours);
+        if (hours <= 0 || LastSeen(site) is not { } last) return null;
+        var due = last.AddHours(hours);
+        return due <= Now ? due : null;
+    }
+
+    /// <summary>Stores a pause that is due (the site went unused too long): its grants end and it is logged. True when the site is paused.</summary>
+    bool PauseIfDue(string origin)
+    {
+        var site = FindSite(origin);
+        if (site is not { Status: SiteStatus.Allowed }) return false;
+        if (site.Paused) return true;
+        if (UnusedSince(site) is not { } since) return false;
+        var hours = _store.Read(s => s.Limits.PauseUnusedAfterHours);
+        _store.Update(s =>
+        {
+            var r = Site(s, origin);
+            r.Paused = true;
+            r.PausedAt = since;
+            r.PauseReason = "unused";
+        });
+        DropSessions(origin);
+        Log(new ActivityEntry { Origin = origin, Kind = Wire.Request, Outcome = "paused", Note = "paused after " + Hours(hours) + " without use" });
+        SitesChanged?.Invoke();
+        SiteClosed?.Invoke(origin);
+        return true;
+    }
+
+    /// <summary>"Paused by you on 12 October" / "Paused after a day without use".</summary>
+    string PauseText(SiteRecord site) => site.PauseReason == "unused"
+        ? "Paused after " + Hours(_store.Read(s => s.Limits.PauseUnusedAfterHours)) + " without use"
+        : "Paused by you" + (site.PausedAt is { } at ? " on " + at.ToLocalTime().ToString("d MMMM, HH:mm", CultureInfo.InvariantCulture) : "");
+
+    public static string Hours(int hours) => hours switch
+    {
+        1 => "an hour",
+        24 => "a day",
+        168 => "a week",
+        _ when hours % 24 == 0 => (hours / 24).ToString(CultureInfo.InvariantCulture) + " days",
+        _ => hours.ToString(CultureInfo.InvariantCulture) + " hours",
+    };
+
     public void SetAutoDecide(string origin, bool auto)
     {
         _store.Update(s => Site(s, origin).AutoDecide = auto);
@@ -958,6 +1055,7 @@ public sealed class WalletEngine
         Origin = r.Origin, Status = r.Status, AutoDecide = r.AutoDecide, Skills = [.. r.Skills], Budget = r.Budget,
         ExpectedCost = r.ExpectedCost, Summary = r.Summary, Privacy = r.Privacy, Languages = [.. r.Languages], PaidAllowed = r.PaidAllowed,
         PerDay = r.PerDay, CallsPerDay = r.CallsPerDay, QuietRequests = r.QuietRequests, LastRequest = r.LastRequest, DecidedAt = r.DecidedAt,
+        Paused = r.Paused, PausedAt = r.PausedAt, PauseReason = r.PauseReason,
     };
 
     static string? Str(JsonNode? node) => node is JsonValue v && v.TryGetValue<string>(out var s) ? s : null;

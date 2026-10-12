@@ -367,6 +367,74 @@ public class EngineTests
         var status = await _engine.HandleAsync(new WireMessage(9, Wire.Status, "", false, new JsonObject()));
         Assert.Equal("{\"running\":true,\"version\":\"0.1.0\",\"quiet\":1}", status!.ToJsonString());
     }
+
+    // ------------------------------------------------------------------ pause
+
+    [Fact]
+    public async Task APausedSiteGetsNothingOnItsOwnAndItsNextClickAsksToResume()
+    {
+        _ui.Consent = new ConsentAnswer(true, 0.05m, AutoDecide: true, []);
+        var grant = await GrantAsync();
+        _engine.Pause(Site);
+
+        Assert.True(_store.Read(s => s.Site(Site)!.Paused));
+        Assert.Null(_engine.FindGrant(grant));                                     // its open session ended
+        Assert.False(_engine.DecidesOnItsOwn(Site));                               // no reconnecting by itself
+        Assert.Null(await _engine.HandleAsync(Clips.Request(Site, click: false))); // "decide on my own" does not apply while paused
+        Assert.Equal("held", _log.Recent()[0].Outcome);
+
+        var resumed = await _engine.HandleAsync(Clips.Request(Site, click: true));
+        Assert.NotNull(resumed);
+        Assert.StartsWith("Paused by you", _ui.Consents[^1].PausedNote);
+        Assert.False(_store.Read(s => s.Site(Site)!.Paused));
+        Assert.Contains("resumed", _log.Recent()[0].Note);
+        Assert.True(_engine.DecidesOnItsOwn(Site));
+    }
+
+    [Fact]
+    public async Task ASiteUnusedLongerThanTheSettingIsPausedAndACallOnItsOldGrantIsRefused()
+    {
+        _store.Update(s => s.Limits.PauseUnusedAfterHours = 1);
+        _ui.Consent = new ConsentAnswer(true, 0.05m, AutoDecide: true, []);
+        var grant = await GrantAsync();
+        _time.Now += TimeSpan.FromMinutes(50);
+        Assert.True(Ok(await _engine.HandleAsync(Clips.Call(Site, grant))));      // in use: the hour starts again
+        _time.Now += TimeSpan.FromMinutes(50);
+        Assert.True(Ok(await _engine.HandleAsync(Clips.Call(Site, grant))));
+
+        _time.Now += TimeSpan.FromMinutes(61);
+        Assert.Equal("Paused after an hour without use", _engine.PausedNow(_engine.FindSite(Site)!));   // shown before it is stored
+        Assert.False(Ok(await _engine.HandleAsync(Clips.Call(Site, grant))));
+        Assert.Equal("paused", _log.Recent()[0].Outcome);
+        Assert.Equal("unused", _store.Read(s => s.Site(Site)!.PauseReason));
+        Assert.Contains(_log.Recent(), e => e.Outcome == "paused" && e.Note == "paused after an hour without use");
+        Assert.Null(_engine.FindGrant(grant));
+
+        await _engine.HandleAsync(Clips.Request(Site, click: true));
+        Assert.Equal("Paused after an hour without use", _ui.Consents[^1].PausedNote);
+    }
+
+    [Fact]
+    public async Task NeverPausesWhenTheSettingIsOff()
+    {
+        _store.Update(s => s.Limits.PauseUnusedAfterHours = 0);
+        _ui.Consent = new ConsentAnswer(true, 0.05m, AutoDecide: true, []);
+        await GrantAsync();
+        _time.Now += TimeSpan.FromDays(30);
+        Assert.NotNull(await _engine.HandleAsync(Clips.Request(Site, click: false)));
+        Assert.Equal("auto", _log.Recent()[0].Outcome);
+        Assert.Null(_engine.PausedNow(_engine.FindSite(Site)!));
+    }
+
+    [Fact]
+    public async Task OnlyAnAllowedSiteCanBePaused()
+    {
+        _ui.Notice = NoticeAnswer.Decline;
+        await _engine.HandleAsync(Clips.Request(Site, click: true));
+        _engine.Pause(Site);
+        Assert.False(_store.Read(s => s.Site(Site)!.Paused));
+        Assert.Null(_engine.PausedNow(_engine.FindSite(Site)!));
+    }
 }
 
 /// <summary>The Activity page shows the days before today too; the daily limits still count today only.</summary>

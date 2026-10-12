@@ -47,7 +47,7 @@ sealed class ConsentWindow : CornerWindow
         AutomationProperties.SetAutomationId(_auto, "ConsentAuto");
         AutomationProperties.SetName(_auto, "Next time, decide on my own within these limits");
 
-        _allow = Ui.Button("Allow", "allow", "ConsentAllow", () => Answer(true));
+        _allow = Ui.Button(model.PausedNote is null ? "Allow" : "Resume", "allow", "ConsentAllow", () => Answer(true));
         _allow.IsEnabled = !model.MissingRequired;
         var decline = Ui.Button("Decline", "deny", "ConsentDecline", () => Answer(false));
 
@@ -144,6 +144,7 @@ sealed class ConsentWindow : CornerWindow
         if (_model.Secure) ((TextBlock)verified.Children[1]).Foreground = Ui.Brush("Sign");
         var hostRow = Ui.Row(9, Ui.Tile(Ui.Globe, 28), host, verified);
         if (_model.IsDifference) hostRow.Children.Add(Ui.Chip("updated", "outline"));
+        if (_model.PausedNote is not null) hostRow.Children.Add(Ui.Chip("paused", "outline"));
         AutomationProperties.SetName(hostRow, _model.Host);
         body.Children.Add(hostRow);
 
@@ -152,6 +153,13 @@ sealed class ConsentWindow : CornerWindow
         purpose.FontWeight = FontWeight.Medium;
         purpose.Inlines!.Add(new Avalonia.Controls.Documents.Run("  from the site") { FontSize = 11.5, Foreground = Ui.Brush("Muted"), FontWeight = FontWeight.Normal });
         body.Children.Add(Ui.Box("field", purpose));
+
+        if (_model.PausedNote is { } paused)
+        {
+            var note = Ui.Wrap("You allowed this site before. " + paused + ". Resume it?", "strong");
+            AutomationProperties.SetAutomationId(note, "ConsentPaused");
+            body.Children.Add(note);
+        }
 
         if (_model.IsDifference)
         {
