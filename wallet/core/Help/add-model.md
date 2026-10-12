@@ -1,5 +1,0 @@
-# Add a model
-
-Choose On this PC to scan LM Studio, Ollama, and other compatible servers. A runtime that is not running is shown as “not running”; start it before testing. Choose Behind my API key for a provider. The wallet keeps the key and shows only “key saved ✓”.
-
-Choose the skill and languages, press Test, and read the plain result before pressing Add. You can later edit, disable, reorder, or remove an added source. The first suggestion is normally local and free; a Russian model may be suggested because it is good for Russian.
