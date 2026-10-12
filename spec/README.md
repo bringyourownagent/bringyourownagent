@@ -26,3 +26,9 @@ This list is approximate: items may be merged, split, reordered or dropped, and 
 The concept is described in [../docs/vision.md](../docs/vision.md).
 
 A first draft of the machine-checkable rules (manifest checks and the call gate) is in [rules-0.1-draft.md](rules-0.1-draft.md). It is implemented by the early draft libraries in [../sdk/](../sdk/).
+
+## Documents in this folder
+
+- [rules-0.1-draft.md](rules-0.1-draft.md): the machine-checkable rules (manifest checks and the call gate).
+- [CONTRACT.md](CONTRACT.md): how a web page, a browser extension and a desktop wallet talk (`window.byoa`, the skills `audio.transcribe` and `text.generate`, the extension and native host messages).
+- [CONTRACT-DIRECT.md](CONTRACT-DIRECT.md): the second way, without an extension: a `bringyourownagent://` link that starts the wallet, then a channel from the wallet to the site's server.
