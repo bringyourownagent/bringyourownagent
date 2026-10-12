@@ -1,6 +1,6 @@
 # BYOA specification
 
-Version 0.1 is in progress. Planned contents:
+Version 0.1 is in progress; [spec-0.1-draft.md](spec-0.1-draft.md) is its first complete draft. Planned contents:
 
 1. Terms and roles: visitor, agent wallet, provider, requester.
 2. Skills: names, parameters, quality tiers.
@@ -29,6 +29,7 @@ A first draft of the machine-checkable rules (manifest checks and the call gate)
 
 ## Documents in this folder
 
+- [spec-0.1-draft.md](spec-0.1-draft.md): the overview of 0.1 and the obligations of a wallet and of a requester. Start here.
 - [rules-0.1-draft.md](rules-0.1-draft.md): the machine-checkable rules (manifest checks and the call gate).
 - [CONTRACT.md](CONTRACT.md): how a web page, a browser extension and a desktop wallet talk (`window.byoa`, the skills `audio.transcribe` and `text.generate`, the extension and native host messages).
 - [CONTRACT-DIRECT.md](CONTRACT-DIRECT.md): the second way, without an extension: a `bringyourownagent://` link that starts the wallet, then a channel from the wallet to the site's server.
