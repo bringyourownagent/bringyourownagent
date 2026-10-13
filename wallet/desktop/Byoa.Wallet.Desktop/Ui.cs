@@ -85,7 +85,7 @@ static class Ui
 
     public static Border Chip(string text, string kind = "")
     {
-        var b = new Border { Child = new TextBlock { Text = text } };
+        var b = new Border { Child = new TextBlock { Text = text }, HorizontalAlignment = HorizontalAlignment.Left };
         b.Classes.Add("chip");
         if (kind.Length > 0) b.Classes.Add(kind);
         return b;

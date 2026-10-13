@@ -160,12 +160,12 @@ sealed class ToastWindow : CornerWindow
             _preparingBar.IsIndeterminate = false;
             _preparingBar.Value = percent;
             _preparingBar.Maximum = 100;
-            _preparingProgress.Text = "Preparing your model... " + percent + " %";
+            _preparingProgress.Text = "Preparing your model… " + percent + " %";
         }
         else
         {
             _preparingBar.IsIndeterminate = true;
-            _preparingProgress.Text = "Preparing your model...";
+            _preparingProgress.Text = "Preparing your model…";
         }
     }
 

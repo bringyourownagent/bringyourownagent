@@ -79,6 +79,12 @@
       <Setter Property="FontWeight" Value="Bold" />
       <Setter Property="FontSize" Value="21" />
     </Style>
+    <Style Selector="TextBlock.hostmono">
+      <Setter Property="FontFamily" Value="{StaticResource Mono}" />
+      <Setter Property="FontWeight" Value="Bold" />
+      <Setter Property="FontSize" Value="18" />
+      <Setter Property="Foreground" Value="{StaticResource Ink}" />
+    </Style>
     <Style Selector="TextBlock.figure">
       <Setter Property="FontFamily" Value="{StaticResource SignFace}" />
       <Setter Property="FontWeight" Value="Bold" />
@@ -100,6 +106,12 @@
       <Setter Property="FontSize" Value="12" />
     </Style>
     <Style Selector="TextBlock.mono">
+      <Setter Property="FontFamily" Value="{StaticResource Mono}" />
+      <Setter Property="FontSize" Value="11.5" />
+      <Setter Property="Foreground" Value="{StaticResource Sign}" />
+    </Style>
+    <!-- Cascadia Mono has no programming ligatures: commands, paths, hosts and ids must look exactly as copied. -->
+    <Style Selector="TextBox.mono">
       <Setter Property="FontFamily" Value="{StaticResource Mono}" />
       <Setter Property="FontSize" Value="11.5" />
       <Setter Property="Foreground" Value="{StaticResource Sign}" />

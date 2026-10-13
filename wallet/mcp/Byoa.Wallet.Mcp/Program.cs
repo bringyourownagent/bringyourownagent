@@ -28,11 +28,15 @@ sealed class StdioMcpServer
     readonly ConcurrentDictionary<string, CancellationTokenSource> _requests = new(StringComparer.Ordinal);
     readonly ConcurrentDictionary<Task, byte> _pending = new();
     readonly SemaphoreSlim _connectGate = new(1, 1);
+    readonly object _connectionTaskGate = new();
+    readonly McpConnectionOptions _connectionOptions;
+    Task<AgentPipeClient?>? _connectionAttempt;
 
-    public StdioMcpServer(TextReader? input = null, TextWriter? output = null)
+    public StdioMcpServer(TextReader? input = null, TextWriter? output = null, McpConnectionOptions? connectionOptions = null)
     {
         _input = input ?? Console.In;
         _output = output ?? Console.Out;
+        _connectionOptions = connectionOptions ?? McpConnectionOptions.Default;
     }
 
     public async Task RunAsync()
@@ -81,6 +85,10 @@ sealed class StdioMcpServer
             try { await Task.WhenAll(_pending.Keys).ConfigureAwait(false); } catch { }
         }
         _stop.Cancel();
+        if (_connectionAttempt is { } connection)
+        {
+            try { await connection.WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false); } catch { }
+        }
         _wallet?.Dispose();
         _writeGate.Dispose();
         _connectGate.Dispose();
@@ -128,7 +136,7 @@ sealed class StdioMcpServer
         {
             case "initialize":
                 _clientName = String(parameters["clientInfo"] as JsonObject, "name") ?? "MCP client";
-                await ConnectWalletAsync(ct).ConfigureAwait(false);
+                ObserveConnection(StartConnectionAttempt());
                 return Result(id, new JsonObject
                 {
                     ["protocolVersion"] = "2025-06-18",
@@ -191,7 +199,21 @@ sealed class StdioMcpServer
         {
             var wallet = _wallet;
             if (wallet is null || wallet.IsDisconnected)
-                wallet = await ConnectWalletAsync(ct).ConfigureAwait(false);
+            {
+                try
+                {
+                    wallet = await StartConnectionAttempt()
+                        .WaitAsync(_connectionOptions.ToolConnectionTimeout, ct).ConfigureAwait(false);
+                }
+                catch (TimeoutException)
+                {
+                    return ToolResponse(id, new JsonObject
+                    {
+                        ["ok"] = true,
+                        ["message"] = "Waiting for the visitor to answer the wallet's question. Try again after they have.",
+                    });
+                }
+            }
 
             if (wallet is null)
                 result = AgentPipeProtocol.Error("The wallet is not running. Open BYOA Agent wallet and try again; this bridge will not start it.");
@@ -201,7 +223,19 @@ sealed class StdioMcpServer
                 if (call.Failure == PipeCallFailure.Closed && !ct.IsCancellationRequested)
                 {
                     Console.Error.WriteLine("The wallet closed the idle connection; reconnecting");
-                    wallet = await ConnectWalletAsync(ct).ConfigureAwait(false);
+                    try
+                    {
+                        wallet = await StartConnectionAttempt()
+                            .WaitAsync(_connectionOptions.ToolConnectionTimeout, ct).ConfigureAwait(false);
+                    }
+                    catch (TimeoutException)
+                    {
+                        return ToolResponse(id, new JsonObject
+                        {
+                            ["ok"] = true,
+                            ["message"] = "Waiting for the visitor to answer the wallet's question. Try again after they have.",
+                        });
+                    }
                     if (wallet is null)
                         result = AgentPipeProtocol.Error("The wallet is not running. Open BYOA Agent wallet and try again; this bridge will not start it.");
                     else
@@ -211,24 +245,50 @@ sealed class StdioMcpServer
             }
         }
 
-        var ok = result["ok"] is JsonValue v && v.TryGetValue<bool>(out var yes) && yes;
-        var text = ToolText(result, ok);
-        var content = new JsonArray(new JsonObject { ["type"] = "text", ["text"] = text });
-        var toolResult = new JsonObject { ["content"] = content, ["isError"] = !ok, ["structuredContent"] = result.DeepClone() };
-        return Result(id, toolResult);
+        return ToolResponse(id, result);
     }
 
-    async Task<AgentPipeClient?> ConnectWalletAsync(CancellationToken ct)
+    Task<AgentPipeClient?> StartConnectionAttempt()
+    {
+        lock (_connectionTaskGate)
+        {
+            if (_wallet is { IsDisconnected: false }) return Task.FromResult<AgentPipeClient?>(_wallet);
+            if (_connectionAttempt is { IsCompleted: false }) return _connectionAttempt;
+            _connectionAttempt = ConnectWalletAttemptAsync(_stop.Token);
+            return _connectionAttempt;
+        }
+    }
+
+    async Task<AgentPipeClient?> ConnectWalletAttemptAsync(CancellationToken ct)
     {
         await _connectGate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
             if (_wallet is { IsDisconnected: false }) return _wallet;
             _wallet?.Dispose();
-            _wallet = await AgentPipeClient.ConnectAsync(_clientName, ct).ConfigureAwait(false);
+            _wallet = await AgentPipeClient.ConnectAsync(_clientName, ct, _connectionOptions).ConfigureAwait(false);
             return _wallet;
         }
         finally { _connectGate.Release(); }
+    }
+
+    static void ObserveConnection(Task<AgentPipeClient?> attempt)
+    {
+        _ = attempt.ContinueWith(completed => _ = completed.Exception,
+            CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+    }
+
+    static JsonObject ToolResponse(JsonNode? id, JsonObject result)
+    {
+        var ok = result["ok"] is JsonValue value && value.TryGetValue<bool>(out var yes) && yes;
+        var content = new JsonArray(new JsonObject { ["type"] = "text", ["text"] = ToolText(result, ok) });
+        return Result(id, new JsonObject
+        {
+            ["content"] = content,
+            ["isError"] = !ok,
+            ["structuredContent"] = result.DeepClone(),
+        });
     }
 
     static string ToolText(JsonObject result, bool ok)
@@ -258,6 +318,19 @@ sealed class StdioMcpServer
     static string? String(JsonObject? obj, string name) => obj?[name] is JsonValue v && v.TryGetValue<string>(out var value) ? value : null;
 }
 
+internal sealed record McpConnectionOptions(
+    TimeSpan ConnectTimeout,
+    TimeSpan HelloTimeout,
+    TimeSpan ToolConnectionTimeout,
+    TimeSpan CallTimeout)
+{
+    public static McpConnectionOptions Default { get; } = new(
+        TimeSpan.FromSeconds(10),
+        TimeSpan.FromMinutes(5),
+        TimeSpan.FromMinutes(4),
+        TimeSpan.FromSeconds(120));
+}
+
 enum PipeCallFailure
 {
     None,
@@ -270,20 +343,27 @@ sealed class AgentPipeClient : IDisposable
 {
     readonly NamedPipeClientStream _pipe;
     readonly SemaphoreSlim _roundTrip = new(1, 1);
+    readonly TimeSpan _callTimeout;
     int _disconnected;
 
-    AgentPipeClient(NamedPipeClientStream pipe) => _pipe = pipe;
+    AgentPipeClient(NamedPipeClientStream pipe, TimeSpan callTimeout)
+    {
+        _pipe = pipe;
+        _callTimeout = callTimeout;
+    }
 
     public bool IsDisconnected => Volatile.Read(ref _disconnected) != 0;
 
-    public static async Task<AgentPipeClient?> ConnectAsync(string clientName, CancellationToken ct = default)
+    public static async Task<AgentPipeClient?> ConnectAsync(string clientName, CancellationToken ct = default,
+        McpConnectionOptions? options = null)
     {
+        options ??= McpConnectionOptions.Default;
         var pipe = new NamedPipeClientStream(".", WalletPaths.McpPipeName(), PipeDirection.InOut,
             PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
         try
         {
             using var connectTimeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            connectTimeout.CancelAfter(TimeSpan.FromSeconds(1));
+            connectTimeout.CancelAfter(options.ConnectTimeout);
             await pipe.ConnectAsync(connectTimeout.Token).ConfigureAwait(false);
             var hello = new JsonObject
             {
@@ -293,9 +373,8 @@ sealed class AgentPipeClient : IDisposable
             };
             await Framing.WriteAsync(pipe, AgentPipeProtocol.Serialize(hello), ct).ConfigureAwait(false);
             using var helloTimeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            helloTimeout.CancelAfter(TimeSpan.FromSeconds(10));
-            var bytes = await Framing.ReadAsync(pipe, 256 * 1024, helloTimeout.Token)
-                .WaitAsync(TimeSpan.FromSeconds(10), helloTimeout.Token).ConfigureAwait(false);
+            helloTimeout.CancelAfter(options.HelloTimeout);
+            var bytes = await Framing.ReadAsync(pipe, 256 * 1024, helloTimeout.Token).ConfigureAwait(false);
             var answer = bytes is null ? null : AgentPipeProtocol.Parse(bytes);
             if (answer is null)
             {
@@ -304,7 +383,7 @@ sealed class AgentPipeClient : IDisposable
             }
 
             // Keep the connection even when the visitor said Not now: tool calls receive the wallet's plain refusal.
-            return new AgentPipeClient(pipe);
+            return new AgentPipeClient(pipe, options.CallTimeout);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { await pipe.DisposeAsync().ConfigureAwait(false); throw; }
         catch (OperationCanceledException) { await pipe.DisposeAsync().ConfigureAwait(false); return null; }
@@ -341,7 +420,7 @@ sealed class AgentPipeClient : IDisposable
             for (var frame = 0; frame < 8; frame++)
             {
                 var bytes = await Framing.ReadAsync(_pipe, Framing.MaxIncoming, ct)
-                    .WaitAsync(TimeSpan.FromSeconds(120), ct).ConfigureAwait(false);
+                    .WaitAsync(_callTimeout, ct).ConfigureAwait(false);
                 if (bytes is null) throw new EndOfStreamException();
                 var response = AgentPipeProtocol.Parse(bytes) ?? throw new InvalidDataException("The wallet returned an invalid response.");
                 if (response["id"] is JsonValue id && id.TryGetValue<string>(out var value) && value == requestId)

@@ -338,11 +338,26 @@ sealed class SettingsWindow : Window
 
         page.Children.Add(Section("On this PC"));
         page.Children.Add(SourceCard(_w.Sources.GigaAm, settings,
-            "GigaAM v3 transducer (sherpa-onnx). " + (_w.Sources.GigaAm.Folder ?? "Not found in your model folders; the wallet can download 230 MB into its own models folder."), null));
-        page.Children.Add(SourceCard(_w.Sources.Whisper, settings, "whisper.cpp model " + settings.WhisperModel + ". " + (_w.Sources.Whisper.ModelPath ?? "It downloads into " + Byoa.Wallet.Protocol.WalletPaths.Models + " on first use."), WhisperExtras(settings)));
+            Ui.Column(2,
+                Ui.Wrap("GigaAM v3 transducer (sherpa-onnx).", "muted"),
+                _w.Sources.GigaAm.Folder is { } gigaFolder
+                    ? Ui.Wrap(gigaFolder, "mono", "small")
+                    : Ui.Column(1,
+                        Ui.Wrap("Not found in your model folders; the wallet can download 230 MB into its own models folder:", "muted", "small"),
+                        Ui.Wrap(Byoa.Wallet.Protocol.WalletPaths.Models, "mono", "small"))), null));
+        page.Children.Add(SourceCard(_w.Sources.Whisper, settings,
+            Ui.Column(2,
+                Ui.Wrap("whisper.cpp model", "muted"),
+                Ui.Wrap(settings.WhisperModel, "mono", "small"),
+                _w.Sources.Whisper.ModelPath is { } whisperPath
+                    ? Ui.Wrap(whisperPath, "mono", "small")
+                    : Ui.Column(1,
+                        Ui.Wrap("It downloads into this wallet folder on first use:", "muted", "small"),
+                        Ui.Wrap(Byoa.Wallet.Protocol.WalletPaths.Models, "mono", "small"))), WhisperExtras(settings)));
 
         page.Children.Add(Section("API keys"));
-        page.Children.Add(SourceCard(_w.Sources.OpenRouter, settings, "ElevenLabs Scribe v2 through OpenRouter, with your own key. Stored with Windows DPAPI for your account only; never shown, never logged.", KeyExtras()));
+        page.Children.Add(SourceCard(_w.Sources.OpenRouter, settings,
+            Ui.Wrap("ElevenLabs Scribe v2 through OpenRouter, with your own key. Stored with Windows DPAPI for your account only; never shown, never logged.", "muted"), KeyExtras()));
 
         page.Children.Add(Section("Added models"));
         var added = settings.Sources.Where(s => s.Kind is not null).ToList();
@@ -367,7 +382,7 @@ sealed class SettingsWindow : Window
         {
             list.Children.Add(Ui.Columns("Auto,*,Auto",
                 Ui.Chip(m.Kind == "gigaam" ? "GigaAM" : "ggml"),
-                Ui.Wrap("  " + m.Name + "  ·  " + m.Path, "muted"),
+                Ui.Column(1, Ui.Wrap(m.Name, "muted"), Ui.Wrap(m.Path, "mono", "small")),
                 Ui.Text((m.Bytes / 1_000_000).ToString(CultureInfo.InvariantCulture) + " MB", "muted")));
         }
 
@@ -383,7 +398,7 @@ sealed class SettingsWindow : Window
                 _w.Sources.Catalog.Rescan();
                 Render();
             });
-            folders.Children.Add(Ui.Columns("*,Auto", Ui.Wrap(f), remove));
+            folders.Children.Add(Ui.Columns("*,Auto", Ui.Wrap(f, "mono", "small"), remove));
         }
 
         folders.Children.Add(Ui.Button("Add a folder…", "deny", "FolderAdd", async () =>
@@ -422,7 +437,7 @@ sealed class SettingsWindow : Window
         return Ui.Box("card", Ui.Column(7,
             Ui.Columns("*,Auto", Ui.Column(2, Ui.Text(info?.Name ?? source.Label ?? source.Model ?? source.Id, "h2"), Ui.Text(source.Id, "mono", "small")), buttons),
             Ui.Wrap(detail, "muted"),
-            Ui.Wrap((source.Endpoint is null ? "No endpoint" : source.Endpoint) + (source.Model is null ? "" : " · " + source.Model), "muted", "small"),
+            Ui.Wrap((source.Endpoint is null ? "No endpoint" : source.Endpoint) + (source.Model is null ? "" : " · " + source.Model), "mono", "small"),
             order));
     }
 
@@ -528,7 +543,7 @@ sealed class SettingsWindow : Window
         }
     }
 
-    Control SourceCard(ISpeechSource source, WalletSettings settings, string description, Control? extras)
+    Control SourceCard(ISpeechSource source, WalletSettings settings, Control description, Control? extras)
     {
         var enabled = new CheckBox { Content = "Use it", IsChecked = settings.Sources.FirstOrDefault(x => x.Id == source.Id)?.Enabled ?? true };
         AutomationProperties.SetAutomationId(enabled, "SourceEnabled-" + source.Id);
@@ -564,7 +579,7 @@ sealed class SettingsWindow : Window
         };
         var panel = Ui.Column(6,
             Ui.Columns("*,Auto,Auto", Ui.Text(source.Name, "h2"), stateChip, enabled),
-            Ui.Wrap(description, "muted"),
+            description,
             props,
             Ui.Wrap(source.StateText, "small"));
         enabled.Margin = new Thickness(12, 0, 0, 0);
@@ -580,7 +595,9 @@ sealed class SettingsWindow : Window
         AutomationProperties.SetAutomationId(models, "WhisperModel");
         foreach (var (file, note) in WhisperChoices)
         {
-            models.Items.Add(new ComboBoxItem { Content = WhisperSource.ModelLabel(file) + "  —  " + note, Tag = file });
+            var item = new ComboBoxItem { Content = WhisperSource.ModelLabel(file) + "  —  " + note, Tag = file };
+            item.Classes.Add("mono");
+            models.Items.Add(item);
         }
 
         models.SelectedIndex = Math.Max(0, Array.FindIndex(WhisperChoices, c => c.File == settings.WhisperModel));
@@ -930,21 +947,33 @@ sealed class SettingsWindow : Window
             Ui.Text("MCP server path", "label"),
             Ui.Wrap(exe, "mono", "small"),
             Ui.Wrap("Copy one command into the tool you use. The first connection asks your permission in the wallet.", "muted"))));
-        var snippets = new[]
-        {
-            ("Claude Code", "claude mcp add --transport stdio byoa-wallet -- \"" + exe + "\""),
-            ("Codex", "codex mcp add byoa-wallet -- \"" + exe + "\""),
-            ("OpenCode", "{\n  \"mcp\": {\n    \"byoa-wallet\": {\n      \"type\": \"local\",\n      \"command\": [\"" + exe.Replace("\\", "\\\\", StringComparison.Ordinal) + "\"],\n      \"enabled\": true\n    }\n  }\n}"),
-        };
+        var snippets = AgentSnippets(exe);
         foreach (var (name, snippet) in snippets)
         {
-            var text = new TextBox { Text = snippet, IsReadOnly = true, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = name == "OpenCode" ? 130 : 42 };
+            var text = new TextBox
+            {
+                Text = snippet,
+                IsReadOnly = true,
+                AcceptsReturn = true,
+                TextWrapping = TextWrapping.Wrap,
+                MinHeight = name == "OpenCode" ? 130 : 42,
+            };
+            text.Classes.Add("mono");
+            // The page owns vertical scrolling. Do not let a read-only snippet consume the wheel first.
+            text.PointerWheelChanged += (_, e) => e.Handled = false;
             AutomationProperties.SetAutomationId(text, "AgentSnippet-" + name.Replace(" ", "", StringComparison.Ordinal));
             var copy = Ui.Button("Copy", "deny", "AgentCopy-" + name.Replace(" ", "", StringComparison.Ordinal), () => Copy(text.Text ?? ""), "small");
             page.Children.Add(Ui.Column(6, Ui.Text(name, "h2"), Ui.Columns("*,Auto", text, copy)));
         }
         page.Children.Add(Ui.Wrap("Use request_api_key_entry when an agent needs a provider key: the visitor types it in the wallet, and the agent never receives it.", "muted", "small"));
     }
+
+    internal static IReadOnlyList<(string Name, string Text)> AgentSnippets(string exe) =>
+    [
+        ("Claude Code", "claude mcp add --transport stdio byoa-wallet -- \"" + exe + "\""),
+        ("Codex", "codex mcp add byoa-wallet -- \"" + exe + "\""),
+        ("OpenCode", "{\n  \"mcp\": {\n    \"byoa-wallet\": {\n      \"type\": \"local\",\n      \"command\": [\"" + exe.Replace("\\", "\\\\", StringComparison.Ordinal) + "\"],\n      \"enabled\": true\n    }\n  }\n}"),
+    ];
 
     static string McpPath()
     {
@@ -1124,7 +1153,7 @@ sealed class SettingsWindow : Window
         var time = Ui.Text(e.At.ToLocalTime().ToString("HH:mm:ss", CultureInfo.InvariantCulture), "muted");
         time.Width = 64;
         time.VerticalAlignment = VerticalAlignment.Top;
-        var middle = Ui.Column(2, Ui.Row(8, Ui.Text(what, "strong"), Ui.Text(host, "muted")), Ui.Wrap(string.Join(" · ", detail), "muted", "small"));
+        var middle = Ui.Column(2, Ui.Row(8, Ui.Text(what, "strong"), Ui.Text(host, "muted", "mono")), Ui.Wrap(string.Join(" · ", detail), "muted", "small", "mono"));
         var cost = Ui.Text(e.Kind == "call" && e.Outcome == "ok" ? Money.Show(e.CostValue) : "", "muted");
         cost.Margin = new Thickness(10, 0);
         cost.VerticalAlignment = VerticalAlignment.Top;

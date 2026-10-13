@@ -45,6 +45,8 @@ sealed class AddModelWindow : Window
     {
         _w = services;
         _editingId = sourceId;
+        _model.Classes.Add("mono");
+        _endpoint.Classes.Add("mono");
         Title = sourceId is null ? "Add a model" : "Edit model source";
         Width = 690;
         Height = 650;
@@ -53,6 +55,7 @@ sealed class AddModelWindow : Window
         Background = Brushes.White;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
         Icon = new WindowIcon(Avalonia.Platform.AssetLoader.Open(new Uri("avares://Byoa.Wallet/Assets/app.ico")));
+        MaxHeight = WindowLayout.MaxHeight(this, 520);
 
         foreach (var skill in new[] { Vocabulary.Transcribe, Vocabulary.Generate })
             _skill.Items.Add(new ComboBoxItem { Content = Vocabulary.SkillName(skill), Tag = skill });
@@ -83,7 +86,14 @@ sealed class AddModelWindow : Window
             if (scroll.Bounds.Width > 0) _body.Width = Math.Max(0, scroll.Bounds.Width - scroll.Margin.Left - scroll.Margin.Right);
         };
         scroll.Margin = new Thickness(30, 25, 30, 25);
-        Content = scroll;
+        var buttons = Ui.Row(8, _test, _save);
+        buttons.Margin = new Thickness(30, 0, 30, 25);
+        var layout = new Grid { RowDefinitions = new RowDefinitions("*,Auto") };
+        Grid.SetRow(scroll, 0);
+        Grid.SetRow(buttons, 1);
+        layout.Children.Add(scroll);
+        layout.Children.Add(buttons);
+        Content = layout;
         Opened += (_, _) =>
         {
             if (_local) DispatcherTimer.RunOnce(StartScan, TimeSpan.FromMilliseconds(100));
@@ -123,7 +133,6 @@ sealed class AddModelWindow : Window
         _body.Children.Add(_languages);
         _body.Children.Add(_suggestion);
         _body.Children.Add(Ui.Rule(4, 0));
-        _body.Children.Add(Ui.Row(8, _test, _save));
         _body.Children.Add(_result);
         UpdateButtons();
     }
@@ -283,7 +292,7 @@ sealed class AddModelWindow : Window
         catch (Exception e) when (e is not OutOfMemoryException)
         {
             _tested = false;
-            _result.Text = "Test failed: " + (e.Message.Length > 160 ? e.Message[..157] + "..." : e.Message);
+            _result.Text = "Test failed: " + (e.Message.Length > 160 ? e.Message[..157] + "…" : e.Message);
         }
         finally
         {

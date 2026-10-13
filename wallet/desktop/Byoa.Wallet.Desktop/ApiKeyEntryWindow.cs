@@ -19,12 +19,11 @@ sealed class ApiKeyEntryWindow : Window
     {
         Title = "Enter an API key";
         Width = 560;
-        Height = 300;
         MinWidth = 500;
-        MinHeight = 260;
         Background = Brushes.White;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
         CanResize = false;
+        WindowLayout.Prepare(this, 260);
 
         var save = Ui.Button("Save key", "allow", "ApiKeySave", Save, "small");
         var cancel = Ui.Button("Cancel", "deny", "ApiKeyCancel", Cancel, "small");
@@ -33,15 +32,17 @@ sealed class ApiKeyEntryWindow : Window
             : Ui.Text("", "small");
         AutomationProperties.SetName(_key, "API key for " + sourceName);
         AutomationProperties.SetAutomationId(_key, "ApiKeyEntry");
-        Content = Ui.Column(13,
+        var body = Ui.Column(13,
             Ui.Text("Enter your API key", "h1"),
             Ui.Wrap("The key is saved in this wallet for " + sourceName + ". Your AI agent will only see that it was saved; it cannot read the key.", "muted"),
             Ui.Text("API key", "label"),
             _key,
             Ui.Wrap("Prefer this field over pasting a key into your AI agent.", "muted", "small"),
-            waiting,
-            Ui.Row(8, save, cancel));
-        ((Control)Content).Margin = new Thickness(30, 26, 30, 24);
+            waiting);
+        body.Margin = new Thickness(30, 26, 30, 24);
+        var buttons = Ui.Row(8, save, cancel);
+        buttons.Margin = new Thickness(30, 0, 30, 24);
+        Content = Ui.Column(0, WindowLayout.Body(this, body, 92, 260), buttons);
 
         KeyDown += (_, e) =>
         {

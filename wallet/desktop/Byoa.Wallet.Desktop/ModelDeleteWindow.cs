@@ -19,12 +19,11 @@ sealed class ModelDeleteWindow : Window
     {
         Title = "Delete downloaded model";
         Width = 540;
-        Height = 250;
         MinWidth = 480;
-        MinHeight = 220;
         Background = Brushes.White;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
         CanResize = false;
+        WindowLayout.Prepare(this, 220);
 
         var question = Ui.Wrap("Delete " + modelName + " (" + Size(sizeBytes) + ")? You can download it again.", "h2");
         question.Width = 480;
@@ -34,16 +33,17 @@ sealed class ModelDeleteWindow : Window
         var waiting = waitingCount?.Invoke() is { } count && count > 1
             ? Ui.Wrap((count - 1).ToString() + " more waiting.", "muted", "small")
             : Ui.Text("", "small");
-        var content = Ui.Column(14,
+        var body = Ui.Column(14,
             Ui.Text("Delete downloaded model", "h1"),
             question,
             note is null ? Ui.Text("", "small") : Ui.Wrap(note, "muted", "small"),
             Ui.Wrap("Only a model downloaded by this wallet can be removed.", "muted"),
-            waiting,
-            Ui.Row(8, delete, cancel));
-        content.Width = 480;
-        Content = content;
-        content.Margin = new Thickness(30, 26, 30, 24);
+            waiting);
+        body.Width = 480;
+        body.Margin = new Thickness(30, 26, 30, 24);
+        var buttons = Ui.Row(8, delete, cancel);
+        buttons.Margin = new Thickness(30, 0, 30, 24);
+        Content = Ui.Column(0, WindowLayout.Body(this, body, 92, 220), buttons);
 
         KeyDown += (_, e) =>
         {
