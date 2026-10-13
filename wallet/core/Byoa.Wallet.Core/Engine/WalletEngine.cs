@@ -2082,9 +2082,9 @@ public sealed class WalletEngine
     }
 
     /// <summary>
-    /// Forgets the answers to a site's links that wait for the site's welcome, with their grants. True when there were any.
-    /// It is called under the store's lock, in the same update as the visitor's write, so that a welcome either finds its
-    /// answer before the decision (and stores it first) or finds it gone.
+    /// Forgets the answers to a site's links that wait for the site's welcome, with their grants, and returns their grant ids.
+    /// The visitor's writes call it under the store's lock, in the same update, so that a welcome either finds its answer
+    /// before the decision (and stores it first) or finds it gone.
     /// </summary>
     IReadOnlyList<string> DropLinkDecisions(string origin)
     {
