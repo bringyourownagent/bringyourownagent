@@ -1995,9 +1995,10 @@ public sealed class WalletEngine
 
     public void SetAutoDecide(string origin, bool auto)
     {
+        var changed = FindSite(origin) is { } before && before.AutoDecide != auto;
         _store.Update(s => Site(s, origin).AutoDecide = auto);
         SitesChanged?.Invoke();
-        VisitorDecided(origin);
+        if (changed) VisitorDecided(origin);
     }
 
     /// <summary>The visitor opened the wallet and saw the held-back requests: the badge goes (the per-site counts stay in Sites).</summary>

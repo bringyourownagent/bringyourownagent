@@ -703,6 +703,20 @@ public class DirectTransportTests : IDisposable
     }
 
     [Fact]
+    public async Task SwitchingDecideOnMyOwnWhileALinksAnswerWaitsDropsThatAnswer()
+    {
+        _ui.Consent = new ConsentAnswer(true, 0.05m, AutoDecide: false, []);
+        var connection = await Transport().HandleLinkAsync(_site.Link());
+        var socket = await _site.NextSocketAsync();
+        await TestSite.ReceiveAsync(socket);                                      // the hello, no welcome yet
+        _engine.SetAutoDecide(_site.Origin, true);                                // the visitor switches "decide on my own" in Sites
+        Assert.Equal("(close)", (await TestSite.ReceiveAsync(socket))["type"]!.GetValue<string>());
+        await connection!.Completion.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(SiteStatus.None, _engine.FindSite(_site.Origin)!.Status);
+        Assert.Null(_pairings.Get(_site.Origin));
+    }
+
+    [Fact]
     public async Task ARevokeWhileTheLinksAnswerIsHeldKeepsTheSiteUnallowed()
     {
         _ui.Consent = new ConsentAnswer(true, 0.05m, AutoDecide: true, []);
