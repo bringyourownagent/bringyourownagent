@@ -87,10 +87,14 @@ sealed class DesktopUi : IWalletUi, IAgentConsentUi, IEndpointConfirmationUi, IS
             var toast = ToastWindow.Request(model);
             toast.CloseOn(ct);
             toast.Show();
-            return await toast.Result switch
+            var answer = await toast.Result;
+            // A link's notice has no block: "Block in Sites…" opens the Sites list, where a block is stored.
+            if (answer == "sites") OpenSettings("sites");
+            return answer switch
             {
                 "show" => NoticeAnswer.Show,
                 "decline" => NoticeAnswer.Decline,
+                "sites" => NoticeAnswer.Decline,
                 "block" => NoticeAnswer.Block,
                 _ => NoticeAnswer.Closed,
             };

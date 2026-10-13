@@ -179,6 +179,7 @@ sealed class ScriptedUi : IWalletUi
     public ConsentAnswer? Consent { get; set; }
     public PaidAnswer Paid { get; set; } = PaidAnswer.No;
     public int Notices { get; private set; }
+    public List<NoticeModel> NoticeModels { get; } = [];
     public List<ConsentModel> Consents { get; } = [];
     public int PaidQuestions { get; private set; }
     public List<PaidModel> PaidModels { get; } = [];
@@ -188,6 +189,7 @@ sealed class ScriptedUi : IWalletUi
     public Task<NoticeAnswer> ShowNoticeAsync(NoticeModel model, CancellationToken ct)
     {
         Notices++;
+        NoticeModels.Add(model);
         return Task.FromResult(Notice);
     }
 

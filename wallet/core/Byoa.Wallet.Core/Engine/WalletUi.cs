@@ -21,7 +21,8 @@ public enum PaidAnswer
     No,
 }
 
-public sealed record NoticeModel(string Origin, string Host);
+/// <param name="FromLink">The request came from a direct link: nothing is stored from its notice, which offers no block.</param>
+public sealed record NoticeModel(string Origin, string Host, bool FromLink = false);
 
 /// <summary>One language of a skill and the source the manager suggests for it.</summary>
 public sealed record RouteLine(string? Language, string SourceName, string Where, bool Paid, bool Fits, string? Detail = null);

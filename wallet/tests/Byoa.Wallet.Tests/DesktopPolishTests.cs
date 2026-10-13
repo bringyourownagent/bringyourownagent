@@ -1,9 +1,17 @@
 using Byoa.Wallet.Desktop;
+using Byoa.Wallet.Engine;
 
 namespace Byoa.Wallet.Tests;
 
 public sealed class DesktopPolishTests
 {
+    [Fact]
+    public void ALinksNoticeSaysNotNowAndSendsBlockToSites()
+    {
+        Assert.Equal(("Not now", "Block in Sites…"), ToastWindow.Choices(new NoticeModel("https://geo.example.org", "geo.example.org", FromLink: true)));
+        Assert.Equal(("Decline", "Block this site"), ToastWindow.Choices(new NoticeModel("https://geo.example.org", "geo.example.org")));
+    }
+
     [Fact]
     public void AgentCommandsKeepDoubleHyphensAndJsonEscapesOnlyTheJsonPath()
     {

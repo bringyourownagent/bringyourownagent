@@ -491,18 +491,17 @@ public sealed class WalletEngine
         try
         {
             var allowedWhenAsked = _store.Read(s => s.Site(origin)?.Status == SiteStatus.Allowed);
-            var notice = await _ui.ShowNoticeAsync(new NoticeModel(origin, host), timeout.Token).ConfigureAwait(false);
+            var notice = await _ui.ShowNoticeAsync(new NoticeModel(origin, host, FromLink: via == ViaLink), timeout.Token).ConfigureAwait(false);
             switch (notice)
             {
                 // From a link nothing is stored: the site can prove a link only by connecting, and a stranger's link must
-                // not be able to switch a real site off.
+                // not be able to switch a real site off. A link's notice has no block: "Block in Sites…" opens the Sites list.
                 case NoticeAnswer.Block when via == ViaLink:
-                    return Done(entry, "blocked", "blocked from a link: nothing stored");
+                case NoticeAnswer.Decline when via == ViaLink:
+                    return Done(entry, "declined", "declined from a link: nothing stored");
                 case NoticeAnswer.Block:
                     Block(origin, true);
                     return Done(entry, "blocked", "blocked from the notice");
-                case NoticeAnswer.Decline when via == ViaLink:
-                    return Done(entry, "declined", "declined from a link: nothing stored");
                 case NoticeAnswer.Decline:
                     MarkDeclined(origin, shownAllowed: allowedWhenAsked);
                     return Done(entry, "declined", "declined in the notice");

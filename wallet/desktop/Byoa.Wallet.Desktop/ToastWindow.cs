@@ -70,7 +70,7 @@ sealed class ToastWindow : CornerWindow
         return grid;
     }
 
-    /// <summary>"host wants to use your AI": Show, Decline, Block this site.</summary>
+    /// <summary>"host wants to use your AI": Show, Decline, Block this site (a link's notice: Show, Not now, Block in Sites…).</summary>
     public static ToastWindow Request(NoticeModel model)
     {
         var t = new ToastWindow("Agent wallet notice");
@@ -79,13 +79,19 @@ sealed class ToastWindow : CornerWindow
             Ui.Text("Agent wallet", "muted", "small"));
         AutomationProperties.SetName(lines, model.Host + " wants to use your AI");
         t._body.Children.Add(t.Header(Ui.Tile(Ui.Globe, 24), lines));
+        var (declineText, blockText) = Choices(model);
         var show = Ui.Button("Show", "allow", "NoticeShow", () => t.Answer("show"), "small");
-        var decline = Ui.Button("Decline", "deny", "NoticeDecline", () => t.Answer("decline"), "small");
-        var block = Ui.Link("Block this site", "NoticeBlock", () => t.Answer("block"));
+        var decline = Ui.Button(declineText, "deny", "NoticeDecline", () => t.Answer("decline"), "small");
+        var blockAnswer = model.FromLink ? "sites" : "block";
+        var block = Ui.Link(blockText, "NoticeBlock", () => t.Answer(blockAnswer));
         block.HorizontalAlignment = HorizontalAlignment.Right;
         t._body.Children.Add(Ui.Columns("Auto,*", Ui.Row(8, show, decline), block));
         return t;
     }
+
+    /// <summary>The words of the notice's "no" and of its block link. A link's notice cannot block: its link opens Sites.</summary>
+    public static (string Decline, string Block) Choices(NoticeModel model) =>
+        model.FromLink ? ("Not now", "Block in Sites…") : ("Decline", "Block this site");
 
     /// <summary>"Your local models could not answer: use the paid source?" Allow once, Always for this site, No.</summary>
     public static ToastWindow Paid(PaidModel model)

@@ -1319,11 +1319,23 @@ public class DirectTransportTests : IDisposable
     }
 
     [Fact]
+    public async Task ALinksNoticeSaysItIsALinkAndItsBlockStoresNothingAndIsNotReportedAsOne()
+    {
+        _ui.Notice = NoticeAnswer.Block;
+        Assert.Null(await Transport().HandleLinkAsync(_site.Link()));
+        Assert.True(Assert.Single(_ui.NoticeModels).FromLink);
+        var request = _log.Recent().First(e => e.Kind == "request");
+        Assert.Equal(("declined", "declined from a link: nothing stored"), (request.Outcome, request.Note));   // not "blocked": nothing was blocked
+        Assert.Equal(SiteStatus.None, _engine.FindSite(_site.Origin)!.Status);
+    }
+
+    [Fact]
     public async Task ABlockOnThePagesNoticeIsStoredAndSilencesLaterLinks()
     {
         _ui.Notice = NoticeAnswer.Block;
         Assert.Null(await _engine.HandleAsync(Clips.Request(_site.Origin, click: true, _site.Manifest)));
         Assert.Equal(SiteStatus.Blocked, _engine.FindSite(_site.Origin)!.Status);
+        Assert.False(Assert.Single(_ui.NoticeModels).FromLink);
         Assert.Null(await Transport().HandleLinkAsync(_site.Link()));
         Assert.Equal(1, _ui.Notices);
         Assert.Equal("blocked site: the link was ignored", Links[0].Note);
