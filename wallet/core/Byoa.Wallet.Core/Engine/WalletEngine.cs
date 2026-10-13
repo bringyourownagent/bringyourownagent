@@ -122,11 +122,19 @@ public sealed class WalletEngine
 
     /// <summary>
     /// The direct transport (a <c>bringyourownagent://</c> link): a request for a site whose manifest the wallet
-    /// fetched itself. The same rules as a page's request (blocked, decide on my own, the notice and the consent,
-    /// the difference, models ready before the answer); the answer is a grant or null.
+    /// fetched itself. The same rules as a page's request (blocked, the notice and the consent, the difference, models
+    /// ready before the answer), except that a link always asks, even for a site with "decide on my own"; the answer
+    /// is a grant or null.
     /// </summary>
     public Task<JsonNode?> RequestViaLinkAsync(string origin, JsonObject manifest, bool userActivation, CancellationToken ct = default) =>
         GuardedAsync(Wire.Request, origin, ViaLink, () => RequestAsync(origin, userActivation, new JsonObject { ["manifest"] = manifest.DeepClone() }, ct, ViaLink));
+
+    /// <summary>
+    /// A reconnect with a stored pairing (no link, no click): the grant of a site that keeps "decide on my own", silently
+    /// or not at all. Nothing is shown; a manifest that is not covered is held quietly, as for any request without a click.
+    /// </summary>
+    public Task<JsonNode?> RenewViaLinkAsync(string origin, JsonObject manifest, CancellationToken ct = default) =>
+        GuardedAsync(Wire.Request, origin, ViaLink, () => RequestAsync(origin, false, new JsonObject { ["manifest"] = manifest.DeepClone() }, ct, ViaLink, renewal: true));
 
     /// <summary>A call that came over the wallet's own connection to the site: exactly the gate, limits and routing of a page's call.</summary>
     public Task<JsonNode?> CallViaLinkAsync(string origin, JsonObject payload, CancellationToken ct = default) =>
@@ -376,7 +384,7 @@ public sealed class WalletEngine
     // ------------------------------------------------------------------------------------------------
     // request
 
-    async Task<JsonNode?> RequestAsync(string origin, bool userActivation, JsonObject payload, CancellationToken ct, string? via)
+    async Task<JsonNode?> RequestAsync(string origin, bool userActivation, JsonObject payload, CancellationToken ct, string? via, bool renewal = false)
     {
         var entry = new ActivityEntry { Origin = origin, Kind = Wire.Request, Via = via, Note = userActivation ? "after a click" : "without a click" };
         if (!Origins.TryParse(origin, out var host, out var secure)) return Done(entry, "invalid", "origin not allowed");
@@ -398,7 +406,9 @@ public sealed class WalletEngine
 
         var diff = Difference(site, manifest);
         var covered = site.Status == SiteStatus.Allowed && diff.NewSkills.Count == 0 && diff.MissingRequired.Count == 0 && !diff.CostRaised;
-        if (covered && site.AutoDecide && !site.Paused)
+        // "Decide on my own" grants a page's request and a reconnect with the stored pairing. A new link always asks: its
+        // welcome replaces the stored pairing, so the visitor sees it first.
+        if (covered && site.AutoDecide && !site.Paused && (via is null || renewal))
         {
             var auto = Grant(origin, manifest, site.Skills, Money.Parse(site.Budget, 0.20m));
             if (auto is null) return Done(entry, "invalid", "nothing to grant");
@@ -1988,7 +1998,7 @@ public sealed class WalletEngine
         SiteClosed?.Invoke(origin);
     }
 
-    /// <summary>An allowed site that may get a grant and reconnect without asking: "decide on my own" on, and not paused.</summary>
+    /// <summary>An allowed site that may reconnect and get a page's grant without asking: "decide on my own" on, and not paused. A link always asks.</summary>
     public bool DecidesOnItsOwn(string origin) => FindSite(origin) is { Status: SiteStatus.Allowed, AutoDecide: true, Paused: false };
 
     /// <summary>Applies an unused-site pause before a transport makes a reconnect/resume decision.</summary>

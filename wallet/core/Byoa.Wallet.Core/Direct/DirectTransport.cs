@@ -57,7 +57,7 @@ public sealed class DirectTransport : IDisposable
     public bool IsConnected(string origin) => Connections.Any(c => c.Origin == origin && c.State == DirectState.Connected);
 
     /// <summary>
-    /// Acts on a link: checks it and its manifest, asks the visitor (or grants silently under "decide on my own"),
+    /// Acts on a link: checks it and its manifest, asks the visitor (also for a site with "decide on my own"),
     /// and after a grant starts the connection. Returns the connection, or null when nothing was opened.
     /// </summary>
     public async Task<DirectConnection?> HandleLinkAsync(string? url, CancellationToken ct = default, bool userActivation = true)
@@ -147,7 +147,7 @@ public sealed class DirectTransport : IDisposable
     /// <summary>A grant by "decide on my own" alone (no notice): null when the site is not covered or not on its own.</summary>
     internal async Task<GrantSession?> GrantSilentlyAsync(string origin, JsonObject manifest, CancellationToken ct)
     {
-        var answer = await Engine.RequestViaLinkAsync(origin, manifest, userActivation: false, ct).ConfigureAwait(false);
+        var answer = await Engine.RenewViaLinkAsync(origin, manifest, ct).ConfigureAwait(false);
         return GrantOf(answer);
     }
 
