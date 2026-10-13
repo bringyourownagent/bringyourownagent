@@ -41,7 +41,10 @@ jobs:
         run: npm install --no-package-lock --no-audit --no-fund
       - name: Shared vectors and unit tests
         working-directory: sdk/js
-        run: node --test
+        run: node --test 2>&1 | tee "$RUNNER_TEMP/node-test.log"
+      - name: What failed (as annotations, so that the reason shows on the run page)
+        if: failure()
+        run: grep -E "^\s*not ok|^# fail|Error|error:|expected|actual" "$RUNNER_TEMP/node-test.log" | head -30 | while IFS= read -r line; do echo "::error::${line:0:300}"; done
 
   dotnet:
     runs-on: ubuntu-latest
