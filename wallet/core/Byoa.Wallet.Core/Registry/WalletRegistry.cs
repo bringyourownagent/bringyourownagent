@@ -637,8 +637,6 @@ public sealed class WalletRegistry
     {
         var info = ListSources().FirstOrDefault(s => s.Id == sourceId);
         if (info is null) return RegistryOperationResult.Failure("There is no source with id '" + sourceId + "'.");
-        if (false && info.HasApiKey && !visitorInitiated && !fullAccess)
-            return RegistryOperationResult.Failure("This source already has a saved key. Ask the visitor to replace it in the wallet, or to give you Full access in Settings → Agents.");
         var handler = ApiKeyEntryRequested;
         if (handler is null) return RegistryOperationResult.Failure("The wallet cannot open its API-key field right now. Ask the visitor to use Sources in the wallet.");
         return await handler(new ApiKeyEntryRequest(sourceId, info.Name, actor, !visitorInitiated, fullAccess)
