@@ -108,11 +108,12 @@ Planned: desktop applications (the same messages over a local channel with expli
 
 ## 11. Security considerations
 
-- **A hostile page or link** can only cause a prompt, and only after a click. It cannot make the wallet connect to a local or private address, learn whether a wallet exists, or obtain a grant without the visitor's Allow.
+- **A program running as the visitor is fully trusted.** It can read the wallet's settings and key store, change them, and talk to the wallet as the visitor's own tools do. The wallet cannot defend against it. For a polite agent the wallet keeps its promises: no tool returns a key, Full access gates the tools that see or change sites, limits and built-in sources, no tool allows a site, approves a paid call or approves another agent, and a new agent needs the visitor's Allow. Against web pages, other accounts, a stranger's site and accidents, the wallet protects the visitor, as the items below say.
+- **A hostile page or link** can only cause a prompt, and only after a click. It cannot make the wallet connect to a local or private address, learn whether a wallet exists, or obtain a grant without the visitor's Allow. With the Chrome extension installed, a page can detect the wallet, because the extension defines `window.byoa` on every https page.
 - **A hostile requester** is limited by the visitor's grant: skills, sizes, call rates, money. A compromised requester is no more dangerous than a malicious site the visitor chose to allow, and the visitor can revoke it.
 - **A hostile wallet output** (a prompt-injected model) is user input to the requester; the requester's own validation is the defence. Constraining the answer with `choices` reduces what a model can say.
 - **Registered URL schemes** are claimed by the last application that registers them on some systems, so a link carries only short-lived, single-use codes, and the scheme name `bringyourownagent` is long and specific on purpose.
-- **Secrets**: API keys can be written to the wallet and used, but a requester, a page, and a managing agent cannot read them back.
+- **Secrets**: API keys can be written to the wallet and used. A requester, a page and a managing agent cannot read them back through the wallet. A program running as the visitor can read the key store (see the first item of this section).
 - **Logs** hold events and costs, not the audio or text of calls.
 - **Local-only data** must stay local: the wallet verifies where a call runs.
 
