@@ -48,9 +48,10 @@ public enum DirectState
 /// The wallet's own connection to one site's server after Allow: <c>hello</c> → <c>welcome</c> (or <c>error</c>),
 /// then the site's <c>call</c> frames answered with <c>result</c> frames through exactly the engine's gate, limits,
 /// routing, fallbacks and "ask before paid". A ping every 30 s; <c>bye</c> from either side ends it.
-/// The welcome echoes the manifest: after a link it must be the link's, byte for byte (otherwise bye, and the site's
-/// grant is revoked); after a reconnect with the pairing it is the site's current one, and if that asks for more than
-/// the site is allowed, the wallet says bye and the site needs a new link and the visitor's consent.
+/// The welcome echoes the manifest: after a link it must be the link's, byte for byte (otherwise bye, and the link's
+/// answer is dropped); only that echo stores the visitor's answer to the link. After a reconnect with the pairing the
+/// welcome carries the site's current manifest, and if that asks for more than the site is allowed, the wallet says
+/// bye and the site needs a new link and the visitor's consent.
 /// A first connection that cannot reach the site tries again with backoff while its session code may still be valid
 /// (60 s), until the site says the code is bad. Later, when the connection drops, it reconnects with backoff only
 /// while the site keeps "decide on my own" and its pairing is stored.
@@ -82,6 +83,7 @@ public sealed class DirectConnection
     string? _session;
     string? _token;
     GrantSession? _grant;
+    string? _provisional;                                // the grant of a link's answer that the site has not confirmed yet
     string? _stopReason;
     bool _toldFailure;
     int _inFlight;
@@ -96,6 +98,7 @@ public sealed class DirectConnection
         _session = session;
         _token = token;
         _grant = grant;
+        _provisional = session is null ? null : grant?.Id;
     }
 
     public string Origin { get; }
@@ -182,6 +185,8 @@ public sealed class DirectConnection
         }
         finally
         {
+            // A link's answer that the site never confirmed is dropped together with its grant.
+            if (_provisional is not null) _owner.Engine.DropLinkDecision(_provisional);
             SetState(DirectState.Closed);
             _welcomed.TrySetResult(false);
             _owner.Remove(this);
@@ -269,12 +274,19 @@ public sealed class DirectConnection
             var echoed = Str(first["manifest"]);
             if (!resumed && echoed != Manifest)
             {
-                // The site's server works under another manifest than the one the visitor saw: end it and revoke.
+                // Another manifest than the link's: this server did not issue the link. The link's answer is dropped (the
+                // finally of the connection), and the site's stored grant and pairing stay: any page can send a link that
+                // names any site, so a link must not be able to revoke one.
                 Record("error", "the site's manifest differs from its link");
                 await ByeAsync(ws).ConfigureAwait(false);
-                if (_token is not null) _owner.Pairings.Forget(Origin, _token);
-                _owner.Engine.Revoke(Origin, "the site's manifest differs from its link");
                 return (Outcome.Stop, false);
+            }
+
+            if (!resumed)
+            {
+                // The site echoed the link's manifest, so it issued the link: the visitor's answer to it is stored now.
+                _owner.Engine.ConfirmLinkDecision(_grant!.Id);
+                _provisional = null;
             }
 
             if (resumed && echoed != Manifest)

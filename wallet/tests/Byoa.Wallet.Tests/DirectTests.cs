@@ -486,6 +486,11 @@ public class DirectTransportTests : IDisposable
 
     static string Manifest(string cost) => Clips.GeoManifest.Replace("0.05 USD", cost);
 
+    /// <summary>A link to the test site that carries the given manifest text.</summary>
+    string LinkWith(string manifest) =>
+        "bringyourownagent://connect?v=0.1&endpoint=" + Uri.EscapeDataString($"ws://localhost:{_site.Port}/byoa/ws")
+        + "&manifest=" + Base64Url.EncodeToString(Encoding.UTF8.GetBytes(manifest)) + "&session=" + TestSite.NewCode();
+
     /// <summary>A link, the visitor's Allow, the wallet's hello, the site's welcome: the open connection and its socket.</summary>
     async Task<(DirectTransport Transport, DirectConnection Connection, WebSocket Socket, JsonObject Hello)> PairAsync(bool auto, string token = "pairing-token-0123456789abcdef")
     {
@@ -570,7 +575,7 @@ public class DirectTransportTests : IDisposable
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public async Task AWelcomeWhoseManifestDiffersFromTheLinksEndsItAndRevokesTheSite(bool missing)
+    public async Task AWelcomeWhoseManifestDiffersFromTheLinksEndsItAndKeepsNothingOfTheLink(bool missing)
     {
         _ui.Consent = new ConsentAnswer(true, 0.05m, AutoDecide: true, []);
         var connection = await Transport().HandleLinkAsync(_site.Link());
@@ -582,10 +587,133 @@ public class DirectTransportTests : IDisposable
         Assert.Equal("bye", (await TestSite.ReceiveAsync(socket))["type"]!.GetValue<string>());
         await connection!.Completion.WaitAsync(TimeSpan.FromSeconds(10));
         Assert.Equal("the site's manifest differs from its link", Links.First(e => e.Outcome == "error").Note);
-        Assert.Equal(SiteStatus.None, _engine.FindSite(_site.Origin)!.Status);   // the grant is revoked
-        Assert.Contains(_log.Recent(), e => e.Outcome == "revoked" && e.Note == "the site's manifest differs from its link");
+        Assert.Equal(SiteStatus.None, _engine.FindSite(_site.Origin)!.Status);   // the answer to the link was never stored
+        Assert.DoesNotContain(_log.Recent(), e => e.Outcome == "revoked");
         Assert.Null(_pairings.Get(_site.Origin));
         Assert.Equal(0, _giga.Calls);
+    }
+
+    [Fact]
+    public async Task ALinksAllowIsStoredOnlyOnceTheWelcomeEchoesTheLinksManifest()
+    {
+        _ui.Consent = new ConsentAnswer(true, 0.05m, AutoDecide: true, []);
+        var connection = await Transport().HandleLinkAsync(_site.Link());
+        var socket = await _site.NextSocketAsync();
+        await TestSite.ReceiveAsync(socket);                                      // the hello
+        Assert.Equal(SiteStatus.None, _engine.FindSite(_site.Origin)!.Status);    // held in memory: the site has not proved the link
+        Assert.Null(_pairings.Get(_site.Origin));
+        await TestSite.SendAsync(socket, _site.Welcome());
+        Assert.True(await connection!.Welcomed.WaitAsync(TimeSpan.FromSeconds(10)));
+        var site = _engine.FindSite(_site.Origin)!;
+        Assert.Equal(SiteStatus.Allowed, site.Status);
+        Assert.True(site.AutoDecide);
+        Assert.Equal("Family geography game: recognise country names spoken aloud", site.Summary);   // the site's own words, now proven
+        Assert.NotNull(_pairings.Get(_site.Origin));
+    }
+
+    [Fact]
+    public async Task ALinksAllowIsDroppedWhenTheWelcomeNeverComes()
+    {
+        _ui.Consent = new ConsentAnswer(true, 0.05m, AutoDecide: true, []);
+        var connection = await Transport().HandleLinkAsync(_site.Link());
+        var socket = await _site.NextSocketAsync();
+        await TestSite.ReceiveAsync(socket);                                      // the hello, then silence
+        await connection!.Completion.WaitAsync(TimeSpan.FromSeconds(15));         // the welcome timeout (5 s in these tests)
+        Assert.False(await connection.Welcomed);
+        Assert.Equal(SiteStatus.None, _engine.FindSite(_site.Origin)!.Status);
+        Assert.Null(_pairings.Get(_site.Origin));
+        Assert.Equal("no welcome from the site (no answer in time)", Links.First(e => e.Outcome == "closed").Note);
+    }
+
+    [Fact]
+    public async Task ASecondLinkWhileTheFirstIsUnconfirmedAsksAgainAndOnlyTheSecondIsKept()
+    {
+        _ui.Consent = new ConsentAnswer(true, 0.05m, AutoDecide: false, []);
+        var transport = Transport();
+        var first = await transport.HandleLinkAsync(_site.Link());
+        var firstSocket = await _site.NextSocketAsync();
+        await TestSite.ReceiveAsync(firstSocket);                                 // the first hello: no welcome yet
+        Assert.Equal(SiteStatus.None, _engine.FindSite(_site.Origin)!.Status);
+
+        _ui.Consent = new ConsentAnswer(true, 0.10m, AutoDecide: false, []);
+        var second = await transport.HandleLinkAsync(_site.Link());               // nothing is stored yet: the visitor is asked again
+        Assert.Equal(2, _ui.Notices);
+        Assert.False(_ui.Consents[^1].IsDifference);
+        var secondSocket = await _site.NextSocketAsync();
+        await TestSite.ReceiveAsync(secondSocket);
+        await TestSite.SendAsync(secondSocket, _site.Welcome());
+        Assert.True(await second!.Welcomed.WaitAsync(TimeSpan.FromSeconds(10)));
+        Assert.Equal(Money.ToSpec(0.10m), _engine.FindSite(_site.Origin)!.Budget);
+
+        await first!.Completion.WaitAsync(TimeSpan.FromSeconds(15));              // the first never welcomed: it ends
+        Assert.Equal(Money.ToSpec(0.10m), _engine.FindSite(_site.Origin)!.Budget);   // and its answer went with it
+        await TestSite.SendAsync(secondSocket, Call(1));
+        Assert.True((await TestSite.ReceiveAsync(secondSocket))["ok"]!.GetValue<bool>());   // the second grant still works
+    }
+
+    [Fact]
+    public async Task AHostileLinkWithAManifestTheRealServerNeverIssuedStoresNothing()
+    {
+        var hostile = Clips.GeoManifest.Replace("Family geography game: recognise country names spoken aloud", "Win a prize: confirm your details");
+        _ui.Consent = new ConsentAnswer(true, 0.05m, AutoDecide: true, []);
+        var connection = await Transport().HandleLinkAsync(LinkWith(hostile));
+        Assert.Equal("Win a prize: confirm your details", Assert.Single(_ui.Consents).Summary);   // the consent shows the link's words, as the link has them
+        var socket = await _site.NextSocketAsync();
+        await TestSite.ReceiveAsync(socket);
+        await TestSite.SendAsync(socket, _site.Welcome());                        // the real server answers with its own manifest
+        Assert.Equal("bye", (await TestSite.ReceiveAsync(socket))["type"]!.GetValue<string>());
+        await connection!.Completion.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(SiteStatus.None, _engine.FindSite(_site.Origin)!.Status);
+        Assert.Null(_pairings.Get(_site.Origin));
+        Assert.Equal(0, _giga.Calls);
+    }
+
+    [Fact]
+    public async Task AMismatchedLinkDoesNotRevokeTheSitesStoredGrant()
+    {
+        await PairAsync(auto: true);                                              // a confirmed grant with "decide on my own"
+        _ui.Consent = new ConsentAnswer(true, 0.60m, AutoDecide: true, []);
+        var connection = await Transport().HandleLinkAsync(LinkWith(Manifest("0.60 USD")));   // asks for more: the difference
+        var socket = await _site.NextSocketAsync();
+        await TestSite.ReceiveAsync(socket);
+        await TestSite.SendAsync(socket, _site.Welcome());                        // the site answers with its own manifest, not this link's
+        Assert.Equal("bye", (await TestSite.ReceiveAsync(socket))["type"]!.GetValue<string>());
+        await connection!.Completion.WaitAsync(TimeSpan.FromSeconds(10));
+        var site = _engine.FindSite(_site.Origin)!;
+        Assert.Equal(SiteStatus.Allowed, site.Status);                            // the stored grant is intact
+        Assert.Equal(Money.ToSpec(0.05m), site.Budget);
+        Assert.Equal(_site.Manifest64, _pairings.Get(_site.Origin)!.Manifest);   // and so is the pairing
+        Assert.DoesNotContain(_log.Recent(), e => e.Outcome == "revoked");
+    }
+
+    [Fact]
+    public async Task APagesDeclineWhileALinksAnswerWaitsDropsThatAnswer()
+    {
+        _ui.Consent = new ConsentAnswer(true, 0.05m, AutoDecide: true, []);
+        var connection = await Transport().HandleLinkAsync(_site.Link());
+        var socket = await _site.NextSocketAsync();
+        await TestSite.ReceiveAsync(socket);                                      // the hello, no welcome yet
+        _ui.Notice = NoticeAnswer.Decline;
+        Assert.Null(await _engine.HandleAsync(Clips.Request(_site.Origin, click: true, _site.Manifest)));   // the visitor's later "no"
+        Assert.Equal("(close)", (await TestSite.ReceiveAsync(socket))["type"]!.GetValue<string>());
+        await connection!.Completion.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(SiteStatus.Declined, _engine.FindSite(_site.Origin)!.Status);   // the later decision stands
+        Assert.Null(_pairings.Get(_site.Origin));
+        Assert.Equal("the visitor changed the site in the wallet", Links.First(e => e.Outcome == "closed").Note);
+    }
+
+    [Fact]
+    public async Task ARevokeWhileTheLinksAnswerIsHeldKeepsTheSiteUnallowed()
+    {
+        _ui.Consent = new ConsentAnswer(true, 0.05m, AutoDecide: true, []);
+        var connection = await Transport().HandleLinkAsync(_site.Link());
+        var socket = await _site.NextSocketAsync();
+        await TestSite.ReceiveAsync(socket);                                      // the hello, no welcome yet
+        _engine.Revoke(_site.Origin);                                             // the visitor revokes the site before the welcome
+        Assert.Equal("(close)", (await TestSite.ReceiveAsync(socket))["type"]!.GetValue<string>());   // the wait is cancelled: the socket just closes
+        await connection!.Completion.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(SiteStatus.None, _engine.FindSite(_site.Origin)!.Status);
+        Assert.Null(_pairings.Get(_site.Origin));
     }
 
     [Fact]
@@ -783,6 +911,7 @@ public class DirectTransportTests : IDisposable
         Assert.Equal("(close)", (await TestSite.ReceiveAsync(socket))["type"]!.GetValue<string>());
         await connection.Completion.WaitAsync(TimeSpan.FromSeconds(10));
         Assert.Equal("the site refused the connection: bad-session", Links.First(e => e.Outcome == "error").Note);
+        Assert.Equal(SiteStatus.None, _engine.FindSite(_site.Origin)!.Status);   // the visitor's Allow was never stored
         Assert.Null(_pairings.Get(_site.Origin));
         await Task.Delay(300);
         Assert.Equal(1, _site.Upgrades);
@@ -862,18 +991,41 @@ public class DirectTransportTests : IDisposable
         await Task.Delay(300);
         Assert.Equal(0, _site.Accepts);
         Assert.Equal(("declined", "link"), (_log.Recent()[0].Outcome, _log.Recent()[0].Via));
+        Assert.Equal(SiteStatus.None, _engine.FindSite(_site.Origin)!.Status);   // "not now": nothing is stored
     }
 
     [Fact]
-    public async Task BlockMakesLaterLinksDoNothing()
+    public async Task ADeclineFromALinkIsNotStoredSoTheSitesOwnRequestIsAskedAgain()
+    {
+        _ui.Notice = NoticeAnswer.Decline;
+        Assert.Null(await Transport().HandleLinkAsync(_site.Link()));
+        _ui.Notice = NoticeAnswer.Closed;
+        Assert.Null(await _engine.HandleAsync(Clips.Request(_site.Origin, click: true, _site.Manifest)));   // the site's own request
+        Assert.Equal(2, _ui.Notices);                                              // the visitor is asked again
+        Assert.Equal(SiteStatus.None, _engine.FindSite(_site.Origin)!.Status);
+    }
+
+    [Fact]
+    public async Task ABlockFromALinkIsNotStoredSoALaterLinkAsksAgain()
     {
         _ui.Notice = NoticeAnswer.Block;
         var transport = Transport();
         Assert.Null(await transport.HandleLinkAsync(_site.Link()));
+        Assert.Equal(SiteStatus.None, _engine.FindSite(_site.Origin)!.Status);   // a site can only prove a link by connecting: nothing is stored
         Assert.Null(await transport.HandleLinkAsync(_site.Link()));
-        Assert.Equal(1, _ui.Notices);
+        Assert.Equal(2, _ui.Notices);
         await Task.Delay(300);
         Assert.Equal(0, _site.Accepts);
+    }
+
+    [Fact]
+    public async Task ABlockOnThePagesNoticeIsStoredAndSilencesLaterLinks()
+    {
+        _ui.Notice = NoticeAnswer.Block;
+        Assert.Null(await _engine.HandleAsync(Clips.Request(_site.Origin, click: true, _site.Manifest)));
+        Assert.Equal(SiteStatus.Blocked, _engine.FindSite(_site.Origin)!.Status);
+        Assert.Null(await Transport().HandleLinkAsync(_site.Link()));
+        Assert.Equal(1, _ui.Notices);
         Assert.Equal("blocked site: the link was ignored", Links[0].Note);
     }
 

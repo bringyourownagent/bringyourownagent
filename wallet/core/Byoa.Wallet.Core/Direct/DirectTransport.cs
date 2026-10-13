@@ -178,7 +178,7 @@ public sealed class DirectTransport : IDisposable
     void OnSiteClosed(string origin)
     {
         Pairings.Forget(origin);
-        foreach (var c in Connections.Where(c => c.Origin == origin)) c.Stop("the site was revoked or blocked in the wallet");
+        foreach (var c in Connections.Where(c => c.Origin == origin)) c.Stop("the visitor changed the site in the wallet");
     }
 
     internal void Record(string origin, string outcome, string note) =>

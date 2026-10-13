@@ -67,6 +67,9 @@ public sealed class WalletEngine
     readonly IWalletUi _ui;
     readonly TimeProvider _time;
     readonly ConcurrentDictionary<string, GrantSession> _sessions = new(StringComparer.Ordinal);
+
+    // A link's Allow, held in memory until the site's welcome echoes the link's manifest (keyed by the grant's id).
+    readonly ConcurrentDictionary<string, LinkDecision> _linkDecisions = new(StringComparer.Ordinal);
     readonly Dictionary<string, SharedAsk> _asking = new(StringComparer.Ordinal);
     readonly object _askGate = new();
 
@@ -128,6 +131,27 @@ public sealed class WalletEngine
     /// <summary>A call that came over the wallet's own connection to the site: exactly the gate, limits and routing of a page's call.</summary>
     public Task<JsonNode?> CallViaLinkAsync(string origin, JsonObject payload, CancellationToken ct = default) =>
         GuardedAsync(Wire.Call, origin, ViaLink, () => CallAsync(origin, payload, ct, ViaLink));
+
+    /// <summary>
+    /// The site's welcome echoed the link's manifest, so the site issued the link: the visitor's Allow for it is stored
+    /// now. A grant with no held answer (a silent grant under "decide on my own") has nothing to store.
+    /// </summary>
+    public void ConfirmLinkDecision(string grantId)
+    {
+        if (!_linkDecisions.TryRemove(grantId, out var decision)) return;
+        _store.Update(s => decision.Apply(Site(s, decision.Origin)));
+        SitesChanged?.Invoke();
+    }
+
+    /// <summary>
+    /// A link's connection ended before the site's welcome echoed the link's manifest (an error, a timeout, another
+    /// manifest, the wallet closing): the visitor's answer to that link is dropped, and its grant ends with it.
+    /// </summary>
+    public void DropLinkDecision(string grantId)
+    {
+        _linkDecisions.TryRemove(grantId, out _);
+        _sessions.TryRemove(grantId, out _);
+    }
 
     async Task<JsonNode?> GuardedAsync(string type, string origin, string? via, Func<Task<JsonNode?>> work)
     {
@@ -416,6 +440,9 @@ public sealed class WalletEngine
         public int Waiters { get; set; }
     }
 
+    /// <summary>A link's Allow: what it makes of the site's record, applied only when the site proves the link.</summary>
+    sealed record LinkDecision(string Origin, Action<SiteRecord> Apply);
+
     void Leave(SharedAsk ask, ref int left)
     {
         if (Interlocked.Exchange(ref left, 1) == 1) return;
@@ -447,9 +474,15 @@ public sealed class WalletEngine
             var notice = await _ui.ShowNoticeAsync(new NoticeModel(origin, host), timeout.Token).ConfigureAwait(false);
             switch (notice)
             {
+                // From a link nothing is stored: the site can prove a link only by connecting, and a stranger's link must
+                // not be able to switch a real site off.
+                case NoticeAnswer.Block when via == ViaLink:
+                    return Done(entry, "blocked", "blocked from a link: nothing stored");
                 case NoticeAnswer.Block:
                     Block(origin, true);
                     return Done(entry, "blocked", "blocked from the notice");
+                case NoticeAnswer.Decline when via == ViaLink:
+                    return Done(entry, "declined", "declined from a link: nothing stored");
                 case NoticeAnswer.Decline:
                     MarkDeclined(origin);
                     return Done(entry, "declined", "declined in the notice");
@@ -465,16 +498,18 @@ public sealed class WalletEngine
             if (!answer.Allow || model.MissingRequired)
             {
                 if (timeout.IsCancellationRequested) return Done(entry, "closed", "no answer in time");
+                if (via == ViaLink) return Done(entry, "declined", "declined from a link: nothing stored");
                 MarkDeclined(origin);
                 return Done(entry, "declined", "declined in the consent window");
             }
 
             var offered = model.Rows.Where(r => r.CanServe && !answer.LeftOff.Contains(r.Skill)).Select(r => r.Skill).ToList();
             var leftOff = model.Rows.Where(r => !r.CanServe || answer.LeftOff.Contains(r.Skill)).Select(r => r.Skill).ToList();
-            List<string> skills = [];
-            _store.Update(s =>
+            var decided = Now;
+
+            // What the visitor's Allow makes of the site's record.
+            void Decide(SiteRecord r)
             {
-                var r = Site(s, origin);
                 var keep = r.Status == SiteStatus.Allowed ? r.Skills : [];
                 r.Skills = keep.Union(offered).Except(model.IsDifference ? [] : leftOff).Distinct().OrderBy(x => x, StringComparer.Ordinal).ToList();
                 r.Status = SiteStatus.Allowed;
@@ -485,21 +520,40 @@ public sealed class WalletEngine
                 r.Privacy = manifest.Privacy;
                 r.Languages = manifest.Skills.SelectMany(k => k.Languages).Distinct().ToList();
                 r.QuietRequests = 0;
-                r.DecidedAt = Now;
+                r.DecidedAt = decided;
                 r.Paused = false;                       // "Resume" in the consent window of a paused site
                 r.PausedAt = null;
                 r.PauseReason = null;
-                skills = r.Skills;
-            });
-            SitesChanged?.Invoke();
+            }
+
+            List<string> skills = [];
+            if (via == ViaLink)
+            {
+                // A link's Allow is held in memory until the site's welcome echoes the link's manifest (ConfirmLinkDecision).
+                Decide(site);
+                skills = site.Skills;
+            }
+            else
+            {
+                _store.Update(s =>
+                {
+                    var r = Site(s, origin);
+                    Decide(r);
+                    skills = r.Skills;
+                });
+                SitesChanged?.Invoke();
+                VisitorDecided(origin);
+            }
+
             var session = Grant(origin, manifest, skills, answer.Budget);
             if (session is null) return Done(entry, "declined", "no skill left to grant");
+            if (via == ViaLink) _linkDecisions[session.Id] = new LinkDecision(origin, Decide);
             _prompt.Release();
             released = true;
             // The page gets its grant once the routed models are loaded, with "Preparing your model…" meanwhile.
             var waited = await WarmBeforeResolveAsync(session, host, showPreparing: true, ct).ConfigureAwait(false);
             entry.Note = "after a click" + (model.PausedNote is not null ? "; resumed" : "") + (model.IsDifference ? "; only the difference was shown" : "")
-                + (answer.AutoDecide ? "; decide on my own from now on" : "") + Ready(waited);
+                + (answer.AutoDecide ? "; decide on my own from now on" : "") + (via == ViaLink ? "; kept once the site confirms the link" : "") + Ready(waited);
             return Done(entry, "allowed", null, session.ToResult());
         }
         catch (OperationCanceledException)
@@ -824,6 +878,7 @@ public sealed class WalletEngine
             r.DecidedAt = Now;
         });
         SitesChanged?.Invoke();
+        VisitorDecided(origin);
     }
 
     // ------------------------------------------------------------------------------------------------
@@ -1942,6 +1997,7 @@ public sealed class WalletEngine
     {
         _store.Update(s => Site(s, origin).AutoDecide = auto);
         SitesChanged?.Invoke();
+        VisitorDecided(origin);
     }
 
     /// <summary>The visitor opened the wallet and saw the held-back requests: the badge goes (the per-site counts stay in Sites).</summary>
@@ -1956,6 +2012,25 @@ public sealed class WalletEngine
     void DropSessions(string origin)
     {
         foreach (var s in _sessions.Values.Where(s => s.Origin == origin).ToList()) _sessions.TryRemove(s.Id, out _);
+        DropLinkDecisions(origin);
+    }
+
+    /// <summary>Forgets the answers to a site's links that wait for the site's welcome. True when there were any.</summary>
+    bool DropLinkDecisions(string origin)
+    {
+        var held = _linkDecisions.Where(d => d.Value.Origin == origin).Select(d => d.Key).ToList();
+        foreach (var id in held) _linkDecisions.TryRemove(id, out _);
+        return held.Count > 0;
+    }
+
+    /// <summary>
+    /// The visitor decided about a site (a Decline, an Allow in a page's window, "decide on my own" switched) while a link's
+    /// answer waited for its welcome: the visitor's decision is the later one, so that answer is dropped and the site's
+    /// link connections end.
+    /// </summary>
+    void VisitorDecided(string origin)
+    {
+        if (DropLinkDecisions(origin)) SiteClosed?.Invoke(origin);
     }
 
     // ------------------------------------------------------------------------------------------------
