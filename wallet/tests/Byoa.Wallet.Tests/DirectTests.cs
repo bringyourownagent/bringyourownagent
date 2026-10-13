@@ -645,20 +645,23 @@ public class DirectTransportTests : IDisposable
         Assert.True(await second!.Welcomed.WaitAsync(TimeSpan.FromSeconds(10)));
         Assert.Equal(Money.ToSpec(0.10m), _engine.FindSite(_site.Origin)!.Budget);
 
-        await first!.Completion.WaitAsync(TimeSpan.FromSeconds(15));              // the first never welcomed: it ends
-        Assert.Equal(Money.ToSpec(0.10m), _engine.FindSite(_site.Origin)!.Budget);   // and its answer went with it
+        // The second Allow replaced the first's answer: the first link ends at once, not at its own welcome timeout (5 s here).
+        await first!.Completion.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.Equal("(close)", (await TestSite.ReceiveAsync(firstSocket))["type"]!.GetValue<string>());
+        Assert.False(await first.Welcomed);
+        Assert.Equal(Money.ToSpec(0.10m), _engine.FindSite(_site.Origin)!.Budget);   // only the second is kept
         await TestSite.SendAsync(secondSocket, Call(1));
         Assert.True((await TestSite.ReceiveAsync(secondSocket))["ok"]!.GetValue<bool>());   // the second grant still works
     }
 
-    /// <summary>The two sockets the site sees for two links, each told apart by the session code in its hello.</summary>
-    async Task<(WebSocket First, WebSocket Second)> SocketsOfTwoLinksAsync(string firstCode)
+    /// <summary>The site's socket of the link with this session code: the sockets of other links that come first are skipped.</summary>
+    async Task<WebSocket> SocketOfAsync(string code)
     {
-        var a = await _site.NextSocketAsync();
-        var aHello = await TestSite.ReceiveAsync(a);
-        var b = await _site.NextSocketAsync();
-        var bHello = await TestSite.ReceiveAsync(b);
-        return aHello["session"]!.GetValue<string>() == firstCode ? (a, b) : (b, a);
+        while (true)
+        {
+            var socket = await _site.NextSocketAsync();
+            if ((await TestSite.ReceiveAsync(socket))["session"]?.GetValue<string>() == code) return socket;
+        }
     }
 
     [Fact]
@@ -681,40 +684,37 @@ public class DirectTransportTests : IDisposable
         var real = await realLink;
         Assert.Equal(["Win a prize: confirm your details", "Family geography game: recognise country names spoken aloud"], _ui.Consents.Select(c => c.Summary));
 
-        var (realSocket, _) = await SocketsOfTwoLinksAsync(realCode);
-        await TestSite.SendAsync(realSocket, _site.Welcome());                    // the site echoes the real link
+        var socket = await SocketOfAsync(realCode);
+        await TestSite.SendAsync(socket, _site.Welcome());                        // the site echoes the real link
         Assert.True(await real!.Welcomed.WaitAsync(TimeSpan.FromSeconds(10)));
         Assert.Equal(SiteStatus.Allowed, _engine.FindSite(_site.Origin)!.Status);
         Assert.Equal("Family geography game: recognise country names spoken aloud", _engine.FindSite(_site.Origin)!.Summary);
 
-        hostileConnection!.Stop("the test is done with it");                      // the hostile link never welcomed
-        await hostileConnection.Completion.WaitAsync(TimeSpan.FromSeconds(10));
+        // The real answer replaced the hostile one (a newer decision): the hostile link ended without a welcome.
+        await hostileConnection!.Completion.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.False(await hostileConnection.Welcomed);
         Assert.Equal("Family geography game: recognise country names spoken aloud", _engine.FindSite(_site.Origin)!.Summary);   // the hostile wording was never stored
     }
 
     [Fact]
     public async Task AFailingSecondLinkDoesNotEndTheFirstLinksGrant()
     {
-        var gate = new TaskCompletionSource<ConsentAnswer>(TaskCreationOptions.RunContinuationsAsynchronously);
-        _ui.ConsentGate = gate;
-        var transport = Transport();
-        var firstCode = TestSite.NewCode();
-        var first = transport.HandleLinkAsync(_site.Link(firstCode));
-        await WaitUntil(() => _ui.Consents.Count == 1);                           // the first link's question is open
-        var second = transport.HandleLinkAsync(_site.Link());                     // a second link for the same site
-        await Task.Delay(200);
-        _ui.ConsentGate = null;
+        // The first link is welcomed first: its answer is stored, and its connection and grant live on.
         _ui.Consent = new ConsentAnswer(true, 0.05m, AutoDecide: false, []);
-        gate.SetResult(new ConsentAnswer(true, 0.05m, AutoDecide: false, []));
-        var firstConnection = await first;
-        var secondConnection = await second;                                      // allowed in its own question, after the first's
-        Assert.Equal(2, _ui.Notices);
-
-        var (firstSocket, secondSocket) = await SocketsOfTwoLinksAsync(firstCode);
-        await TestSite.SendAsync(secondSocket, new JsonObject { ["type"] = "error", ["code"] = "bad-session" });   // the second link fails
-        await secondConnection!.Completion.WaitAsync(TimeSpan.FromSeconds(10));
+        var transport = Transport();
+        var first = await transport.HandleLinkAsync(_site.Link());
+        var firstSocket = await _site.NextSocketAsync();
+        await TestSite.ReceiveAsync(firstSocket);
         await TestSite.SendAsync(firstSocket, _site.Welcome());
-        Assert.True(await firstConnection!.Welcomed.WaitAsync(TimeSpan.FromSeconds(10)));
+        Assert.True(await first!.Welcomed.WaitAsync(TimeSpan.FromSeconds(10)));
+
+        // A second link for the same site fails: its own grant ends with it, and the first link's grant stays.
+        var secondCode = TestSite.NewCode();
+        var second = await transport.HandleLinkAsync(_site.Link(secondCode));     // allowed in its own question
+        Assert.Equal(2, _ui.Notices);
+        var secondSocket = await SocketOfAsync(secondCode);
+        await TestSite.SendAsync(secondSocket, new JsonObject { ["type"] = "error", ["code"] = "bad-session" });   // the second link fails
+        await second!.Completion.WaitAsync(TimeSpan.FromSeconds(10));
         await TestSite.SendAsync(firstSocket, Call(1));
         Assert.True((await TestSite.ReceiveAsync(firstSocket))["ok"]!.GetValue<bool>());   // the first link's grant still works
         Assert.Equal(SiteStatus.Allowed, _engine.FindSite(_site.Origin)!.Status);
@@ -890,6 +890,18 @@ public class DirectTransportTests : IDisposable
         Assert.Equal(0, _site.Accepts);
         Assert.Equal(0, engine.ActiveSessions(_site.Origin));
         Assert.NotEqual(SiteStatus.Allowed, engine.FindSite(_site.Origin)!.Status);
+    }
+
+    [Fact]
+    public async Task ALinksNewerAllowEndsTheOlderLinksAnswerSoItsWelcomeStoresNothing()
+    {
+        _ui.Consent = new ConsentAnswer(true, 0.05m, AutoDecide: false, []);
+        var older = await _engine.RequestViaLinkAsync(_site.Origin, JsonNode.Parse(Clips.GeoManifest)!.AsObject(), userActivation: true);
+        _ui.Consent = new ConsentAnswer(true, 0.10m, AutoDecide: false, []);
+        var newer = await _engine.RequestViaLinkAsync(_site.Origin, JsonNode.Parse(Manifest("0.10 USD"))!.AsObject(), userActivation: true);
+        Assert.True(_engine.ConfirmLinkDecision(newer!["grantId"]!.GetValue<string>()));    // the newer link's welcome comes first
+        Assert.False(_engine.ConfirmLinkDecision(older!["grantId"]!.GetValue<string>()));   // the older link's welcome stores nothing
+        Assert.Equal(Money.ToSpec(0.10m), _engine.FindSite(_site.Origin)!.Budget);
     }
 
     [Fact]

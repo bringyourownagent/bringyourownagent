@@ -112,6 +112,9 @@ public sealed class DirectConnection
     /// <summary>The pairing token from the site's welcome, or the stored one this connection resumes with.</summary>
     public string? Token => _token;
 
+    /// <summary>The grant of a link's answer that this connection waits to have confirmed by the welcome, or null.</summary>
+    internal string? AwaitingGrant => _provisional;
+
     /// <summary>True on the first welcome; false if the connection ended without one.</summary>
     public Task<bool> Welcomed => _welcomed.Task;
 

@@ -34,6 +34,7 @@ public sealed class DirectTransport : IDisposable
         _time = time ?? TimeProvider.System;
         Net = new DirectNet(Options.DevLocal, Options.Resolve);
         engine.SiteClosed += OnSiteClosed;
+        engine.LinkAnswersDropped += OnLinkAnswersDropped;
     }
 
     public WalletEngine Engine { get; }
@@ -181,6 +182,12 @@ public sealed class DirectTransport : IDisposable
         foreach (var c in Connections.Where(c => c.Origin == origin)) c.Stop("the visitor changed the site in the wallet");
     }
 
+    /// <summary>A newer decision dropped link answers that waited for their welcomes: only those link connections end.</summary>
+    void OnLinkAnswersDropped(IReadOnlyList<string> grantIds)
+    {
+        foreach (var c in Connections.Where(c => c.AwaitingGrant is { } id && grantIds.Contains(id))) c.Stop("the visitor decided about the site in the wallet");
+    }
+
     internal void Record(string origin, string outcome, string note) =>
         Engine.Record(new ActivityEntry { Origin = origin, Kind = "link", Via = WalletEngine.ViaLink, Outcome = outcome, Note = note });
 
@@ -198,6 +205,7 @@ public sealed class DirectTransport : IDisposable
         }
 
         Engine.SiteClosed -= OnSiteClosed;
+        Engine.LinkAnswersDropped -= OnLinkAnswersDropped;
         foreach (var c in all) c.Stop("the wallet is closing");
         try
         {

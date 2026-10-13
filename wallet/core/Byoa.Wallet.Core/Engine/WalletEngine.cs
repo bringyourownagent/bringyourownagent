@@ -345,6 +345,12 @@ public sealed class WalletEngine
     /// <summary>Raised with the origin when the visitor revokes or blocks a site: its connections close.</summary>
     public event Action<string>? SiteClosed;
 
+    /// <summary>
+    /// Raised with the grant ids of a site's link answers that a newer decision dropped before their welcomes: only the link
+    /// connections that wait for those answers end, the site's stored grant and pairing stay.
+    /// </summary>
+    public event Action<IReadOnlyList<string>>? LinkAnswersDropped;
+
     JsonNode Status() => new JsonObject
     {
         ["running"] = true,
@@ -544,12 +550,15 @@ public sealed class WalletEngine
             if (via == ViaLink)
             {
                 // A link's Allow is held in memory until the site's welcome echoes the link's manifest (ConfirmLinkDecision).
+                // It is the visitor's newer decision: the answers of the site's other links that still wait are dropped.
+                var replaced = DropLinkDecisions(origin);
+                if (replaced.Count > 0) LinkAnswersDropped?.Invoke(replaced);
                 Decide(site);
                 skills = site.Skills;
             }
             else
             {
-                var dropped = false;
+                IReadOnlyList<string> dropped = [];
                 _store.Update(s =>
                 {
                     var r = Site(s, origin);
@@ -558,7 +567,7 @@ public sealed class WalletEngine
                     dropped = DropLinkDecisions(origin);
                 });
                 SitesChanged?.Invoke();
-                if (dropped) SiteClosed?.Invoke(origin);
+                if (dropped.Count > 0) SiteClosed?.Invoke(origin);
             }
 
             var session = Grant(origin, manifest, skills, answer.Budget);
@@ -895,7 +904,7 @@ public sealed class WalletEngine
     void MarkDeclined(string origin, bool shownAllowed)
     {
         var ends = false;
-        var dropped = false;
+        IReadOnlyList<string> dropped = [];
         _store.Update(s =>
         {
             var r = Site(s, origin);
@@ -910,7 +919,7 @@ public sealed class WalletEngine
             DropSessions(origin);
             SiteClosed?.Invoke(origin);
         }
-        else if (dropped)
+        else if (dropped.Count > 0)
         {
             SiteClosed?.Invoke(origin);
         }
@@ -2034,7 +2043,7 @@ public sealed class WalletEngine
 
     public void SetAutoDecide(string origin, bool auto)
     {
-        var dropped = false;
+        IReadOnlyList<string> dropped = [];
         _store.Update(s =>
         {
             var r = Site(s, origin);
@@ -2043,7 +2052,7 @@ public sealed class WalletEngine
             if (changed) dropped = DropLinkDecisions(origin);
         });
         SitesChanged?.Invoke();
-        if (dropped) SiteClosed?.Invoke(origin);
+        if (dropped.Count > 0) SiteClosed?.Invoke(origin);
     }
 
     /// <summary>The visitor opened the wallet and saw the held-back requests: the badge goes (the per-site counts stay in Sites).</summary>
@@ -2065,7 +2074,7 @@ public sealed class WalletEngine
     /// It is called under the store's lock, in the same update as the visitor's write, so that a welcome either finds its
     /// answer before the decision (and stores it first) or finds it gone.
     /// </summary>
-    bool DropLinkDecisions(string origin)
+    IReadOnlyList<string> DropLinkDecisions(string origin)
     {
         var held = _linkDecisions.Where(d => d.Value.Origin == origin).Select(d => d.Key).ToList();
         foreach (var id in held)
@@ -2074,7 +2083,7 @@ public sealed class WalletEngine
             _sessions.TryRemove(id, out _);
         }
 
-        return held.Count > 0;
+        return held;
     }
 
     // ------------------------------------------------------------------------------------------------
