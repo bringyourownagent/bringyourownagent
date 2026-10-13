@@ -117,6 +117,47 @@ function Write-Text([string]$from, [string]$to, [switch]$Ascii) {
     $encoding = if ($Ascii) { New-Object System.Text.ASCIIEncoding } else { New-Object System.Text.UTF8Encoding($false) }
     [System.IO.File]::WriteAllText($to, $text, $encoding)
 }
+# Copies the license and notice files of the packages the two programs carry into $to, and returns how many it copied.
+# The packages are the ones in the .deps.json files (the runtime included). Some packages add their files through build
+# targets, so they are in no .deps.json file: the Whisper.net runtimes are found in project.assets.json by their content
+# folder. A package with no license file fails the build, unless $noLicenseFile lists it as "id/version".
+function Copy-PackageLicenses([string]$app, [string]$artifacts, [string]$packages, [string]$to, [string[]]$noLicenseFile) {
+    $folders = [ordered]@{}
+    foreach ($deps in 'Byoa.Wallet.deps.json', 'byoa-host.deps.json', 'byoa-mcp.deps.json') {
+        $libraries = (Get-Content -Raw -Path (Join-Path $app $deps) | ConvertFrom-Json).libraries
+        foreach ($library in $libraries.PSObject.Properties) {
+            if ($library.Value.type -notin 'package', 'runtimepack') { continue }
+            $id, $libraryVersion = $library.Name.Split('/')
+            if ($library.Value.type -eq 'runtimepack') { $id = $id -replace '^runtimepack\.', '' }
+            $folder = Join-Path $packages ($id.ToLowerInvariant() + '\' + $libraryVersion.ToLowerInvariant())
+            $folders[$folder] = "$id/$libraryVersion"
+        }
+    }
+    foreach ($assets in Get-ChildItem -LiteralPath $artifacts -Recurse -Filter project.assets.json) {
+        $libraries = (Get-Content -Raw -LiteralPath $assets.FullName | ConvertFrom-Json).libraries
+        foreach ($library in $libraries.PSObject.Properties) {
+            if ($library.Value.type -ne 'package') { continue }
+            $folder = Join-Path $packages ($library.Value.path -replace '/', '\')
+            if (Test-Path -LiteralPath (Join-Path $folder 'content') -PathType Container) { $folders[$folder] = $library.Name }
+        }
+    }
+    $copied = 0
+    foreach ($folder in $folders.Keys) {
+        $name = $folders[$folder]
+        if (-not (Test-Path -LiteralPath $folder)) { throw "Package folder not found: $folder" }
+        $files = @(Get-ChildItem -LiteralPath $folder -File | Where-Object { $_.Name -match '^(LICEN[CS]E|NOTICE|THIRD-PARTY-NOTICES)' })
+        if ($files.Count -eq 0 -and $noLicenseFile -notcontains $name) {
+            throw "$name has no license file in $folder. Use a version that ships one, or list it in make-package.ps1 with where its license text comes from."
+        }
+        foreach ($file in $files) {
+            $target = Join-Path $to ($name -replace '/', '-')
+            New-Item -ItemType Directory -Force -Path $target | Out-Null
+            Copy-Item -LiteralPath $file.FullName -Destination (Join-Path $target $file.Name)
+            $copied++
+        }
+    }
+    return $copied
+}
 
 Write-Host "Staging $stage ..."
 New-Item -ItemType Directory -Force -Path $stage | Out-Null
@@ -132,8 +173,8 @@ Write-Text (Join-Path $packaging 'README.txt') (Join-Path $stage 'README.txt')
 Write-Text (Join-Path $packaging 'THIRD-PARTY-NOTICES.txt') (Join-Path $stage 'THIRD-PARTY-NOTICES.txt')
 Write-Text (Join-Path $repo 'LICENSE') (Join-Path $stage 'LICENSE')
 
-# The license and notice files of every package the two programs carry (their .deps.json files list them, the
-# runtime included), copied as they are from the NuGet packages folder the build used, plus the fonts' license.
+# The license and notice files of every package the two programs carry, copied as they are from the NuGet packages
+# folder the build used (see Copy-PackageLicenses), plus the fonts' license.
 $packages = $env:NUGET_PACKAGES
 if (-not $packages) {
     $line = & dotnet nuget locals global-packages --list | Select-Object -First 1
@@ -141,26 +182,29 @@ if (-not $packages) {
 }
 if (-not $packages -or -not (Test-Path -LiteralPath $packages)) { throw 'The NuGet packages folder was not found (set NUGET_PACKAGES).' }
 $licenses = Join-Path $stage 'licenses'
-$licenseFiles = 0
-$seen = @{}
-foreach ($deps in 'Byoa.Wallet.deps.json', 'byoa-host.deps.json', 'byoa-mcp.deps.json') {
-    $libraries = (Get-Content -Raw -Path (Join-Path $app $deps) | ConvertFrom-Json).libraries
-    foreach ($library in $libraries.PSObject.Properties) {
-        if ($library.Value.type -notin 'package', 'runtimepack') { continue }
-        $id, $libraryVersion = $library.Name.Split('/')
-        if ($library.Value.type -eq 'runtimepack') { $id = $id -replace '^runtimepack\.', '' }
-        $folder = Join-Path $packages ($id.ToLowerInvariant() + '\' + $libraryVersion.ToLowerInvariant())
-        if ($seen.ContainsKey($folder)) { continue }
-        $seen[$folder] = $true
-        if (-not (Test-Path -LiteralPath $folder)) { throw "Package folder not found: $folder" }
-        foreach ($file in Get-ChildItem -LiteralPath $folder -File | Where-Object { $_.Name -match '^(LICEN[CS]E|NOTICE|THIRD-PARTY-NOTICES)' }) {
-            $target = Join-Path $licenses "$id-$libraryVersion"
-            New-Item -ItemType Directory -Force -Path $target | Out-Null
-            Copy-Item -LiteralPath $file.FullName -Destination (Join-Path $target $file.Name)
-            $licenseFiles++
-        }
-    }
-}
+# The packages that have no license file of their own. The line of each one says where its license text comes from;
+# THIRD-PARTY-NOTICES.txt names its license and copyright line as well.
+$noLicenseFile = @(
+    'Avalonia/11.3.22'                                  # MIT: AvaloniaUI/Avalonia licence.md at commit 627ae9e
+    'Avalonia.Desktop/11.3.22'                          # MIT: AvaloniaUI/Avalonia licence.md at commit 627ae9e
+    'Avalonia.FreeDesktop/11.3.22'                      # MIT: AvaloniaUI/Avalonia licence.md at commit 627ae9e
+    'Avalonia.Native/11.3.22'                           # MIT: AvaloniaUI/Avalonia licence.md at commit 627ae9e
+    'Avalonia.Remote.Protocol/11.3.22'                  # MIT: AvaloniaUI/Avalonia licence.md at commit 627ae9e
+    'Avalonia.Skia/11.3.22'                             # MIT: AvaloniaUI/Avalonia licence.md at commit 627ae9e
+    'Avalonia.Themes.Fluent/11.3.22'                    # MIT: AvaloniaUI/Avalonia licence.md at commit 627ae9e
+    'Avalonia.Win32/11.3.22'                            # MIT: AvaloniaUI/Avalonia licence.md at commit 627ae9e
+    'Avalonia.X11/11.3.22'                              # MIT: AvaloniaUI/Avalonia licence.md at commit 627ae9e
+    'MicroCom.Runtime/0.11.0'                           # MIT: kekekeks/MicroCom LICENSE on its master branch
+    'Microsoft.Extensions.AI.Abstractions/10.2.0'       # MIT: dotnet/extensions LICENSE at commit 7c82ecb
+    'org.k2fsa.sherpa.onnx/1.13.8'                      # Apache-2.0: the Apache License 2.0 in LICENSE (k2-fsa/sherpa-onnx at commit dc5583f)
+    'org.k2fsa.sherpa.onnx.runtime.win-x64/1.13.8'      # Apache-2.0: the Apache License 2.0 in LICENSE (k2-fsa/sherpa-onnx at commit dc5583f)
+    'Tmds.DBus.Protocol/0.21.3'                         # MIT: tmds/Tmds.DBus COPYING at commit 8cb04f6
+    'Whisper.net.Runtime/1.9.1'                         # MIT: the LICENSE of Whisper.net, in licenses\Whisper.net-1.9.1
+    'Whisper.net.Runtime.Metal/1.9.1'                   # MIT: the LICENSE of Whisper.net, in licenses\Whisper.net-1.9.1
+    'Whisper.net.Runtime.NoAvx/1.9.1'                   # MIT: the LICENSE of Whisper.net, in licenses\Whisper.net-1.9.1
+    'Whisper.net.Runtime.Vulkan/1.9.1'                  # MIT: the LICENSE of Whisper.net, in licenses\Whisper.net-1.9.1
+)
+$licenseFiles = Copy-PackageLicenses $app $artifacts $packages $licenses $noLicenseFile
 New-Item -ItemType Directory -Force -Path (Join-Path $licenses 'Barlow-fonts') | Out-Null
 Copy-Item -LiteralPath (Join-Path $wallet 'desktop\Byoa.Wallet.Desktop\Assets\Fonts\OFL.txt') -Destination (Join-Path $licenses 'Barlow-fonts\OFL.txt')
 $licenseFiles++
