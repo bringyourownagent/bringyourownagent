@@ -870,6 +870,31 @@ public class DirectTransportTests : IDisposable
     }
 
     [Fact]
+    public async Task AWarmUpThatFailsLeavesNoAnswerAndNoGrantHeld()
+    {
+        var engine = new WalletEngine(new SettingsStore(null), [new WarmingSource("gigaam-v3", languages: ["ru"]) { WarmTime = TimeSpan.FromSeconds(1.5) }, _whisper], _log, _ui, _time);
+        _ui.Consent = new ConsentAnswer(true, 0.05m, AutoDecide: false, []);
+        _ui.FailPreparing = true;                                                 // the window that shows "Preparing your model…" fails
+        Assert.Null(await Transport(engine).HandleLinkAsync(_site.Link()));
+        Assert.Equal(0, engine.ActiveSessions(_site.Origin));                     // nothing is held: no answer, no grant
+        Assert.Equal(0, _site.Accepts);
+    }
+
+    [Fact]
+    public async Task AnAnswerWaitingForTheModelWhenTheWalletClosesGoesNowhere()
+    {
+        var engine = new WalletEngine(new SettingsStore(null), [new WarmingSource("gigaam-v3", languages: ["ru"]) { WarmTime = TimeSpan.FromSeconds(1.5) }, _whisper], _log, _ui, _time);
+        _ui.Consent = new ConsentAnswer(true, 0.05m, AutoDecide: false, []);
+        var transport = Transport(engine);
+        var link = transport.HandleLinkAsync(_site.Link());
+        await WaitUntil(() => _ui.Preparing.Count == 1);                          // the model is still loading
+        transport.Dispose();                                                      // the wallet closes meanwhile
+        Assert.Null(await link.WaitAsync(TimeSpan.FromSeconds(10)));
+        Assert.Equal(0, engine.ActiveSessions(_site.Origin));                     // the answer that came back has no connection to take it
+        Assert.Equal(0, _site.Accepts);
+    }
+
+    [Fact]
     public async Task AnAnswerDroppedAfterItWasGivenGivesNoGrantAndNoCall()
     {
         _ui.Consent = new ConsentAnswer(true, 0.05m, AutoDecide: false, []);

@@ -575,13 +575,22 @@ public sealed class WalletEngine
             if (via == ViaLink) _linkDecisions[session.Id] = new LinkDecision(origin, Decide);
             _prompt.Release();
             released = true;
-            // The page gets its grant once the routed models are loaded, with "Preparing your model…" meanwhile.
-            var waited = await WarmBeforeResolveAsync(session, host, showPreparing: true, ct).ConfigureAwait(false);
-            // The visitor may have decided about the site while the models loaded: then the link gets no grant.
-            if (via == ViaLink && !_linkDecisions.ContainsKey(session.Id)) return Done(entry, "declined", "the visitor decided about the site while the models loaded");
-            entry.Note = "after a click" + (model.PausedNote is not null ? "; resumed" : "") + (model.IsDifference ? "; only the difference was shown" : "")
-                + (answer.AutoDecide ? "; decide on my own from now on" : "") + (via == ViaLink ? "; kept once the site confirms the link" : "") + Ready(waited);
-            return Done(entry, "allowed", null, session.ToResult());
+            try
+            {
+                // The page gets its grant once the routed models are loaded, with "Preparing your model…" meanwhile.
+                var waited = await WarmBeforeResolveAsync(session, host, showPreparing: true, ct).ConfigureAwait(false);
+                // The visitor may have decided about the site while the models loaded: then the link gets no grant.
+                if (via == ViaLink && !_linkDecisions.ContainsKey(session.Id)) return Done(entry, "declined", "the visitor decided about the site while the models loaded");
+                entry.Note = "after a click" + (model.PausedNote is not null ? "; resumed" : "") + (model.IsDifference ? "; only the difference was shown" : "")
+                    + (answer.AutoDecide ? "; decide on my own from now on" : "") + (via == ViaLink ? "; kept once the site confirms the link" : "") + Ready(waited);
+                return Done(entry, "allowed", null, session.ToResult());
+            }
+            catch
+            {
+                // Any other end of the wait hands out no grant: a link's answer then has no connection to take it, so it goes.
+                if (via == ViaLink) DropLinkDecision(session.Id);
+                throw;
+            }
         }
         catch (OperationCanceledException)
         {

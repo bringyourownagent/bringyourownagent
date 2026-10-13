@@ -230,9 +230,13 @@ sealed class ScriptedUi : IWalletUi
     public List<PreparingModel> PreparingUpdates { get; } = [];
     public int PreparingClosed;
 
+    /// <summary>When set, the window that shows "Preparing your model…" fails.</summary>
+    public bool FailPreparing { get; set; }
+
     public IDisposable ShowPreparing(PreparingModel model)
     {
         lock (Preparing) Preparing.Add(model);
+        if (FailPreparing) throw new InvalidOperationException("the window failed");
         return new Closer(this);
     }
 

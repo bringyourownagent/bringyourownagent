@@ -111,8 +111,9 @@ public sealed class DirectTransport : IDisposable
         var answer = await Engine.RequestViaLinkAsync(origin, link.ManifestJson, userActivation, ct).ConfigureAwait(false);
         if (GrantOf(answer) is not { } grant) return null;
         var connection = new DirectConnection(this, origin, link.Endpoint, link.Manifest, link.Session, token: null, grant);
-        Add(connection);
-        return connection;
+        if (Add(connection)) return connection;
+        Engine.DropLinkDecision(grant.Id);                  // the wallet is closing: the link's answer and its grant go unused
+        return null;
     }
 
     /// <summary>At start: reconnects to the sites whose pairing is stored and that keep "decide on my own".</summary>
@@ -153,12 +154,13 @@ public sealed class DirectTransport : IDisposable
     GrantSession? GrantOf(JsonNode? answer) =>
         answer is JsonObject o && o["grantId"] is JsonValue v && v.TryGetValue<string>(out var id) ? Engine.FindGrant(id) : null;
 
-    void Add(DirectConnection connection)
+    /// <summary>Takes a connection and starts it. False, and nothing started, once the transport is disposed.</summary>
+    bool Add(DirectConnection connection)
     {
         List<DirectConnection> replaced;
         lock (_gate)
         {
-            if (_disposed) return;
+            if (_disposed) return false;
             var same = _connections.Where(c => c.Origin == connection.Origin).ToList();
             replaced = same.Take(Math.Max(0, same.Count - Options.MaxConnectionsPerOrigin + 1)).ToList();
             _connections.Add(connection);
@@ -167,6 +169,7 @@ public sealed class DirectTransport : IDisposable
         foreach (var old in replaced) old.Stop("replaced by a newer connection to the same site");
         connection.Start();
         OnChanged();
+        return true;
     }
 
     internal void Remove(DirectConnection connection)
