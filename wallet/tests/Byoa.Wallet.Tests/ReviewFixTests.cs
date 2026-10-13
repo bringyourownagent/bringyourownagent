@@ -303,6 +303,8 @@ public class ReviewFixTests
 
         Assert.Contains("Copy-FileIfPresent (Join-Path $root 'LICENSE')", script, StringComparison.Ordinal);
         Assert.Contains("Copy-FileIfPresent (Join-Path $root 'THIRD-PARTY-NOTICES.txt')", script, StringComparison.Ordinal);
+        Assert.Contains("Copy-FileIfPresent (Join-Path $root 'NOTICE')", script, StringComparison.Ordinal);
+        Assert.Contains("Copy-FileIfPresent (Join-Path $repo 'NOTICE')", script, StringComparison.Ordinal);
         Assert.Contains("Copy-Folder $packageLicenses", script, StringComparison.Ordinal);
         Assert.Contains("$root 'packaging\\THIRD-PARTY-NOTICES.txt'", script, StringComparison.Ordinal);
         Assert.Contains("Copied $copied files.", script, StringComparison.Ordinal);

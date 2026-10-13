@@ -130,6 +130,7 @@ if ($FromPackage) {
     # other visitor files.
     $copied += Copy-FileIfPresent (Join-Path $root 'LICENSE') (Join-Path $InstallDir 'LICENSE')
     $copied += Copy-FileIfPresent (Join-Path $root 'THIRD-PARTY-NOTICES.txt') (Join-Path $InstallDir 'THIRD-PARTY-NOTICES.txt')
+    $copied += Copy-FileIfPresent (Join-Path $root 'NOTICE') (Join-Path $InstallDir 'NOTICE')
     $packageLicenses = Join-Path $root 'licenses'
     if (Test-Path -LiteralPath $packageLicenses -PathType Container) {
         $copied += Copy-Folder $packageLicenses (Join-Path $InstallDir 'licenses')
@@ -151,6 +152,7 @@ if ($FromPackage) {
     # scripts. Copy only files that exist; source installs do not require a generated licenses folder.
     $copied += Copy-FileIfPresent (Join-Path $repo 'LICENSE') (Join-Path $InstallDir 'LICENSE')
     $copied += Copy-FileIfPresent (Join-Path $root 'packaging\THIRD-PARTY-NOTICES.txt') (Join-Path $InstallDir 'THIRD-PARTY-NOTICES.txt')
+    $copied += Copy-FileIfPresent (Join-Path $repo 'NOTICE') (Join-Path $InstallDir 'NOTICE')
     Write-Host "Copied $copied license files."
 }
 

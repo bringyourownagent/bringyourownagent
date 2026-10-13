@@ -17,8 +17,9 @@
          Uninstall.cmd
          README.txt            what it is, how to install, SmartScreen, where data lives, how to remove it
          LICENSE               Apache License 2.0
+         NOTICE                the project's notice file (Apache style)
          THIRD-PARTY-NOTICES.txt
-         licenses\             the license and notice files of the packages inside app\, and of the fonts
+         licenses\             the license and notice files of the packages inside app\, of the fonts and of ONNX Runtime
     3. Zips it (the folder is the zip's single top folder, entries with forward slashes) into
        <OutDir>\byoa-wallet-<version>-win-x64.zip, writes <zip>.sha256 ("<sha256>  <file name>") next to it and
        prints the size and the SHA-256.
@@ -172,6 +173,7 @@ Write-Text (Join-Path $packaging 'Uninstall.cmd') (Join-Path $stage 'Uninstall.c
 Write-Text (Join-Path $packaging 'README.txt') (Join-Path $stage 'README.txt')
 Write-Text (Join-Path $packaging 'THIRD-PARTY-NOTICES.txt') (Join-Path $stage 'THIRD-PARTY-NOTICES.txt')
 Write-Text (Join-Path $repo 'LICENSE') (Join-Path $stage 'LICENSE')
+Write-Text (Join-Path $repo 'NOTICE') (Join-Path $stage 'NOTICE')
 
 # The license and notice files of every package the two programs carry, copied as they are from the NuGet packages
 # folder the build used (see Copy-PackageLicenses), plus the fonts' license.
@@ -205,6 +207,11 @@ $noLicenseFile = @(
     'Whisper.net.Runtime.Vulkan/1.9.1'                  # MIT: the LICENSE of Whisper.net, in licenses\Whisper.net-1.9.1
 )
 $licenseFiles = Copy-PackageLicenses $app $artifacts $packages $licenses $noLicenseFile
+# The license of ONNX Runtime (onnxruntime.dll of the sherpa-onnx runtime package, version 1.28.2), as published upstream.
+$ortLicenses = Join-Path $licenses 'onnxruntime-1.28.2'
+New-Item -ItemType Directory -Force -Path $ortLicenses | Out-Null
+Copy-Item -LiteralPath (Join-Path $packaging 'licenses\onnxruntime-1.28.2\LICENSE') -Destination (Join-Path $ortLicenses 'LICENSE')
+$licenseFiles++
 New-Item -ItemType Directory -Force -Path (Join-Path $licenses 'Barlow-fonts') | Out-Null
 Copy-Item -LiteralPath (Join-Path $wallet 'desktop\Byoa.Wallet.Desktop\Assets\Fonts\OFL.txt') -Destination (Join-Path $licenses 'Barlow-fonts\OFL.txt')
 $licenseFiles++
