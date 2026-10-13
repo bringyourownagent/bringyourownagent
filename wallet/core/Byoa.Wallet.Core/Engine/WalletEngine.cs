@@ -567,7 +567,7 @@ public sealed class WalletEngine
                     dropped = DropLinkDecisions(origin);
                 });
                 SitesChanged?.Invoke();
-                if (dropped.Count > 0) SiteClosed?.Invoke(origin);
+                if (dropped.Count > 0) LinkAnswersDropped?.Invoke(dropped);
             }
 
             var session = Grant(origin, manifest, skills, answer.Budget);
@@ -921,7 +921,7 @@ public sealed class WalletEngine
         }
         else if (dropped.Count > 0)
         {
-            SiteClosed?.Invoke(origin);
+            LinkAnswersDropped?.Invoke(dropped);
         }
     }
 
@@ -2052,7 +2052,7 @@ public sealed class WalletEngine
             if (changed) dropped = DropLinkDecisions(origin);
         });
         SitesChanged?.Invoke();
-        if (dropped.Count > 0) SiteClosed?.Invoke(origin);
+        if (dropped.Count > 0) LinkAnswersDropped?.Invoke(dropped);
     }
 
     /// <summary>The visitor opened the wallet and saw the held-back requests: the badge goes (the per-site counts stay in Sites).</summary>

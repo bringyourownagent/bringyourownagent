@@ -821,7 +821,24 @@ public class DirectTransportTests : IDisposable
         await connection!.Completion.WaitAsync(TimeSpan.FromSeconds(10));
         Assert.Equal(SiteStatus.Declined, _engine.FindSite(_site.Origin)!.Status);   // the later decision stands
         Assert.Null(_pairings.Get(_site.Origin));
-        Assert.Equal("the visitor changed the site in the wallet", Links.First(e => e.Outcome == "closed").Note);
+        Assert.Equal("the visitor decided about the site in the wallet", Links.First(e => e.Outcome == "closed").Note);
+    }
+
+    [Fact]
+    public async Task APagesAllowDropsALinksWaitingAnswerButNotThePairedSitesConnectionOrPairing()
+    {
+        var (_, paired, pairedSocket, _) = await PairAsync(auto: true);          // a paired site with a live connection
+        _ui.Consent = new ConsentAnswer(true, 0.60m, AutoDecide: true, []);
+        var link = await Transport().HandleLinkAsync(LinkWith(Manifest("0.60 USD")));   // a link for it asks for more: its answer waits
+        var linkSocket = await _site.NextSocketAsync();
+        await TestSite.ReceiveAsync(linkSocket);                                  // the hello, no welcome yet
+        Assert.NotNull(await _engine.HandleAsync(Clips.Request(_site.Origin, click: true, Manifest("0.60 USD"))));   // the visitor allows it in the page's window
+        Assert.Equal("(close)", (await TestSite.ReceiveAsync(linkSocket))["type"]!.GetValue<string>());   // the link's answer ends with its connection
+        await link!.Completion.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.NotNull(_pairings.Get(_site.Origin));                              // the paired site keeps its pairing
+        Assert.Equal(DirectState.Connected, paired.State);                        // and its connection
+        await TestSite.SendAsync(pairedSocket, Call(5));
+        Assert.True((await TestSite.ReceiveAsync(pairedSocket))["ok"]!.GetValue<bool>());
     }
 
     [Fact]
