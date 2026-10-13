@@ -12,7 +12,7 @@ namespace Byoa.Wallet.Desktop;
 sealed class AgentConsentWindow : Window
 {
     readonly TaskCompletionSource<AgentConsentAnswer> _answer = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    readonly CheckBox _full = new() { Content = "Full access (site names and access, limits, built-in sources, API keys)", IsChecked = false };
+    readonly CheckBox _full = new() { Content = "Full access (sites, limits, built-in sources, agent-supplied keys)", IsChecked = false };
     bool _closed;
 
     public AgentConsentWindow(AgentConsentModel model, Func<int>? waitingCount = null)
@@ -39,7 +39,7 @@ sealed class AgentConsentWindow : Window
             : Ui.Text("", "small");
         _full.IsVisible = model.FullAccessAllowed;
         var accessNote = model.FullAccessAllowed
-            ? "Without Full access it cannot see site names, change site access or limits, switch built-in sources, or write or remove API keys. Even with Full access, no tool lets it allow a site, approve a paid call or approve another agent."
+            ? "Without Full access it cannot see site names, change site access or limits, switch built-in sources, or supply or remove API keys. Even with Full access, no tool lets it allow a site, approve a paid call or approve another agent."
             : null;
         var body = Ui.Column(12,
             Ui.Row(12, Ui.Tile(Ui.Screen, 38), startedBy),

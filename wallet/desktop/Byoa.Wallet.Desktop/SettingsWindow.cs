@@ -932,7 +932,7 @@ sealed class SettingsWindow : Window
 
     void AgentsPage(StackPanel page)
     {
-        Head(page, "Agents", "AI agents can manage sources and routes by default. Full access is a separate switch for site names and access, limits, built-in sources and API keys. No tool lets an agent allow a site, approve a paid call or approve another agent.");
+        Head(page, "Agents", "AI agents can manage sources and routes by default. Full access is a separate switch for site names and access, limits, built-in sources and agent-supplied keys. No tool lets an agent allow a site, approve a paid call or approve another agent.");
         var agents = _w.Store.Snapshot().Agents.OrderByDescending(a => a.LastUsed ?? DateTimeOffset.MinValue).ToList();
         if (agents.Count == 0)
         {
