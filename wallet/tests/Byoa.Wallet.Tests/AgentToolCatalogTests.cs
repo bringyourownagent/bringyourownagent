@@ -1,4 +1,5 @@
 using Byoa.Wallet.Desktop;
+using Byoa.Wallet.Help;
 using Byoa.Wallet.Mcp;
 
 namespace Byoa.Wallet.Tests;
@@ -28,5 +29,13 @@ public sealed class AgentToolCatalogTests
     {
         Assert.True(AgentPipeServer.RequiresFullAccess(name));
         Assert.True(AgentPipeServer.IsClassifiedTool(name));
+    }
+
+    [Fact]
+    public void TheAgentHelpNamesEveryToolThatNeedsFullAccess()
+    {
+        var help = HelpCatalog.Get("agents");
+        foreach (var name in AgentPipeServer.ClassifiedTools.Where(AgentPipeServer.RequiresFullAccess))
+            Assert.Contains("`" + name + "`", help, StringComparison.Ordinal);
     }
 }
