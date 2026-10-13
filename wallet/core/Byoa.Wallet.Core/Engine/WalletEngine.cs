@@ -153,6 +153,9 @@ public sealed class WalletEngine
         _sessions.TryRemove(grantId, out _);
     }
 
+    /// <summary>True while a link's answer with this grant waits for the site's welcome.</summary>
+    public bool HoldsLinkDecision(string grantId) => _linkDecisions.ContainsKey(grantId);
+
     async Task<JsonNode?> GuardedAsync(string type, string origin, string? via, Func<Task<JsonNode?>> work)
     {
         try
@@ -395,17 +398,18 @@ public sealed class WalletEngine
             return Done(entry, "held", "without a click: quiet badge only");
         }
 
-        // A second request from the same origin while the first is still asking gets the same answer. The question
+        // A second page request from the same origin while the first is still asking gets the same answer. The question
         // has its own token: it is cancelled only when every page waiting for it has gone, not when the first one has.
+        // A link never shares: its answer belongs to its own manifest and connection, so each link asks on its own.
         SharedAsk ask;
         lock (_askGate)
         {
             // An answered question stays in the table until its continuation removes it: a request in that moment
             // asks anew instead of taking the old answer.
-            if (!_asking.TryGetValue(origin, out ask!) || ask.Answer.IsCompleted)
+            if (via is not null || !_asking.TryGetValue(origin, out ask!) || ask.Answer.IsCompleted)
             {
                 ask = new SharedAsk();
-                _asking[origin] = ask;
+                if (via is null) _asking[origin] = ask;
                 var shared = ask;
                 ask.Answer = AskVisitorAsync(origin, host, secure, manifest, via, ask.Cancel.Token);
                 ask.Answer.ContinueWith(_ =>

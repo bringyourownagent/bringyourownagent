@@ -98,7 +98,8 @@ public sealed class DirectConnection
         _session = session;
         _token = token;
         _grant = grant;
-        _provisional = session is null ? null : grant?.Id;
+        // Only a link's answer that the engine holds for this grant is this connection's to drop; a silent grant has none.
+        _provisional = session is not null && grant is not null && owner.Engine.HoldsLinkDecision(grant.Id) ? grant.Id : null;
     }
 
     public string Origin { get; }

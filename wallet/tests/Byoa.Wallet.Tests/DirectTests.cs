@@ -651,6 +651,125 @@ public class DirectTransportTests : IDisposable
         Assert.True((await TestSite.ReceiveAsync(secondSocket))["ok"]!.GetValue<bool>());   // the second grant still works
     }
 
+    /// <summary>The two sockets the site sees for two links, each told apart by the session code in its hello.</summary>
+    async Task<(WebSocket First, WebSocket Second)> SocketsOfTwoLinksAsync(string firstCode)
+    {
+        var a = await _site.NextSocketAsync();
+        var aHello = await TestSite.ReceiveAsync(a);
+        var b = await _site.NextSocketAsync();
+        var bHello = await TestSite.ReceiveAsync(b);
+        return aHello["session"]!.GetValue<string>() == firstCode ? (a, b) : (b, a);
+    }
+
+    [Fact]
+    public async Task AHostileLinkFirstDoesNotLendItsWordingToTheRealLinkThatFollows()
+    {
+        var hostile = Clips.GeoManifest.Replace("Family geography game: recognise country names spoken aloud", "Win a prize: confirm your details");
+        var gate = new TaskCompletionSource<ConsentAnswer>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _ui.ConsentGate = gate;
+        var transport = Transport();
+        var hostileLink = transport.HandleLinkAsync(LinkWith(hostile));           // the same site, with its words
+        await WaitUntil(() => _ui.Consents.Count == 1);                           // the hostile link's question is open
+        _ui.ConsentGate = null;
+        _ui.Consent = new ConsentAnswer(true, 0.05m, AutoDecide: false, []);
+        var realCode = TestSite.NewCode();
+        var realLink = transport.HandleLinkAsync(_site.Link(realCode));           // the real link follows: its own question
+        await Task.Delay(200);
+        Assert.Equal(1, _ui.Notices);
+        gate.SetResult(new ConsentAnswer(true, 0.05m, AutoDecide: false, []));    // the visitor allows the hostile link's window
+        var hostileConnection = await hostileLink;
+        var real = await realLink;
+        Assert.Equal(["Win a prize: confirm your details", "Family geography game: recognise country names spoken aloud"], _ui.Consents.Select(c => c.Summary));
+
+        var (realSocket, _) = await SocketsOfTwoLinksAsync(realCode);
+        await TestSite.SendAsync(realSocket, _site.Welcome());                    // the site echoes the real link
+        Assert.True(await real!.Welcomed.WaitAsync(TimeSpan.FromSeconds(10)));
+        Assert.Equal(SiteStatus.Allowed, _engine.FindSite(_site.Origin)!.Status);
+        Assert.Equal("Family geography game: recognise country names spoken aloud", _engine.FindSite(_site.Origin)!.Summary);
+
+        hostileConnection!.Stop("the test is done with it");                      // the hostile link never welcomed
+        await hostileConnection.Completion.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal("Family geography game: recognise country names spoken aloud", _engine.FindSite(_site.Origin)!.Summary);   // the hostile wording was never stored
+    }
+
+    [Fact]
+    public async Task AFailingSecondLinkDoesNotEndTheFirstLinksGrant()
+    {
+        var gate = new TaskCompletionSource<ConsentAnswer>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _ui.ConsentGate = gate;
+        var transport = Transport();
+        var firstCode = TestSite.NewCode();
+        var first = transport.HandleLinkAsync(_site.Link(firstCode));
+        await WaitUntil(() => _ui.Consents.Count == 1);                           // the first link's question is open
+        var second = transport.HandleLinkAsync(_site.Link());                     // a second link for the same site
+        await Task.Delay(200);
+        _ui.ConsentGate = null;
+        _ui.Consent = new ConsentAnswer(true, 0.05m, AutoDecide: false, []);
+        gate.SetResult(new ConsentAnswer(true, 0.05m, AutoDecide: false, []));
+        var firstConnection = await first;
+        var secondConnection = await second;                                      // allowed in its own question, after the first's
+        Assert.Equal(2, _ui.Notices);
+
+        var (firstSocket, secondSocket) = await SocketsOfTwoLinksAsync(firstCode);
+        await TestSite.SendAsync(secondSocket, new JsonObject { ["type"] = "error", ["code"] = "bad-session" });   // the second link fails
+        await secondConnection!.Completion.WaitAsync(TimeSpan.FromSeconds(10));
+        await TestSite.SendAsync(firstSocket, _site.Welcome());
+        Assert.True(await firstConnection!.Welcomed.WaitAsync(TimeSpan.FromSeconds(10)));
+        await TestSite.SendAsync(firstSocket, Call(1));
+        Assert.True((await TestSite.ReceiveAsync(firstSocket))["ok"]!.GetValue<bool>());   // the first link's grant still works
+        Assert.Equal(SiteStatus.Allowed, _engine.FindSite(_site.Origin)!.Status);
+    }
+
+    [Fact]
+    public async Task APageRequestNeverTakesALinksAnswerThatIsStillWaiting()
+    {
+        var gate = new TaskCompletionSource<ConsentAnswer>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _ui.ConsentGate = gate;
+        var transport = Transport();
+        var link = transport.HandleLinkAsync(_site.Link());
+        await WaitUntil(() => _ui.Consents.Count == 1);                           // the link's question is open
+        _ui.ConsentGate = null;
+        _ui.Notice = NoticeAnswer.Closed;                                         // the page's own notice: the visitor closes it
+        var page = _engine.HandleAsync(Clips.Request(_site.Origin, click: true, _site.Manifest));
+        await Task.Delay(200);
+        Assert.Equal(1, _ui.Notices);                                             // the page does not join the link's question
+        gate.SetResult(new ConsentAnswer(true, 0.05m, AutoDecide: false, []));
+        Assert.Null(await page.WaitAsync(TimeSpan.FromSeconds(10)));              // the page gets no answer of the link's
+        Assert.Equal(2, _ui.Notices);
+
+        var connection = await link;
+        var socket = await _site.NextSocketAsync();
+        await TestSite.ReceiveAsync(socket);
+        await TestSite.SendAsync(socket, _site.Welcome());
+        Assert.True(await connection!.Welcomed.WaitAsync(TimeSpan.FromSeconds(10)));
+        Assert.Equal(SiteStatus.Allowed, _engine.FindSite(_site.Origin)!.Status);   // the link's answer was kept
+    }
+
+    [Fact]
+    public async Task ALinkNeverTakesAPagesQuestionAndItsFailureLeavesThePagesGrantAlone()
+    {
+        var gate = new TaskCompletionSource<ConsentAnswer>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _ui.ConsentGate = gate;
+        var page = _engine.HandleAsync(Clips.Request(_site.Origin, click: true, _site.Manifest));
+        await WaitUntil(() => _ui.Consents.Count == 1);                           // the page's question is open
+        _ui.ConsentGate = null;
+        var linkCode = TestSite.NewCode();
+        var link = Transport().HandleLinkAsync(_site.Link(linkCode));             // the same site, while the page's question is open
+        await Task.Delay(200);
+        gate.SetResult(new ConsentAnswer(true, 0.05m, AutoDecide: false, []));
+        var grant = (await page.WaitAsync(TimeSpan.FromSeconds(10)))!["grantId"]!.GetValue<string>();
+        var connection = await link;                                              // the link asked on its own, after the page's answer
+        Assert.Equal(2, _ui.Notices);
+
+        var socket = await _site.NextSocketAsync();
+        Assert.Equal(linkCode, (await TestSite.ReceiveAsync(socket))["session"]!.GetValue<string>());
+        await TestSite.SendAsync(socket, new JsonObject { ["type"] = "error", ["code"] = "bad-session" });   // the link fails
+        await connection!.Completion.WaitAsync(TimeSpan.FromSeconds(10));
+
+        var answer = await _engine.HandleAsync(Clips.Call(_site.Origin, grant));
+        Assert.True(answer!["ok"]!.GetValue<bool>());                             // the page's grant still works
+    }
+
     [Fact]
     public async Task AHostileLinkWithAManifestTheRealServerNeverIssuedStoresNothing()
     {
@@ -663,7 +782,10 @@ public class DirectTransportTests : IDisposable
         await TestSite.SendAsync(socket, _site.Welcome());                        // the real server answers with its own manifest
         Assert.Equal("bye", (await TestSite.ReceiveAsync(socket))["type"]!.GetValue<string>());
         await connection!.Completion.WaitAsync(TimeSpan.FromSeconds(10));
-        Assert.Equal(SiteStatus.None, _engine.FindSite(_site.Origin)!.Status);
+        var site = _engine.FindSite(_site.Origin)!;
+        Assert.Equal(SiteStatus.None, site.Status);
+        Assert.Null(site.Summary);                                                // nothing of the hostile link is stored
+        Assert.DoesNotContain(_log.Recent(), e => e.Outcome == "revoked");
         Assert.Null(_pairings.Get(_site.Origin));
         Assert.Equal(0, _giga.Calls);
     }
@@ -1069,7 +1191,7 @@ public class DirectTransportTests : IDisposable
         Assert.Equal(6, Links.Count(e => e.Note == "too many links at once"));
         _ui.ConsentGate.SetResult(ConsentAnswer.Declined);
         await Task.WhenAll(links).WaitAsync(TimeSpan.FromSeconds(10));
-        Assert.Equal(1, _ui.Notices);                                              // the four that were let in shared one question
+        Assert.Equal(4, _ui.Notices);                                              // the four that were let in each asked in turn: a link never shares a question
     }
 
     [Fact]
