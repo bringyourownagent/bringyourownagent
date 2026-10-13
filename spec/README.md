@@ -33,3 +33,20 @@ A first draft of the machine-checkable rules (manifest checks and the call gate)
 - [rules-0.1-draft.md](rules-0.1-draft.md): the machine-checkable rules (manifest checks and the call gate).
 - [CONTRACT.md](CONTRACT.md): how a web page, a browser extension and a desktop wallet talk (`window.byoa`, the skills `audio.transcribe` and `text.generate`, the extension and native host messages).
 - [CONTRACT-DIRECT.md](CONTRACT-DIRECT.md): the second way, without an extension: a `bringyourownagent://` link that starts the wallet, then a channel from the wallet to the site's server.
+
+## Which text binds
+
+All four documents are drafts. Within a draft, each has a status:
+
+| Document | Status | What binds |
+|---|---|---|
+| [spec-0.1-draft.md](spec-0.1-draft.md) | normative (draft): overview and obligations | The obligations of a wallet and of a requester, where it says "conforming". The sections that name no obligation explain and are informative. |
+| [rules-0.1-draft.md](rules-0.1-draft.md) | normative (draft) | Every rule with a code. The shared test vectors in [`../sdk/test-vectors/`](../sdk/test-vectors/) are the executable form of these rules: the three libraries pass the same vectors, and a disagreement between text and vectors is a bug in one of them. |
+| [CONTRACT.md](CONTRACT.md) | normative (draft) for the extension binding | The page API, the messages between the extension, the native host and the wallet, and the skills. The rules win for anything the rules cover. |
+| [CONTRACT-DIRECT.md](CONTRACT-DIRECT.md) | normative (draft) for the direct link | The link, what happens before Allow, the channel and the error codes, and what a site has to do. |
+
+**Informative, whatever document they are in:** how the reference wallet is installed and registered (CONTRACT.md section 4 "Install", CONTRACT-DIRECT.md
+section 2 "Registration"), the examples, the sizes and times marked as "sensible limits", and every sentence that says what the reference wallet
+currently does rather than what a wallet must do. Where a companion and the overview disagree, the companion wins.
+
+A disagreement between these texts and the reference wallet or the libraries is a bug in one of them. Please open an issue and say which.
