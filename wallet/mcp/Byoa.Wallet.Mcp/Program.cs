@@ -392,6 +392,7 @@ sealed class AgentPipeClient : IDisposable
             {
                 ["type"] = AgentPipeProtocol.Hello,
                 ["name"] = clientName,
+                ["version"] = WalletPaths.Version,                  // so that a later wallet can tell an older bridge from a newer one
                 ["executablePath"] = Environment.ProcessPath,
             };
             await Framing.WriteAsync(pipe, AgentPipeProtocol.Serialize(hello), ct).ConfigureAwait(false);

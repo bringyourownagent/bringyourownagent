@@ -148,6 +148,7 @@ sealed class AgentPipeServer : IDisposable
             {
                 ["type"] = AgentPipeProtocol.Response,
                 ["id"] = "hello",
+                ["version"] = WalletPaths.Version,                  // so that a later bridge can tell an older wallet from a newer one
                 ["ok"] = access.Allowed,
                 ["fullAccess"] = access.FullAccess,
                 ["error"] = access.Allowed ? null : access.Error,
