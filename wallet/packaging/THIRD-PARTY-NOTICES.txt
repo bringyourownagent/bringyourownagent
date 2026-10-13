@@ -7,37 +7,59 @@ below, each under its own license. The license and notice files that come with t
 
 Component                                    License             Copyright / authors
 -------------------------------------------  ------------------  ---------------------------------------------------
-.NET runtime 10 (Microsoft.NETCore.App)      MIT                 .NET Foundation and Contributors
+.NET runtime 10 (Microsoft.NETCore.App)      MIT                 Copyright (c) .NET Foundation and Contributors
   with its own third-party notices (licenses\Microsoft.NETCore.App.Runtime.win-x64-*\THIRD-PARTY-NOTICES.TXT)
-System.Security.Cryptography.ProtectedData   MIT                 .NET Foundation and Contributors
-Microsoft.Extensions.AI.Abstractions         MIT                 .NET Foundation and Contributors
-Avalonia 11 (Avalonia.*)                     MIT                 The AvaloniaUI Project
-Avalonia.Angle.Windows.Natives (ANGLE)       BSD-3-Clause        The ANGLE Project Authors
-SkiaSharp, with Skia and its dependencies    MIT; Skia BSD-3     Microsoft Corporation; Google Inc. and others
-HarfBuzzSharp, with HarfBuzz                 MIT; HarfBuzz MIT   Microsoft Corporation; the HarfBuzz authors
-MicroCom.Runtime                             MIT                 Nikita Tsukanov
-Tmds.DBus.Protocol                           MIT                 Tom Deseyn
-Whisper.net and its native runtimes          MIT                 Sandro Hanea
-  whisper.cpp and ggml (inside them)         MIT                 Georgi Gerganov and the ggml authors
-sherpa-onnx (org.k2fsa.sherpa.onnx)          Apache-2.0          Xiaomi Corporation and the Next-gen Kaldi team
-  ONNX Runtime (onnxruntime.dll)             MIT                 Microsoft Corporation
+System.Security.Cryptography.ProtectedData   MIT                 Copyright (c) .NET Foundation and Contributors
+Microsoft.Extensions.AI.Abstractions         MIT                 Copyright (c) .NET Foundation. All rights reserved.
+Avalonia 11 (Avalonia.*)                     MIT                 Copyright (c) AvaloniaUI OU
+Avalonia.Angle.Windows.Natives (ANGLE)       BSD-3-Clause        Copyright 2018 The ANGLE Project Authors
+SkiaSharp, with Skia and its dependencies    MIT; Skia BSD-3     Copyright (c) 2015-2016 Xamarin, Inc.;
+                                                                 Copyright (c) 2017-2018 Microsoft Corporation;
+                                                                 Skia: Copyright (c) 2011 Google Inc.
+HarfBuzzSharp, with HarfBuzz                 MIT; HarfBuzz       Copyright (c) 2015-2016 Xamarin, Inc.;
+                                             "Old MIT"           Copyright (c) 2017-2018 Microsoft Corporation;
+                                                                 HarfBuzz: see licenses\SkiaSharp-2.88.9\THIRD-PARTY-NOTICES.txt
+MicroCom.Runtime                             MIT                 Copyright (c) 2021 Nikita Tsukanov
+Tmds.DBus.Protocol                           MIT                 Copyright 2006 Alp Toker; 2010 Other Contributors;
+                                                                 2016 Tom Deseyn
+Whisper.net and its runtime packages         MIT                 Copyright (c) 2024 sandrohanea
+  Whisper.Net.Runtime, .NoAvx and .Vulkan: the native runtimes, under the same license
+  whisper.cpp and ggml (inside the native runtimes)  MIT         The ggml authors
+sherpa-onnx (org.k2fsa.sherpa.onnx)          Apache-2.0          Copyright 2019-2023 Xiaomi Corporation
+  ONNX Runtime (onnxruntime.dll, version 1.28.2)  MIT           Copyright (c) Microsoft Corporation
+  its license is in licenses\onnxruntime-1.28.2\LICENSE; its own third-party notices are not in this package
 BringYourOwnAgent (the BYOA rules library)   Apache-2.0          the BYOA project
-Barlow fonts (inside Byoa.Wallet.dll)        SIL OFL 1.1         The Barlow Project Authors
+Barlow fonts (inside Byoa.Wallet.dll)        SIL OFL 1.1         Copyright 2017 The Barlow Project Authors
 
-Sources:
+Where the license text of a component is not in the package, it is published here (the version the package uses):
   .NET           https://github.com/dotnet/runtime
-  Avalonia       https://github.com/AvaloniaUI/Avalonia
+  Avalonia       https://github.com/AvaloniaUI/Avalonia/blob/627ae9ef921621e27e7aa58df2796fbadb50af88/licence.md
+  ANGLE          https://github.com/AvaloniaUI/angle
   SkiaSharp      https://github.com/mono/SkiaSharp
-  MicroCom       https://github.com/kekekeks/MicroCom
-  Tmds.DBus      https://github.com/tmds/Tmds.DBus
+  HarfBuzz       https://github.com/harfbuzz/harfbuzz
+  MicroCom       https://github.com/kekekeks/MicroCom/blob/master/LICENSE
+  Tmds.DBus      https://github.com/tmds/Tmds.DBus/blob/8cb04f66c330b64244e996ff68f685f27f7381a0/COPYING
+  Microsoft.Extensions.AI
+                 https://github.com/dotnet/extensions/blob/7c82ecb60925d76e53b65e290a33bef46f285cae/LICENSE
   Whisper.net    https://github.com/sandrohanea/whisper.net
-  whisper.cpp    https://github.com/ggml-org/whisper.cpp
-  sherpa-onnx    https://github.com/k2-fsa/sherpa-onnx
-  ONNX Runtime   https://github.com/microsoft/onnxruntime
+  whisper.cpp    https://github.com/ggml-org/whisper.cpp/blob/master/LICENSE
+  sherpa-onnx    https://github.com/k2-fsa/sherpa-onnx/blob/dc5583f49917e4c95f6e7d862bb378e4ed5e9076/LICENSE
+                 (its Apache-2.0 text is the same as LICENSE of this package)
+  ONNX Runtime   https://github.com/microsoft/onnxruntime/blob/v1.28.2/ThirdPartyNotices.txt
+                 (its full third-party notices, not in this package)
   Barlow         https://github.com/jpt/barlow
 
-No model weights are included. Whisper models are downloaded on first use from Hugging Face (ggerganov/whisper.cpp,
-MIT); GigaAM is used only from a folder the visitor already has.
+Models the wallet downloads on request (not in this package; no model weights are included here):
+
+  GigaAM v3 (Russian speech, CPU)    MIT    Copyright (c) 2024 GigaChat Team
+    Source: https://github.com/salute-developers/GigaAM (license: https://github.com/salute-developers/GigaAM/blob/main/LICENSE)
+    Files: Hugging Face csukuangfj/sherpa-onnx-nemo-transducer-giga-am-v3-russian-2025-12-16, a sherpa-onnx conversion
+    of the GigaAM v3 model. The wallet downloads the pinned files, each with its size and SHA-256, into its own models
+    folder when no GigaAM folder of the visitor is found. The model folder also gets the model's LICENSE file, the
+    same MIT license, whose SHA-256 is f00de6715714c7a63d08639cdbfaa40224eefc407302614bd19f1a8b98c875aa.
+  Whisper models                     MIT    Copyright (c) 2022 OpenAI (the models are OpenAI's Whisper models)
+    Files: Hugging Face ggerganov/whisper.cpp (license: mit), https://huggingface.co/ggerganov/whisper.cpp
+    Source: https://github.com/openai/whisper (license: https://github.com/openai/whisper/blob/main/LICENSE)
 
 
 The MIT License (the text the MIT-licensed components above share; each has its own copyright line)
@@ -57,4 +79,5 @@ COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER I
 OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 
-The Apache License 2.0 is in LICENSE. The SIL Open Font License 1.1 of the Barlow fonts is in licenses\Barlow-fonts\OFL.txt.
+The Apache License 2.0 is in LICENSE (it also covers sherpa-onnx and BringYourOwnAgent, as noted above). The SIL Open
+Font License 1.1 of the Barlow fonts is in licenses\Barlow-fonts\OFL.txt.

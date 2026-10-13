@@ -28,6 +28,7 @@ public sealed class GigaAmSource : ISpeechSource, IDownloadableSource, IWarmable
         new("decoder.onnx", 3_331_651, "5d1cfef155d8e07f213bd2f3229b5f6c5c29355c7fa5c1b9eb62cb1925725254"),
         new("joiner.onnx", 1_440_448, "fd1d02f45c2ad3d6b67cc149811ad794ab4b020ed49a0a9e2790a8619d1cddd8"),
         new("tokens.txt", 196, "17cc514451bcceac9c280068c71502f8448f99e9fb1456b8d0761651fd0392f2"),
+        // The model's MIT license (GigaChat Team). THIRD-PARTY-NOTICES.txt quotes this hash and the model's name.
         new("LICENSE", 1_070, "f00de6715714c7a63d08639cdbfaa40224eefc407302614bd19f1a8b98c875aa"),
     ];
 
