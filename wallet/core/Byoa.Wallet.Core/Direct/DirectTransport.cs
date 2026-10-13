@@ -178,11 +178,11 @@ public sealed class DirectTransport : IDisposable
         OnChanged();
     }
 
-    /// <summary>Revoke and Block: the site's connections close (with bye) and its pairing is forgotten.</summary>
+    /// <summary>Revoke, Block, Pause (by the visitor or for being unused) and a Decline over a grant: the site's connections close (with bye) and its pairing is forgotten.</summary>
     void OnSiteClosed(string origin)
     {
         Pairings.Forget(origin);
-        foreach (var c in Connections.Where(c => c.Origin == origin)) c.Stop("the visitor changed the site in the wallet");
+        foreach (var c in Connections.Where(c => c.Origin == origin)) c.Stop("the site was revoked, blocked, paused or declined in the wallet");
     }
 
     /// <summary>A newer decision dropped link answers that waited for their welcomes: only those link connections end.</summary>

@@ -73,6 +73,16 @@ def activity():
     return entries
 
 
+def stored_allowed(origin):
+    """True when the wallet's settings.json keeps the origin as allowed (the status is written by name, in any case)."""
+    try:
+        with open(os.path.join(HOME, "settings.json"), encoding="utf-8") as f:
+            sites = json.load(f).get("sites", [])
+    except (OSError, ValueError):
+        return False
+    return any(s.get("origin") == origin and str(s.get("status", "")).lower() == "allowed" for s in sites)
+
+
 def open_link(link):
     """As Windows opens a link from any program: the shell runs the registered command (cmd's start)."""
     subprocess.run('cmd /c start "" "' + link + '"', env=env)
@@ -210,9 +220,9 @@ ui.invoke(c, "ConsentAllow")
 got_bye = wait(lambda: liar.byes == 1, 45)
 time.sleep(1)
 lies = [e for e in activity() if e.get("origin") == liar.origin]
-check("a welcome whose manifest differs from the link's: bye, and nothing is stored or revoked",
+check("a welcome whose manifest differs from the link's: bye, and nothing is stored (not allowed) or revoked",
       got_bye and any(e.get("kind") == "link" and e.get("note") == "the site's manifest differs from its link" for e in lies)
-      and not any(e.get("outcome") == "revoked" for e in lies), f"{len(lies)} entries")
+      and not any(e.get("outcome") == "revoked" for e in lies) and not stored_allowed(liar.origin), f"{len(lies)} entries")
 
 # ---------------------------------------------------------------------------------------------- decline (the link goes to the running wallet)
 open_link(dec.new_link())

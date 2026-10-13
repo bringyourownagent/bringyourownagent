@@ -342,7 +342,11 @@ public sealed class WalletEngine
         return samples;
     }
 
-    /// <summary>Raised with the origin when the visitor revokes or blocks a site: its connections close.</summary>
+    /// <summary>
+    /// Raised with the origin when a site is revoked, blocked, paused (by the visitor or for being unused) or declined over
+    /// its grant: its connections close and its pairing is forgotten. A held link answer that a decision drops is not this
+    /// event; see <see cref="LinkAnswersDropped"/>.
+    /// </summary>
     public event Action<string>? SiteClosed;
 
     /// <summary>

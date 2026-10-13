@@ -142,7 +142,7 @@ sealed class ConsentWindow : CornerWindow
     {
         var body = new StackPanel { Spacing = 10, Margin = new Thickness(16, 14, 16, 14), Width = 368 };
 
-        // The browser vouches for an extension origin. A direct link has no such proof until the visitor allows it.
+        // The browser vouches for an extension origin. A direct link has no such proof until the site's welcome echoes the link, after the visitor allows it.
         var host = Ui.Text(_model.Host, "hostmono");
         var linkProof = Ui.Wrap("came by a link:\nconfirmed after you allow", "muted", "small");
         linkProof.Width = 220;
