@@ -298,6 +298,9 @@ public sealed class DirectConnection
                 }
 
                 _provisional = null;
+                // The answer just stored may have switched "decide on my own" off: an older pairing of the site could no
+                // longer be used, so it goes now instead of at its connection's end.
+                if (!_owner.Engine.DecidesOnItsOwn(Origin)) _owner.Pairings.Forget(Origin);
             }
 
             if (resumed && echoed != Manifest)
@@ -330,6 +333,8 @@ public sealed class DirectConnection
                 if (_owner.Engine.DecidesOnItsOwn(Origin))
                 {
                     _owner.Pairings.Set(new Pairing(Origin, Endpoint.ToString(), Manifest, token, Now));
+                    // A revoke between the check and the write would leave a pairing that nobody may use: look again.
+                    if (!_owner.Engine.DecidesOnItsOwn(Origin)) _owner.Pairings.Forget(Origin, token);
                 }
             }
 

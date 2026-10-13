@@ -752,9 +752,10 @@ public class DirectTransportTests : IDisposable
     }
 
     [Fact]
-    public async Task AFailingSecondLinkDoesNotEndTheFirstLinksGrant()
+    public async Task AFailingSecondLinkLeavesTheFirstLinksStoredGrantAlone()
     {
-        // The first link is welcomed first: its answer is stored, and its connection and grant live on.
+        // The first link is welcomed first: its answer is stored, and its connection and grant live on. (A first link that
+        // still waits for its welcome ends at the second link's Allow instead: ALinksNewerAllowEndsTheOlderLinksAnswer….)
         _ui.Consent = new ConsentAnswer(true, 0.05m, AutoDecide: false, []);
         var transport = Transport();
         var first = await transport.HandleLinkAsync(_site.Link());
@@ -922,6 +923,52 @@ public class DirectTransportTests : IDisposable
         await connection!.Completion.WaitAsync(TimeSpan.FromSeconds(10));
         Assert.Equal(SiteStatus.None, _engine.FindSite(_site.Origin)!.Status);
         Assert.Null(_pairings.Get(_site.Origin));
+    }
+
+    [Fact]
+    public async Task ABlockInSitesWhileTheLinksAnswerIsHeldKeepsTheSiteBlocked()
+    {
+        _ui.Consent = new ConsentAnswer(true, 0.05m, AutoDecide: true, []);
+        var connection = await Transport().HandleLinkAsync(_site.Link());
+        var socket = await _site.NextSocketAsync();
+        await TestSite.ReceiveAsync(socket);                                      // the hello, no welcome yet
+        _engine.Block(_site.Origin, true);                                        // the visitor blocks the site before the welcome
+        Assert.Equal("(close)", (await TestSite.ReceiveAsync(socket))["type"]!.GetValue<string>());
+        await connection!.Completion.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(SiteStatus.Blocked, _engine.FindSite(_site.Origin)!.Status);   // the held answer never turns the block into an Allow
+        Assert.Null(_pairings.Get(_site.Origin));
+    }
+
+    [Fact]
+    public async Task APauseInSitesWhileTheLinksAnswerIsHeldEndsThatAnswerAndKeepsTheSitePaused()
+    {
+        await PairAsync(auto: true);                                              // an allowed site at $0.05
+        _ui.Consent = new ConsentAnswer(true, 0.60m, AutoDecide: true, []);
+        var link = await Transport().HandleLinkAsync(LinkWith(Manifest("0.60 USD")));   // asks for more: its answer waits for the welcome
+        var linkSocket = await _site.NextSocketAsync();
+        await TestSite.ReceiveAsync(linkSocket);                                  // the hello, no welcome yet
+        _engine.Pause(_site.Origin);                                              // the visitor pauses the site
+        Assert.Equal("(close)", (await TestSite.ReceiveAsync(linkSocket))["type"]!.GetValue<string>());
+        await link!.Completion.WaitAsync(TimeSpan.FromSeconds(10));
+        var site = _engine.FindSite(_site.Origin)!;
+        Assert.True(site.Paused);
+        Assert.Equal(Money.ToSpec(0.05m), site.Budget);                           // the held $0.60 was never stored
+        Assert.Null(_pairings.Get(_site.Origin));                                 // and a pause forgets the pairing
+    }
+
+    [Fact]
+    public async Task ALinksAllowThatSwitchesDecideOnMyOwnOffForgetsTheOlderPairing()
+    {
+        await PairAsync(auto: true);
+        Assert.NotNull(_pairings.Get(_site.Origin));                              // the older pairing, kept for "decide on my own"
+        _ui.Consent = new ConsentAnswer(true, 0.05m, AutoDecide: false, []);
+        var link = await Transport().HandleLinkAsync(_site.Link());               // a link always asks; the visitor unticks the box
+        var linkSocket = await _site.NextSocketAsync();
+        await TestSite.ReceiveAsync(linkSocket);
+        await TestSite.SendAsync(linkSocket, _site.Welcome());
+        Assert.True(await link!.Welcomed.WaitAsync(TimeSpan.FromSeconds(10)));
+        Assert.False(_engine.FindSite(_site.Origin)!.AutoDecide);
+        Assert.Null(_pairings.Get(_site.Origin));                                 // nobody may use it any more: it goes at once
     }
 
     [Fact]
