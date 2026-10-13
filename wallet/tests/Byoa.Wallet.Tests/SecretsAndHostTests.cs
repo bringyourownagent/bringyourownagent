@@ -52,6 +52,31 @@ public class SecretStoreTests
     }
 }
 
+public class UnreadableSecretStoreTests
+{
+    [Fact]
+    public void AFileThatCannotBeReadMeansNoKeysNotACrashAndIsKeptWhenTheVisitorEntersANewKey()
+    {
+        var dir = TestFolder.New();
+        var file = Path.Combine(dir, "secrets.dat");
+        var damaged = Encoding.UTF8.GetBytes("this is not a DPAPI blob");
+        File.WriteAllBytes(file, damaged);
+
+        var store = new SecretStore(file);
+        Assert.False(store.Has("openrouter"));                       // free local use needs no key: nothing throws
+        Assert.Null(store.Get("openrouter"));
+        Assert.True(store.Unreadable);
+        store.Remove("openrouter");                                  // removing a key that is not there writes nothing
+        Assert.Equal(damaged, File.ReadAllBytes(file));
+
+        store.Set("openrouter", "test-secret-0123456789abcdef");     // the visitor enters a key again
+        Assert.False(store.Unreadable);
+        Assert.Equal("test-secret-0123456789abcdef", new SecretStore(file).Get("openrouter"));
+        var kept = Assert.Single(Directory.GetFiles(dir, "secrets.dat.unreadable-*"));
+        Assert.Equal(damaged, File.ReadAllBytes(kept));              // the unreadable file was not written over
+    }
+}
+
 public class SettingsStoreTests
 {
     [Fact]
