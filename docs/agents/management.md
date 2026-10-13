@@ -1,6 +1,6 @@
 # Agent management: what an agent can and cannot do
 
-The visitor first chooses **Allow** in the wallet's agent-consent window. Full access is off unless the visitor checks it in that same window or later in Settings → Agents. The wallet remains the only holder of settings and secrets.
+The visitor first chooses **Allow** in the wallet's agent-consent window. Full access is off unless the visitor checks it in that same window or later in Settings → Agents. The wallet holds the settings and the secrets, and no tool returns a secret. A program running as you can still read the wallet's files; the threat model is in [the design notes](../wallet-0.1.md#8-security-notes).
 
 | Tool or operation | Full access needed? | Visitor window shown? |
 |---|---:|---:|
@@ -10,14 +10,14 @@ The visitor first chooses **Allow** in the wallet's agent-consent window. Full a
 | `test_source`, `set_order`, edit an added source, enable/disable an added source | No | No, except any endpoint confirmation already required |
 | Download a model | No | No; Activity records the start and progress is shown |
 | Delete a downloaded model | No | Yes, confirm Delete |
-| Write or replace an API key typed by the visitor | No | Yes, through `request_api_key_entry`; the agent never sees the key |
+| Write or replace an API key typed by the visitor | No | Yes, through `request_api_key_entry`; the wallet never returns the key to the agent |
 | Supply an API key through `set_api_key` | Yes | No; Full access is required for every agent-supplied key |
 | Remove a source without a saved key | No | No |
 | Remove a source with a saved key | Yes | Yes: the visitor chooses Delete or Keep for the key |
 | Enable or disable a built-in source | Yes | No |
 | `list_sites`, `set_site_access`, `set_limits` | Yes | Site access still follows visitor consent; limits are recorded |
 
-The agent cannot read an API key. Without Full access, `status` returns only site counts and `activity` uses stable opaque HMAC labels rather than site names or free-text notes. A remote endpoint is canonicalised to its punycode host and port; the confirmation window shows whether it is encrypted and the addresses seen by the wallet. The wallet contacts standard LM Studio/Ollama loopback ports while listing runtimes, but it never relays model answers from an agent-added endpoint. A different loopback port is confirmed like another computer.
+No tool returns an API key to the agent. Without Full access, `status` returns only site counts and `activity` uses stable opaque HMAC labels rather than site names or free-text notes. A remote endpoint is canonicalised to its punycode host and port; the confirmation window shows whether it is encrypted and the addresses seen by the wallet. The wallet contacts standard LM Studio/Ollama loopback ports while listing runtimes, but it never relays model answers from an agent-added endpoint. A different loopback port is confirmed like another computer.
 
 An endpoint on another computer is not saved, scanned, or contacted until the visitor allows it. A confirmed remote endpoint is treated as the visitor's own `home-server` and may serve a `local-only` route; that means the visitor explicitly trusted it, not that the network is private. At use time the wallet resolves a named endpoint again and refuses loopback, link-local, multicast, unspecified, or a drift from the confirmed public/private address class.
 

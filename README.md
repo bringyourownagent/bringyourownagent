@@ -24,7 +24,7 @@ People no longer browse alone: everyone arrives with their own set of agents. BY
 - **Skills, not vendors.** A site asks for a capability, not for a particular company's model. It may state preferences or a minimum quality.
 - **Every kind of provider is first-class:** subscriptions where the vendor allows it, API keys, accounts connected with OAuth, and models on the visitor's own computer or home server.
 - **The visitor pays and decides.** Budgets per site and per time window, the actual cost is visible, a grant can be revoked at any moment.
-- **Keys never leave the wallet.**
+- **Keys never go to a site or an agent.** They are sent only to their own provider.
 - **Declared purpose.** A site states what it will use the skills for; the visitor can add their own conditions in plain words. The wallet checks every request against both — hard limits in code, softer checks by a small (preferably local) model — and warns, pauses or blocks.
 - **Privacy is part of the protocol.** A site marks how sensitive its data is; the visitor can require "local models only" for a site.
 - **Graceful fallback.** No wallet — the site falls back to its own mode (paid, reduced or text-only).
