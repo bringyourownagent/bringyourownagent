@@ -77,7 +77,7 @@ To remove it: `powershell -ExecutionPolicy Bypass -File wallet\uninstall.ps1` re
 
 ## The windows
 
-An extension request is marked verified because the browser vouches for its origin. A direct-link request says "came by a link: confirmed after you allow". A link frame without browser activation is held quietly, just like a page request without a click; a normal browser click keeps the notice and consent flow.
+An extension request is marked verified because the browser vouches for its origin. A direct-link request says "came by a link: confirmed after you allow". A link frame without browser activation is held quietly, just like a page request without a click; a normal browser click keeps the notice and consent flow, also for a site with "decide on my own".
 
 - **The notice**, above the tray, only after a click on the page: "*site* wants to use your AI" with **Show**, **Decline** and **Block this site**. A direct link's notice offers **Show**, **Not now** and **Block in Sites…** instead: a link cannot block a site, the block is made in Sites. It does not take the focus from the browser.
 - **The consent window**: the site (verified by the browser for extension requests; a direct link is marked as a link, and its Allow is kept only once the site's welcome echoes the link), its purpose in its own words, one row per skill with the source the manager suggests for each language (and **why?**), the budget per session (**change**), "Next time, decide on my own within these limits", **Decline**, **Allow** and **Detailed settings…**. It takes the focus; Tab moves through it and Esc declines. When an allowed site asks for more, only the difference is shown.
