@@ -893,6 +893,76 @@ public class DirectTransportTests : IDisposable
     }
 
     [Fact]
+    public async Task ADeclineOfAWindowOpenedBeforeALinksWelcomeStillEndsTheSite()
+    {
+        _ui.Consent = new ConsentAnswer(true, 0.05m, AutoDecide: false, []);
+        var link = await Transport().HandleLinkAsync(_site.Link());               // the link's answer waits for the welcome
+        var socket = await _site.NextSocketAsync();
+        await TestSite.ReceiveAsync(socket);
+        var gate = new TaskCompletionSource<ConsentAnswer>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _ui.ConsentGate = gate;
+        var page = _engine.HandleAsync(Clips.Request(_site.Origin, click: true, _site.Manifest));   // a page's window, open before the welcome
+        await WaitUntil(() => _ui.Consents.Count == 2);
+        await TestSite.SendAsync(socket, _site.Welcome());                        // the link's answer is stored behind the open window
+        await WaitUntil(() => _engine.FindSite(_site.Origin)!.Status == SiteStatus.Allowed);
+        gate.SetResult(ConsentAnswer.Declined);                                   // the visitor declines that window
+        Assert.Null(await page.WaitAsync(TimeSpan.FromSeconds(10)));
+        Assert.Equal(SiteStatus.Declined, _engine.FindSite(_site.Origin)!.Status);   // the later decision stands
+        Assert.Equal("bye", (await TestSite.ReceiveAsync(socket))["type"]!.GetValue<string>());   // the site's connection ends
+        await link!.Completion.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(0, _engine.ActiveSessions(_site.Origin));
+    }
+
+    [Fact]
+    public async Task ABlockRevokeOrAutoDecideSwitchedWhileALinksWelcomeComesIsNeverUndone()
+    {
+        // Each round: a link's answer waits, then the visitor's decision and the site's confirmation race on two threads.
+        // The store's lock puts one before the other; the visitor's decision must stand in either order.
+        for (var round = 0; round < 150; round++)
+        {
+            var kind = round % 3;                                                 // 0: block, 1: revoke, 2: "decide on my own" off
+            var engine = new WalletEngine(new SettingsStore(null), [_giga, _whisper], _log, _ui, _time);
+            if (kind == 2)
+            {
+                _ui.Consent = new ConsentAnswer(true, 0.05m, AutoDecide: true, []);
+                Assert.NotNull(await engine.HandleAsync(Clips.Request(_site.Origin, click: true, _site.Manifest)));   // allowed, on its own
+            }
+
+            // The link asks for more than the site has (kind 2), or for the same: either way its answer waits for the welcome.
+            var linkManifest = JsonNode.Parse(kind == 2 ? Manifest("0.60 USD") : Clips.GeoManifest)!.AsObject();
+            _ui.Consent = new ConsentAnswer(true, kind == 2 ? 0.60m : 0.05m, AutoDecide: true, []);
+            var answer = await engine.RequestViaLinkAsync(_site.Origin, linkManifest, userActivation: true);
+            var grant = answer!["grantId"]!.GetValue<string>();
+
+            using var start = new Barrier(2);
+            var confirm = Task.Run(() =>
+            {
+                start.SignalAndWait();
+                engine.ConfirmLinkDecision(grant);
+            });
+            var visitor = Task.Run(() =>
+            {
+                start.SignalAndWait();
+                switch (kind)
+                {
+                    case 0: engine.Block(_site.Origin, true); break;
+                    case 1: engine.Revoke(_site.Origin); break;
+                    default: engine.SetAutoDecide(_site.Origin, false); break;
+                }
+            });
+            await Task.WhenAll(confirm, visitor).WaitAsync(TimeSpan.FromSeconds(10));
+
+            var site = engine.FindSite(_site.Origin)!;
+            switch (kind)
+            {
+                case 0: Assert.True(site.Status == SiteStatus.Blocked, $"round {round}: {site.Status}"); break;
+                case 1: Assert.True(site.Status == SiteStatus.None, $"round {round}: {site.Status}"); break;
+                default: Assert.False(site.AutoDecide, $"round {round}"); break;
+            }
+        }
+    }
+
+    [Fact]
     public async Task CallsMeetTheSameGateLimitsAndPaidQuestionAsExtensionCalls()
     {
         var (_, _, socket, _) = await PairAsync(auto: false);

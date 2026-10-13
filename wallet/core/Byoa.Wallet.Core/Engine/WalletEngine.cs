@@ -139,10 +139,17 @@ public sealed class WalletEngine
     /// </summary>
     public bool ConfirmLinkDecision(string grantId)
     {
-        if (!_linkDecisions.TryRemove(grantId, out var decision)) return false;
-        _store.Update(s => decision.Apply(Site(s, decision.Origin)));
-        SitesChanged?.Invoke();
-        return true;
+        // The answer is taken under the store's lock, with its write: a visitor's decision is either before this (it has
+        // dropped the answer) or after it (and overwrites what was stored).
+        var stored = false;
+        _store.Update(s =>
+        {
+            if (!_linkDecisions.TryRemove(grantId, out var decision)) return;
+            decision.Apply(Site(s, decision.Origin));
+            stored = true;
+        });
+        if (stored) SitesChanged?.Invoke();
+        return stored;
     }
 
     /// <summary>
@@ -477,6 +484,7 @@ public sealed class WalletEngine
         var released = false;
         try
         {
+            var allowedWhenAsked = _store.Read(s => s.Site(origin)?.Status == SiteStatus.Allowed);
             var notice = await _ui.ShowNoticeAsync(new NoticeModel(origin, host), timeout.Token).ConfigureAwait(false);
             switch (notice)
             {
@@ -490,7 +498,7 @@ public sealed class WalletEngine
                 case NoticeAnswer.Decline when via == ViaLink:
                     return Done(entry, "declined", "declined from a link: nothing stored");
                 case NoticeAnswer.Decline:
-                    MarkDeclined(origin);
+                    MarkDeclined(origin, shownAllowed: allowedWhenAsked);
                     return Done(entry, "declined", "declined in the notice");
                 case NoticeAnswer.Closed:
                     return Done(entry, "closed", timeout.IsCancellationRequested ? "no answer in time" : "notice closed");
@@ -505,7 +513,7 @@ public sealed class WalletEngine
             {
                 if (timeout.IsCancellationRequested) return Done(entry, "closed", "no answer in time");
                 if (via == ViaLink) return Done(entry, "declined", "declined from a link: nothing stored");
-                MarkDeclined(origin);
+                MarkDeclined(origin, shownAllowed: site.Status == SiteStatus.Allowed);
                 return Done(entry, "declined", "declined in the consent window");
             }
 
@@ -541,14 +549,16 @@ public sealed class WalletEngine
             }
             else
             {
+                var dropped = false;
                 _store.Update(s =>
                 {
                     var r = Site(s, origin);
                     Decide(r);
                     skills = r.Skills;
+                    dropped = DropLinkDecisions(origin);
                 });
                 SitesChanged?.Invoke();
-                VisitorDecided(origin);
+                if (dropped) SiteClosed?.Invoke(origin);
             }
 
             var session = Grant(origin, manifest, skills, answer.Budget);
@@ -877,16 +887,33 @@ public sealed class WalletEngine
         }
     }
 
-    void MarkDeclined(string origin)
+    /// <summary>
+    /// The visitor declined a window about the site. A decline of a difference (the window was shown for a site that was
+    /// allowed) keeps what the site has. Any other decline is the visitor's answer, also when a link's answer was confirmed
+    /// while the window was open: then the site's grants end, as for a revoke.
+    /// </summary>
+    void MarkDeclined(string origin, bool shownAllowed)
     {
+        var ends = false;
+        var dropped = false;
         _store.Update(s =>
         {
             var r = Site(s, origin);
-            if (r.Status != SiteStatus.Allowed) r.Status = SiteStatus.Declined;
+            ends = r.Status == SiteStatus.Allowed && !shownAllowed;
+            if (r.Status != SiteStatus.Allowed || !shownAllowed) r.Status = SiteStatus.Declined;
             r.DecidedAt = Now;
+            dropped = DropLinkDecisions(origin);
         });
         SitesChanged?.Invoke();
-        VisitorDecided(origin);
+        if (ends)
+        {
+            DropSessions(origin);
+            SiteClosed?.Invoke(origin);
+        }
+        else if (dropped)
+        {
+            SiteClosed?.Invoke(origin);
+        }
     }
 
     // ------------------------------------------------------------------------------------------------
@@ -1892,6 +1919,7 @@ public sealed class WalletEngine
             r.Skills = [];
             r.AutoDecide = false;
             r.PaidAllowed = false;
+            DropLinkDecisions(origin);
         });
         Log(new ActivityEntry { Origin = origin, Kind = Wire.Request, Outcome = "revoked", Note = note });
         SitesChanged?.Invoke();
@@ -1909,6 +1937,7 @@ public sealed class WalletEngine
             r.Skills = [];
             r.AutoDecide = false;
             r.PaidAllowed = false;
+            if (blocked) DropLinkDecisions(origin);
         });
         SitesChanged?.Invoke();
         if (blocked) SiteClosed?.Invoke(origin);
@@ -1929,6 +1958,7 @@ public sealed class WalletEngine
             r.PausedAt = Now;
             r.PauseReason = "you";
             paused = true;
+            DropLinkDecisions(origin);
         });
         if (!paused) return;
         DropSessions(origin);
@@ -1979,6 +2009,7 @@ public sealed class WalletEngine
             r.Paused = true;
             r.PausedAt = since;
             r.PauseReason = "unused";
+            DropLinkDecisions(origin);
         });
         DropSessions(origin);
         Log(new ActivityEntry { Origin = origin, Kind = Wire.Request, Outcome = "paused", Note = "paused after " + Hours(hours) + " without use" });
@@ -2003,10 +2034,16 @@ public sealed class WalletEngine
 
     public void SetAutoDecide(string origin, bool auto)
     {
-        var changed = FindSite(origin) is { } before && before.AutoDecide != auto;
-        _store.Update(s => Site(s, origin).AutoDecide = auto);
+        var dropped = false;
+        _store.Update(s =>
+        {
+            var r = Site(s, origin);
+            var changed = r.AutoDecide != auto;
+            r.AutoDecide = auto;
+            if (changed) dropped = DropLinkDecisions(origin);
+        });
         SitesChanged?.Invoke();
-        if (changed) VisitorDecided(origin);
+        if (dropped) SiteClosed?.Invoke(origin);
     }
 
     /// <summary>The visitor opened the wallet and saw the held-back requests: the badge goes (the per-site counts stay in Sites).</summary>
@@ -2021,10 +2058,13 @@ public sealed class WalletEngine
     void DropSessions(string origin)
     {
         foreach (var s in _sessions.Values.Where(s => s.Origin == origin).ToList()) _sessions.TryRemove(s.Id, out _);
-        DropLinkDecisions(origin);
     }
 
-    /// <summary>Forgets the answers to a site's links that wait for the site's welcome, with their grants. True when there were any.</summary>
+    /// <summary>
+    /// Forgets the answers to a site's links that wait for the site's welcome, with their grants. True when there were any.
+    /// It is called under the store's lock, in the same update as the visitor's write, so that a welcome either finds its
+    /// answer before the decision (and stores it first) or finds it gone.
+    /// </summary>
     bool DropLinkDecisions(string origin)
     {
         var held = _linkDecisions.Where(d => d.Value.Origin == origin).Select(d => d.Key).ToList();
@@ -2035,16 +2075,6 @@ public sealed class WalletEngine
         }
 
         return held.Count > 0;
-    }
-
-    /// <summary>
-    /// The visitor decided about a site (a Decline, an Allow in a page's window, "decide on my own" switched) while a link's
-    /// answer waited for its welcome: the visitor's decision is the later one, so that answer is dropped and the site's
-    /// link connections end.
-    /// </summary>
-    void VisitorDecided(string origin)
-    {
-        if (DropLinkDecisions(origin)) SiteClosed?.Invoke(origin);
     }
 
     // ------------------------------------------------------------------------------------------------
