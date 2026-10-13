@@ -1,0 +1,53 @@
+name: Wallet tests
+
+on:
+  push:
+    paths: ["wallet/**", "spec/**", ".github/workflows/wallet-tests.yml"]
+  pull_request:
+    paths: ["wallet/**", "spec/**", ".github/workflows/wallet-tests.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    # The wallet is a Windows program (DPAPI, UI Automation names, the registry): its tests run on Windows.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: Unit tests (the engine, the direct transport, the registry, the desktop pieces)
+        run: dotnet test wallet/tests/Byoa.Wallet.Tests/Byoa.Wallet.Tests.csproj -c Release
+      - name: License check of the packaging script (small fixtures, builds no package)
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File wallet/packaging/test-package-licenses.ps1 -WorkFolder $env:RUNNER_TEMP
+
+  package:
+    # The ready package must still build from a clean checkout: make-package.ps1 fails when a file is missing,
+    # a package has no license file, or the app is not self-contained.
+    needs: tests
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: Build the package
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File wallet/packaging/make-package.ps1 -OutDir "$env:RUNNER_TEMP\package"
+      - name: Size and SHA-256
+        shell: powershell
+        run: |
+          $zip = Get-ChildItem "$env:RUNNER_TEMP\package" -Filter "byoa-wallet-*-win-x64.zip" | Select-Object -First 1
+          if (-not $zip) { throw "no package zip" }
+          Get-Content "$($zip.FullName).sha256"
+          "{0:N1} MB" -f ($zip.Length / 1MB)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: byoa-wallet-package
+          path: |
+            ${{ runner.temp }}/package/byoa-wallet-*-win-x64.zip
+            ${{ runner.temp }}/package/byoa-wallet-*-win-x64.zip.sha256
+          retention-days: 14
