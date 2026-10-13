@@ -256,6 +256,9 @@ sealed class SettingsWindow : Window
         Origins.TryParse(site.Origin, out var host, out _);
         if (host.Length == 0) host = site.Origin;
         var paused = _w.Engine.PausedNow(site);
+        var unavailableSkill = site.Status == SiteStatus.Allowed
+            ? MissingRequiredSkill(site, _w.Store.Snapshot(), _w.Sources.All, _w.Sources.Text)
+            : null;
         var (chip, kind, line) = site.Status switch
         {
             SiteStatus.Allowed when paused is not null => ("Paused", "orange", paused + ". It keeps what you allowed; its next request, after your click, asks you to resume."),
@@ -264,6 +267,8 @@ sealed class SettingsWindow : Window
             SiteStatus.Blocked => ("Blocked", "ink", "Blocked: its requests never show a notice, and it hears only “AI unavailable”."),
             _ => ("Not allowed yet", "outline", "Not allowed yet. Its next request, after your click, shows the short notice."),
         };
+        if (unavailableSkill is not null)
+            line = "Allowed, but nothing on this computer can serve " + Vocabulary.SkillName(unavailableSkill) + ".";
 
         var card = new StackPanel { Spacing = 8 };
         var dot = ActivityDot(_w.Engine.LastSeen(site), out var when);
@@ -323,6 +328,32 @@ sealed class SettingsWindow : Window
         }
 
         return Ui.Box("card", card);
+    }
+
+    /// <summary>Checks the same language-specific route the engine will use, without changing settings.</summary>
+    internal static string? MissingRequiredSkill(SiteRecord site, WalletSettings settings,
+        IEnumerable<ISpeechSource> speechSources, IEnumerable<ITextSource> textSources)
+    {
+        foreach (var skill in site.Skills)
+        {
+            var languages = site.Languages.Count == 0 ? new string?[] { null } : site.Languages.Cast<string?>();
+            foreach (var language in languages)
+            {
+                var primary = Vocabulary.PrimaryLanguage(language);
+                var chain = settings.Chains.FirstOrDefault(c => c.Skill == skill && c.Language == primary)
+                    ?? settings.Chains.FirstOrDefault(c => c.Skill == skill)
+                    ?? new SkillChain { Skill = skill, Language = primary };
+                var enabled = new Func<string, bool>(id => settings.Sources.FirstOrDefault(s => s.Id == id)?.Enabled ?? true);
+                var usable = skill == Vocabulary.Generate
+                    ? Router.PlanText(chain, textSources, enabled, language).First is not null
+                    : skill == Vocabulary.Transcribe
+                        ? Router.Plan(chain, speechSources, enabled, language).First is not null
+                        : false;
+                if (!usable) return skill;
+            }
+        }
+
+        return null;
     }
 
     // ------------------------------------------------------------------------------------------------
@@ -556,7 +587,9 @@ sealed class SettingsWindow : Window
                  {
                      ("languages", langs),
                      ("runs", source.Runs),
-                     ("latency", "≈ " + source.ApproxSeconds.ToString("0.0", CultureInfo.InvariantCulture) + " s"),
+                     ("speed", source.HasMeasuredSeconds
+                         ? "≈ " + source.ApproxSeconds.ToString("0.0", CultureInfo.InvariantCulture) + " s"
+                         : "not measured yet"),
                      ("cost", source.Paid ? "≈ " + Money.Show(source.EstimateCost(5)) + " / 5 s" : "no cloud bill"),
                  })
         {

@@ -30,7 +30,7 @@ sealed class StdioMcpServer
     readonly SemaphoreSlim _connectGate = new(1, 1);
     readonly object _connectionTaskGate = new();
     readonly McpConnectionOptions _connectionOptions;
-    Task<AgentPipeClient?>? _connectionAttempt;
+    Task<ConnectionAttempt>? _connectionAttempt;
 
     public StdioMcpServer(TextReader? input = null, TextWriter? output = null, McpConnectionOptions? connectionOptions = null)
     {
@@ -202,8 +202,11 @@ sealed class StdioMcpServer
             {
                 try
                 {
-                    wallet = await StartConnectionAttempt()
+                    var connection = await StartConnectionAttempt()
                         .WaitAsync(_connectionOptions.ToolConnectionTimeout, ct).ConfigureAwait(false);
+                    if (connection.Refusal is { } refusal)
+                        return ToolResponse(id, AgentPipeProtocol.Error("The wallet refused this bridge: " + refusal));
+                    wallet = connection.Client;
                 }
                 catch (TimeoutException)
                 {
@@ -222,11 +225,14 @@ sealed class StdioMcpServer
                 var call = await wallet.CallDetailedAsync(name, arguments, ct).ConfigureAwait(false);
                 if (call.Failure == PipeCallFailure.Closed && !ct.IsCancellationRequested)
                 {
-                    Console.Error.WriteLine("The wallet closed the idle connection; reconnecting");
+                    Console.Error.WriteLine(call.Result["error"]?.GetValue<string>() ?? "The wallet connection ended; reconnecting.");
                     try
                     {
-                        wallet = await StartConnectionAttempt()
+                        var connection = await StartConnectionAttempt()
                             .WaitAsync(_connectionOptions.ToolConnectionTimeout, ct).ConfigureAwait(false);
+                        if (connection.Refusal is { } refusal)
+                            return ToolResponse(id, AgentPipeProtocol.Error("The wallet refused this bridge: " + refusal));
+                        else wallet = connection.Client;
                     }
                     catch (TimeoutException)
                     {
@@ -248,31 +254,43 @@ sealed class StdioMcpServer
         return ToolResponse(id, result);
     }
 
-    Task<AgentPipeClient?> StartConnectionAttempt()
+    Task<ConnectionAttempt> StartConnectionAttempt()
     {
         lock (_connectionTaskGate)
         {
-            if (_wallet is { IsDisconnected: false }) return Task.FromResult<AgentPipeClient?>(_wallet);
+            if (_wallet is { IsDisconnected: false }) return Task.FromResult(new ConnectionAttempt(_wallet, null));
             if (_connectionAttempt is { IsCompleted: false }) return _connectionAttempt;
+            // Keep a refusal for this bridge session. Retrying it for every tool call would reopen the same
+            // visitor question or hide the wallet's actual refusal behind a "not running" message.
+            if (_connectionAttempt is { IsCompletedSuccessfully: true } completed && completed.Result.Refusal is not null)
+                return _connectionAttempt;
             _connectionAttempt = ConnectWalletAttemptAsync(_stop.Token);
             return _connectionAttempt;
         }
     }
 
-    async Task<AgentPipeClient?> ConnectWalletAttemptAsync(CancellationToken ct)
+    async Task<ConnectionAttempt> ConnectWalletAttemptAsync(CancellationToken ct)
     {
         await _connectGate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            if (_wallet is { IsDisconnected: false }) return _wallet;
+            if (_wallet is { IsDisconnected: false }) return new ConnectionAttempt(_wallet, null);
             _wallet?.Dispose();
-            _wallet = await AgentPipeClient.ConnectAsync(_clientName, ct, _connectionOptions).ConfigureAwait(false);
-            return _wallet;
+            try
+            {
+                _wallet = await AgentPipeClient.ConnectAsync(_clientName, ct, _connectionOptions).ConfigureAwait(false);
+                return new ConnectionAttempt(_wallet, null);
+            }
+            catch (AgentPipeRefusedException e)
+            {
+                _wallet = null;
+                return new ConnectionAttempt(null, e.Message);
+            }
         }
         finally { _connectGate.Release(); }
     }
 
-    static void ObserveConnection(Task<AgentPipeClient?> attempt)
+    static void ObserveConnection(Task<ConnectionAttempt> attempt)
     {
         _ = attempt.ContinueWith(completed => _ = completed.Exception,
             CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
@@ -331,6 +349,10 @@ internal sealed record McpConnectionOptions(
         TimeSpan.FromSeconds(120));
 }
 
+sealed record ConnectionAttempt(AgentPipeClient? Client, string? Refusal);
+
+sealed class AgentPipeRefusedException(string message) : Exception(message);
+
 enum PipeCallFailure
 {
     None,
@@ -345,6 +367,7 @@ sealed class AgentPipeClient : IDisposable
     readonly SemaphoreSlim _roundTrip = new(1, 1);
     readonly TimeSpan _callTimeout;
     int _disconnected;
+    int _successfulCalls;
 
     AgentPipeClient(NamedPipeClientStream pipe, TimeSpan callTimeout)
     {
@@ -382,6 +405,17 @@ sealed class AgentPipeClient : IDisposable
                 return null;
             }
 
+            // AgentPipeProtocol.Error is deliberately a small, untyped refusal frame. A typed response with
+            // ok=false is different: it is the wallet's answer to hello (for example Not now), and the open
+            // connection must remain available so the next tool call receives that plain refusal.
+            if (answer["type"] is null)
+            {
+                var refusal = answer["error"]?.GetValue<string>() ?? "The wallet refused this bridge.";
+                try { await pipe.DisposeAsync().ConfigureAwait(false); }
+                catch (Exception e) when (e is IOException or ObjectDisposedException) { }
+                throw new AgentPipeRefusedException(refusal);
+            }
+
             // Keep the connection even when the visitor said Not now: tool calls receive the wallet's plain refusal.
             return new AgentPipeClient(pipe, options.CallTimeout);
         }
@@ -409,7 +443,7 @@ sealed class AgentPipeClient : IDisposable
             // the bridge reconnects lazily before the next call.
             await _roundTrip.WaitAsync(ct).ConfigureAwait(false);
             acquired = true;
-            if (IsDisconnected) return (AgentPipeProtocol.Error("The wallet connection is closed; reconnecting."), PipeCallFailure.Closed);
+            if (IsDisconnected) return (AgentPipeProtocol.Error("The wallet connection ended; reconnecting."), PipeCallFailure.Closed);
             await Framing.WriteAsync(_pipe, AgentPipeProtocol.Serialize(new JsonObject
             {
                 ["type"] = AgentPipeProtocol.Request,
@@ -425,6 +459,7 @@ sealed class AgentPipeClient : IDisposable
                 var response = AgentPipeProtocol.Parse(bytes) ?? throw new InvalidDataException("The wallet returned an invalid response.");
                 if (response["id"] is JsonValue id && id.TryGetValue<string>(out var value) && value == requestId)
                 {
+                    Interlocked.Exchange(ref _successfulCalls, 1);
                     return (response, PipeCallFailure.None);
                 }
                 // A response left over from a cancelled call is harmless only when it is bounded and discarded.
@@ -444,10 +479,18 @@ sealed class AgentPipeClient : IDisposable
             Disconnect();
             return (AgentPipeProtocol.Error("The wallet call was cancelled."), PipeCallFailure.Cancelled);
         }
+        catch (EndOfStreamException)
+        {
+            Disconnect();
+            var message = Volatile.Read(ref _successfulCalls) != 0
+                ? "The wallet closed the idle connection; reconnecting."
+                : "The wallet connection ended; reconnecting.";
+            return (AgentPipeProtocol.Error(message), PipeCallFailure.Closed);
+        }
         catch (Exception e) when (e is IOException or ObjectDisposedException or InvalidDataException)
         {
             Disconnect();
-            return (AgentPipeProtocol.Error("The wallet closed the idle connection; reconnecting."), PipeCallFailure.Closed);
+            return (AgentPipeProtocol.Error("The wallet connection ended; reconnecting."), PipeCallFailure.Closed);
         }
         finally { if (acquired) _roundTrip.Release(); }
     }

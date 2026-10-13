@@ -114,6 +114,73 @@ public sealed class McpProtocolTests
         }
     }
 
+    [Fact]
+    public async Task UntypedWalletRefusalIsReturnedAsARefusalRatherThanWalletAbsent()
+    {
+        var oldHome = Environment.GetEnvironmentVariable(WalletPaths.HomeVariable);
+        var home = TestFolder.New();
+        Environment.SetEnvironmentVariable(WalletPaths.HomeVariable, home);
+        try
+        {
+            await using var fakeWallet = new NamedPipeServerStream(WalletPaths.McpPipeName(), PipeDirection.InOut,
+                1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
+            var options = new McpConnectionOptions(TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1),
+                TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
+            var input = new LinesReader();
+            var output = new StringWriter();
+            var server = new StdioMcpServer(input, output, options);
+            var run = server.RunAsync();
+            var fake = RefuseHelloAsync(fakeWallet, "The bridge is not approved.");
+
+            input.Push("{\"jsonrpc\":\"2.0\",\"id\":\"init\",\"method\":\"initialize\",\"params\":{\"clientInfo\":{\"name\":\"refusal test\"}}}");
+            await EventuallyAsync(() => output.ToString().Contains("\"id\":\"init\"", StringComparison.Ordinal), TimeSpan.FromSeconds(1));
+            input.Push("{\"jsonrpc\":\"2.0\",\"id\":\"call\",\"method\":\"tools/call\",\"params\":{\"name\":\"status\",\"arguments\":{}}}");
+            await EventuallyAsync(() => output.ToString().Contains("The wallet refused this bridge: The bridge is not approved.", StringComparison.Ordinal), TimeSpan.FromSeconds(1));
+            Assert.DoesNotContain("The wallet is not running", output.ToString(), StringComparison.Ordinal);
+
+            input.Complete();
+            await run;
+            await fake;
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(WalletPaths.HomeVariable, oldHome);
+        }
+    }
+
+    [Fact]
+    public async Task TypedHelloRefusalStaysConnectedAndToolGetsTheWalletAnswer()
+    {
+        var oldHome = Environment.GetEnvironmentVariable(WalletPaths.HomeVariable);
+        var home = TestFolder.New();
+        Environment.SetEnvironmentVariable(WalletPaths.HomeVariable, home);
+        try
+        {
+            await using var fakeWallet = new NamedPipeServerStream(WalletPaths.McpPipeName(), PipeDirection.InOut,
+                1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
+            var input = new LinesReader();
+            var output = new StringWriter();
+            var server = new StdioMcpServer(input, output,
+                new McpConnectionOptions(TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1)));
+            var run = server.RunAsync();
+            var fake = TypedHelloRefusalAsync(fakeWallet);
+
+            input.Push("{\"jsonrpc\":\"2.0\",\"id\":\"init\",\"method\":\"initialize\",\"params\":{\"clientInfo\":{\"name\":\"typed refusal test\"}}}");
+            await EventuallyAsync(() => output.ToString().Contains("\"id\":\"init\"", StringComparison.Ordinal), TimeSpan.FromSeconds(1));
+            input.Push("{\"jsonrpc\":\"2.0\",\"id\":\"call\",\"method\":\"tools/call\",\"params\":{\"name\":\"status\",\"arguments\":{}}}");
+            await EventuallyAsync(() => output.ToString().Contains("The visitor chose Not now.", StringComparison.Ordinal), TimeSpan.FromSeconds(1));
+            Assert.DoesNotContain("The wallet refused this bridge", output.ToString(), StringComparison.Ordinal);
+
+            input.Complete();
+            await run;
+            await fake;
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(WalletPaths.HomeVariable, oldHome);
+        }
+    }
+
     static async Task FakeWalletAsync(NamedPipeServerStream pipe)
     {
         await pipe.WaitForConnectionAsync();
@@ -142,6 +209,46 @@ public sealed class McpProtocolTests
                     ["message"] = "fake wallet response",
                 }));
             }
+        }
+        catch (IOException) { }
+        catch (ObjectDisposedException) { }
+    }
+
+    static async Task RefuseHelloAsync(NamedPipeServerStream pipe, string message)
+    {
+        try
+        {
+            await pipe.WaitForConnectionAsync();
+            Assert.NotNull(await Framing.ReadAsync(pipe));
+            await Framing.WriteAsync(pipe, AgentPipeProtocol.Serialize(AgentPipeProtocol.Error(message)));
+        }
+        catch (IOException) { }
+        catch (ObjectDisposedException) { }
+    }
+
+    static async Task TypedHelloRefusalAsync(NamedPipeServerStream pipe)
+    {
+        try
+        {
+            await pipe.WaitForConnectionAsync();
+            Assert.NotNull(await Framing.ReadAsync(pipe));
+            await Framing.WriteAsync(pipe, AgentPipeProtocol.Serialize(new JsonObject
+            {
+                ["type"] = AgentPipeProtocol.Response,
+                ["id"] = "hello",
+                ["ok"] = false,
+                ["error"] = "The visitor chose Not now.",
+            }));
+            var requestBytes = await Framing.ReadAsync(pipe);
+            Assert.NotNull(requestBytes);
+            var request = AgentPipeProtocol.Parse(requestBytes!);
+            Assert.NotNull(request);
+            await Framing.WriteAsync(pipe, AgentPipeProtocol.Serialize(new JsonObject
+            {
+                ["id"] = request!["id"]?.DeepClone(),
+                ["ok"] = false,
+                ["error"] = "The visitor chose Not now.",
+            }));
         }
         catch (IOException) { }
         catch (ObjectDisposedException) { }

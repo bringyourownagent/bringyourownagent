@@ -27,6 +27,7 @@ public sealed class OpenRouterSource : ISpeechSource
     readonly Func<bool> _hasKey;
     readonly Uri _baseUrl;
     double _seconds = 1.5;
+    bool _hasMeasuredSeconds;
     string? _lastError;
 
     /// <param name="key">Returns the API key when a request needs it (decrypted at that moment only).</param>
@@ -47,6 +48,7 @@ public sealed class OpenRouterSource : ISpeechSource
     public int LanguageCount => 99;
     public bool Paid => true;
     public double ApproxSeconds => _seconds;
+    public bool HasMeasuredSeconds => _hasMeasuredSeconds;
     public SourceState State => _hasKey() ? SourceState.Ready : SourceState.NoKey;
 
     public string StateText => State == SourceState.NoKey ? "no API key added"
@@ -100,7 +102,10 @@ public sealed class OpenRouterSource : ISpeechSource
         }
 
         _lastError = null;
-        _seconds = _seconds * 0.7 + watch.Elapsed.TotalSeconds * 0.3;
+        _seconds = _hasMeasuredSeconds
+            ? _seconds * 0.7 + watch.Elapsed.TotalSeconds * 0.3
+            : watch.Elapsed.TotalSeconds;
+        _hasMeasuredSeconds = true;
         var seconds = samples.Length / (double)Wav.TargetRate;
         var usage = json?["usage"];
         decimal cost = Number(usage?["cost"]) ?? (decimal)Math.Ceiling(seconds) * PricePerSecond;

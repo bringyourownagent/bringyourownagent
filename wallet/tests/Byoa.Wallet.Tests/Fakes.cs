@@ -34,6 +34,7 @@ class FakeSource : ISpeechSource
     public decimal PricePerSecond { get; }
     public bool Paid => PricePerSecond > 0;
     public double ApproxSeconds => 0.1;
+    public bool HasMeasuredSeconds { get; set; }
     public SourceState State { get; set; } = SourceState.Ready;
     public string StateText => State.ToString();
     public string Answer { get; set; } = "francia";

@@ -346,6 +346,9 @@ public sealed class WalletEngine
         _store.Update(s => Site(s, origin).LastRequest = Now);
 
         if (site.Status == SiteStatus.Blocked) return Done(entry, "blocked", "blocked site: no notice");
+        // A declined origin is intentionally indistinguishable from an absent wallet. Do not run the prompt
+        // queue again until a later visit changes the site's state through the normal visitor flow.
+        if (site.Status == SiteStatus.Declined) return Done(entry, "declined", "declined site: no notice");
 
         var diff = Difference(site, manifest);
         var covered = site.Status == SiteStatus.Allowed && diff.NewSkills.Count == 0 && diff.MissingRequired.Count == 0 && !diff.CostRaised;
@@ -626,8 +629,11 @@ public sealed class WalletEngine
             details.Add(((int)Math.Ceiling(bytes / 1_000_000d)).ToString(CultureInfo.InvariantCulture) + " MB download");
         }
 
-        if (source.Id == Router.CpuWhisperId && language is not "ru")
-            details.Add("on this computer, about 3 s per phrase");
+        details.Add(source.HasMeasuredSeconds
+            ? (source.Id == Router.CpuWhisperId && language is not "ru"
+                ? "on this computer, about " + source.ApproxSeconds.ToString("0.0", CultureInfo.InvariantCulture) + " s per phrase"
+                : "about " + source.ApproxSeconds.ToString("0.0", CultureInfo.InvariantCulture) + " s a clip")
+            : "speed not measured yet");
 
         return details.Count == 0 ? null : string.Join("; ", details);
     }

@@ -174,7 +174,7 @@ public static class Router
         return new TextRoutePlan(steps, skipped);
     }
 
-    /// <summary>"GigaAM v3 for Russian, because it is made for Russian, runs on this PC with no cloud bill, about 0.2 s a clip."</summary>
+    /// <summary>Explains the manager's route without presenting an unmeasured speed as a promise.</summary>
     public static string Explain(RoutePlan plan, string? language)
     {
         var first = plan.First;
@@ -206,7 +206,9 @@ public static class Router
         because.Add(s.Paid
             ? "it is paid, about " + Money.Show(s.EstimateCost(5)) + " for a 5 s clip" + (first.AskFirst ? ", and it asks you first" : "")
             : "it runs on this PC with no cloud bill");
-        because.Add("about " + s.ApproxSeconds.ToString("0.0", CultureInfo.InvariantCulture) + " s a clip");
+        because.Add(s.HasMeasuredSeconds
+            ? "about " + s.ApproxSeconds.ToString("0.0", CultureInfo.InvariantCulture) + " s a clip"
+            : "speed not measured yet");
 
         var text = "Manager suggests " + s.Name + lang + " because " + JoinAnd(because) + ".";
         var rest = plan.Steps.Skip(1).Select(x => x.Source.Name + (x.Source.Paid ? x.AskFirst ? " (paid, asks first)" : " (paid)" : "")).ToList();

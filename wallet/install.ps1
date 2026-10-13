@@ -50,6 +50,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
+$repo = Split-Path -Parent $root
 $packageApp = Join-Path $root 'app'
 if (-not $FromPackage -and (Test-Path (Join-Path $packageApp 'Byoa.Wallet.exe'))) { $FromPackage = $true }
 if ($FromPackage -and -not (Test-Path (Join-Path $packageApp 'Byoa.Wallet.exe'))) {
@@ -100,6 +101,15 @@ function Copy-Folder([string]$from, [string]$to) {
     return $count
 }
 
+function Copy-FileIfPresent([string]$from, [string]$to) {
+    if (-not (Test-Path -LiteralPath $from -PathType Leaf)) { return 0 }
+    $folder = Split-Path -Parent $to
+    if (-not (Test-Path -LiteralPath $folder)) { New-Item -ItemType Directory -Force -Path $folder | Out-Null }
+    Copy-Item -LiteralPath $from -Destination $to -Force
+    Unblock-File -LiteralPath $to
+    return 1
+}
+
 if ($FromPackage) {
     # The ready package: the app is already built (self-contained, no .NET needed), so it is only copied. The
     # extension goes next to it, so that Chrome keeps finding it after the unzipped folder is gone.
@@ -116,6 +126,14 @@ if ($FromPackage) {
             $copied++
         }
     }
+    # Keep the package's license files with the installed app. The uninstaller deliberately leaves them, like all
+    # other visitor files.
+    $copied += Copy-FileIfPresent (Join-Path $root 'LICENSE') (Join-Path $InstallDir 'LICENSE')
+    $copied += Copy-FileIfPresent (Join-Path $root 'THIRD-PARTY-NOTICES.txt') (Join-Path $InstallDir 'THIRD-PARTY-NOTICES.txt')
+    $packageLicenses = Join-Path $root 'licenses'
+    if (Test-Path -LiteralPath $packageLicenses -PathType Container) {
+        $copied += Copy-Folder $packageLicenses (Join-Path $InstallDir 'licenses')
+    }
     Write-Host "Copied $copied files."
 } else {
     if (-not $NoBuild) {
@@ -128,6 +146,12 @@ if ($FromPackage) {
         if ($LASTEXITCODE -ne 0) { throw 'dotnet publish failed for the MCP bridge' }
     }
     $extensionDir = Join-Path $root 'extension'
+    $copied = 0
+    # A source checkout has the repository license at its root and the third-party notice beside the packaging
+    # scripts. Copy only files that exist; source installs do not require a generated licenses folder.
+    $copied += Copy-FileIfPresent (Join-Path $repo 'LICENSE') (Join-Path $InstallDir 'LICENSE')
+    $copied += Copy-FileIfPresent (Join-Path $root 'packaging\THIRD-PARTY-NOTICES.txt') (Join-Path $InstallDir 'THIRD-PARTY-NOTICES.txt')
+    Write-Host "Copied $copied license files."
 }
 
 $hostExe = Join-Path $InstallDir 'byoa-host.exe'

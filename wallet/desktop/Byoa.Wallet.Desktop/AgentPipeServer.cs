@@ -227,7 +227,7 @@ sealed class AgentPipeServer : IDisposable
         catch (OperationCanceledException) { }
     }
 
-    static bool IsInstalledBridge(string? path)
+    internal static bool IsInstalledBridge(string? path)
     {
         var configured = Environment.GetEnvironmentVariable("BYOA_WALLET_MCP_PATH");
         return IsBridgeIn(path, string.IsNullOrWhiteSpace(configured) ? AppContext.BaseDirectory : configured);

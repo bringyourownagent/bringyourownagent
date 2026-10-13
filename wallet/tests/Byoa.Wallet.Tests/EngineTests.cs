@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json.Nodes;
 using Byoa.Wallet.Activity;
 using Byoa.Wallet.Engine;
@@ -83,9 +84,12 @@ public class EngineTests
         Assert.Null(await _engine.HandleAsync(Clips.Request(Site, click: true)));
         Assert.Equal(SiteStatus.Declined, _store.Read(s => s.Site(Site)!.Status));
 
+        // Declined is a quiet door, just like blocked. Revoke is the explicit visitor action that lets the
+        // origin ask again; a page request must not reopen the prompt by itself.
         _ui.Notice = NoticeAnswer.Show;
         _ui.Consent = ConsentAnswer.Declined;
         Assert.Null(await _engine.HandleAsync(Clips.Request(Site, click: true)));
+        _engine.Revoke(Site);
 
         _ui.Notice = NoticeAnswer.Block;
         Assert.Null(await _engine.HandleAsync(Clips.Request(Site, click: true)));
@@ -97,6 +101,38 @@ public class EngineTests
         Assert.Null(await _engine.HandleAsync(Clips.Request(Site, click: false)));
         Assert.Equal(notices, _ui.Notices);
         Assert.Equal(0, _ui.Quiet);
+    }
+
+    [Fact]
+    public async Task APreviouslyDeclinedOriginGetsNullWithoutAskingAgain()
+    {
+        _ui.Notice = NoticeAnswer.Decline;
+        Assert.Null(await _engine.HandleAsync(Clips.Request(Site, click: true)));
+        var notices = _ui.Notices;
+        var started = Stopwatch.GetTimestamp();
+
+        _ui.Notice = NoticeAnswer.Show;
+        _ui.Consent = new ConsentAnswer(true, 0.05m, false, []);
+        Assert.Null(await _engine.HandleAsync(Clips.Request(Site, click: true)));
+
+        Assert.True(Stopwatch.GetElapsedTime(started) < TimeSpan.FromSeconds(1));
+        Assert.Equal(notices, _ui.Notices);
+        Assert.Equal("declined", _log.Recent()[0].Outcome);
+    }
+
+    [Fact]
+    public async Task DecliningTheConsentWindowAnswersThePageImmediately()
+    {
+        _ui.Notice = NoticeAnswer.Show;
+        _ui.Consent = ConsentAnswer.Declined;
+        var started = Stopwatch.GetTimestamp();
+
+        Assert.Null(await _engine.HandleAsync(Clips.Request(Site, click: true)));
+
+        Assert.True(Stopwatch.GetElapsedTime(started) < TimeSpan.FromSeconds(1));
+        Assert.Equal(1, _ui.Notices);
+        Assert.Single(_ui.Consents);
+        Assert.Equal(SiteStatus.Declined, _store.Read(s => s.Site(Site)!.Status));
     }
 
     [Fact]

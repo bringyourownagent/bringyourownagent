@@ -51,7 +51,7 @@ What it keeps, and where
   Settings:     %LOCALAPPDATA%\BYOA\wallet\settings.json (sites, sources, routes, limits; no secrets)
   API keys:     %LOCALAPPDATA%\BYOA\wallet\secrets.dat (Windows DPAPI, your account only; never shown again)
   Activity:     %LOCALAPPDATA%\BYOA\wallet\activity-*.jsonl (time, site, skill, source, cost; no audio, no text)
-  Models:       %LOCALAPPDATA%\BYOA\wallet\models (downloaded models owned by this wallet)
+  Models:       in %LOCALAPPDATA%\BYOA\wallet\models, or in %LOCALAPPDATA%\BYOA\models where an older version put them (downloaded models owned by this wallet)
 
 The wallet never stores the audio or the recognised text, and a site never sees your keys.
 

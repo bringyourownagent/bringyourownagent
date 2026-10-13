@@ -47,6 +47,7 @@ public sealed class GigaAmSource : ISpeechSource, IDownloadableSource, IWarmable
     double? _progress;
     string? _downloadError;
     double _seconds = 0.2;
+    bool _hasMeasuredSeconds;
 
     /// <param name="findFolder">Returns the GigaAM folder from the visitor's model folders, or null.</param>
     /// <param name="http">The wallet HTTP client. It is used only for the pinned public model files.</param>
@@ -72,6 +73,7 @@ public sealed class GigaAmSource : ISpeechSource, IDownloadableSource, IWarmable
     public int LanguageCount => 1;
     public bool Paid => false;
     public double ApproxSeconds => _seconds;
+    public bool HasMeasuredSeconds => _hasMeasuredSeconds;
 
     public event Action? ProgressChanged;
 
@@ -345,7 +347,10 @@ public sealed class GigaAmSource : ISpeechSource, IDownloadableSource, IWarmable
                 stream.AcceptWaveform(16000, samples);
                 recognizer.Decode(stream);
                 var text = stream.Result.Text.Trim();
-                _seconds = _seconds * 0.7 + watch.Elapsed.TotalSeconds * 0.3;
+                _seconds = _hasMeasuredSeconds
+                    ? _seconds * 0.7 + watch.Elapsed.TotalSeconds * 0.3
+                    : watch.Elapsed.TotalSeconds;
+                _hasMeasuredSeconds = true;
                 return new Transcript(text, 0, "CPU");
             }
         }, ct);

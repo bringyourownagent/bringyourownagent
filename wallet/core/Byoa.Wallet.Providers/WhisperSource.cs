@@ -84,6 +84,7 @@ public class WhisperSource : ISpeechSource, IDownloadableSource, IWarmable, IDis
     string? _error;
     string? _runtime;
     double _seconds;
+    bool _hasMeasuredSeconds;
 
     /// <param name="modelFile">The ggml file name chosen in the settings.</param>
     /// <param name="found">The models found in the visitor's model folders.</param>
@@ -111,6 +112,7 @@ public class WhisperSource : ISpeechSource, IDownloadableSource, IWarmable, IDis
     public int LanguageCount => Vocabulary.WhisperLanguages.Length;
     public bool Paid => false;
     public double ApproxSeconds => _seconds;
+    public bool HasMeasuredSeconds => _hasMeasuredSeconds;
     public double? DownloadProgress => _progress;
     public long? DownloadSize => _size ?? (KnownSizes.TryGetValue(_modelFile(), out var s) ? s : null);
 
@@ -416,7 +418,10 @@ public class WhisperSource : ISpeechSource, IDownloadableSource, IWarmable, IDis
                 text.Append(segment.Text);
             }
 
-            if (_warm.Contains(language ?? "auto")) _seconds = _seconds * 0.7 + watch.Elapsed.TotalSeconds * 0.3;
+            _seconds = _hasMeasuredSeconds
+                ? _seconds * 0.7 + watch.Elapsed.TotalSeconds * 0.3
+                : watch.Elapsed.TotalSeconds;
+            _hasMeasuredSeconds = true;
             _warm.Add(language ?? "auto");
             return new Transcript(text.ToString().Trim(), 0, _runtime);
         }

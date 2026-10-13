@@ -69,7 +69,7 @@ To remove it: `powershell -ExecutionPolicy Bypass -File wallet\uninstall.ps1` re
 | API keys | `%LOCALAPPDATA%\BYOA\wallet\secrets.dat` (DPAPI, current user) |
 | Pairings of direct links | `%LOCALAPPDATA%\BYOA\wallet\pairings.dat` (DPAPI, current user; only for sites with "decide on my own") |
 | Activity | `%LOCALAPPDATA%\BYOA\wallet\activity-YYYY-MM-DD.jsonl` (no audio, no text) |
-| Downloaded models | `%LOCALAPPDATA%\BYOA\wallet\models` (under the active `BYOA_WALLET_HOME`) |
+| Downloaded models | in `%LOCALAPPDATA%\BYOA\wallet\models` (or in `%LOCALAPPDATA%\BYOA\models` where an older version put them); under the active `BYOA_WALLET_HOME` when that variable is set |
 | Error log | `%LOCALAPPDATA%\BYOA\wallet\errors.log` (exception types and stacks only) |
 | Model folders searched | the models folder above, plus `<drive>:\AI-MODELS`, `<drive>:\models` and `%USERPROFILE%\models` when they exist; add more in **Sources** |
 

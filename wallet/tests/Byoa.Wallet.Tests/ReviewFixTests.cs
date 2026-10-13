@@ -203,6 +203,7 @@ public class ReviewFixTests
             _ui.Notice = i % 2 == 0 ? NoticeAnswer.Decline : NoticeAnswer.Closed;
             Assert.Null(await _engine.HandleAsync(Clips.Request(Site, click: true)));
             Assert.Equal(i + 1, _ui.Notices);
+            _engine.Revoke(Site);
         }
     }
 
@@ -290,6 +291,21 @@ public class ReviewFixTests
         Assert.Contains("deletes no files", header);
         Assert.Single(Regex.Matches(script, @"Remove-Item\b"));                    // the only file it removes: the shortcut
         Assert.Matches(@"Remove-Item -LiteralPath \$link\b", script);
+    }
+
+    [Fact]
+    public void R9_TheInstallerKeepsThePackageAndSourceLicenseFiles()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "install.ps1"))) dir = dir.Parent;
+        Assert.NotNull(dir);
+        var script = File.ReadAllText(Path.Combine(dir.FullName, "install.ps1"));
+
+        Assert.Contains("Copy-FileIfPresent (Join-Path $root 'LICENSE')", script, StringComparison.Ordinal);
+        Assert.Contains("Copy-FileIfPresent (Join-Path $root 'THIRD-PARTY-NOTICES.txt')", script, StringComparison.Ordinal);
+        Assert.Contains("Copy-Folder $packageLicenses", script, StringComparison.Ordinal);
+        Assert.Contains("$root 'packaging\\THIRD-PARTY-NOTICES.txt'", script, StringComparison.Ordinal);
+        Assert.Contains("Copied $copied files.", script, StringComparison.Ordinal);
     }
 
     // ------------------------------------------------------------------ #2 cold start, wallet side

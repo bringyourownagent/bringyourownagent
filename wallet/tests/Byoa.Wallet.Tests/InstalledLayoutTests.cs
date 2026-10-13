@@ -37,6 +37,22 @@ public class InstalledLayoutTests
         Assert.True(AgentPipeServer.IsBridgeIn(Path.Combine(folder, "byoa-mcp.exe"), folder));
     }
 
+    [Fact]
+    public void InstalledBridgeCheckUsesAppContextWhenNoTestOverrideIsPresent()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        var old = Environment.GetEnvironmentVariable("BYOA_WALLET_MCP_PATH");
+        Environment.SetEnvironmentVariable("BYOA_WALLET_MCP_PATH", null);
+        try
+        {
+            Assert.True(AgentPipeServer.IsInstalledBridge(Path.Combine(AppContext.BaseDirectory, "byoa-mcp.exe")));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("BYOA_WALLET_MCP_PATH", old);
+        }
+    }
+
     static string Fresh(string name) => Path.Combine(AppContext.BaseDirectory, "layout-tests", name + "-" + Guid.NewGuid().ToString("N")[..8]);
 
     [Fact]

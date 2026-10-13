@@ -67,6 +67,9 @@ public interface ISpeechSource
     /// <summary>The typical seconds per short clip: measured on this computer once it has run, a default before.</summary>
     double ApproxSeconds { get; }
 
+    /// <summary>True only after this wallet has measured a real clip on this computer.</summary>
+    bool HasMeasuredSeconds => false;
+
     SourceState State { get; }
 
     /// <summary>One line about its state for people: "ready · GPU (Vulkan)", "not downloaded (874 MB)".</summary>
