@@ -48,6 +48,15 @@ Wallet to server, first frame:
 Server to wallet:
 
 - `{"type":"welcome","pairing":"<opaque token>","manifest":"<the same base64url string as in the link>"}`, or `{"type":"error","code":"bad-session"}` followed by a close.
+- **Error codes.** An `error` frame carries a `code` and is followed by a close.
+
+  | Code | Retry later? | What the wallet does |
+  |---|---|---|
+  | `bad-session` | no | The code is unknown, spent or expired. The wallet stops, forgets the pairing it was trying (if it was resuming one) and tries no more; the visitor needs a new link. |
+  | `rate-limited`, `busy` | yes | The server did not look at the code or at the pairing. The wallet keeps both, closes this connection and tries again by its backoff (1, 2, 5, 10, 30 seconds): with a code for up to 60 seconds after the link, with a pairing for as long as the grant is valid. |
+  | any other code, or none | no | Treated like `bad-session`. |
+
+  A site that is restarted SHOULD answer a flood of returning wallets with `rate-limited`, not with `bad-session`: the first costs a wallet a few seconds, the second costs its visitor the pairing.
 - `pairing` is a token of 128 bits or more (at least 22 characters of the URL-safe alphabet `A-Z a-z 0-9 - _`) that the wallet stores per origin **only** if "decide on my own" is ticked. It lets the wallet reconnect later (after a wallet restart, or when the page reloads) with `{"type":"hello","session":null,"pairing":"<token>",...}` and no new link.
 - **The pairing is a bearer secret of the site's own server.** Whoever presents it becomes the wallet of that pairing, and the newest connection with a pairing replaces the older one. A site SHOULD therefore keep it on the server, tied to the visitor's session (for example by an `HttpOnly` cookie), and MUST NOT put it where script on the page can read it if that page can run third-party script.
 

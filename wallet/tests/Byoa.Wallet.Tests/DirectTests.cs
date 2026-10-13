@@ -1349,6 +1349,43 @@ public class DirectTransportTests : IDisposable
         Assert.Equal(1, _site.Upgrades);
     }
 
+    [Theory]
+    [InlineData("rate-limited")]
+    [InlineData("busy")]
+    public async Task ATryLaterErrorOnAResumeKeepsThePairingAndTheWalletTriesAgain(string code)
+    {
+        var (_, connection, socket, _) = await PairAsync(auto: true, token: "pairing-token-BBBB-0123456789");
+        socket.Abort();                                                            // the site's server restarts
+        var refused = await _site.NextSocketAsync();
+        await TestSite.ReceiveAsync(refused);
+        await TestSite.SendAsync(refused, new JsonObject { ["type"] = "error", ["code"] = code });   // many wallets came back at once
+        Assert.NotNull(_pairings.Get(_site.Origin));                              // a retryable error does not cost the visitor the pairing
+        var again = await _site.NextSocketAsync();                                 // the wallet tries again by its backoff
+        var hello = await TestSite.ReceiveAsync(again);
+        Assert.Equal("pairing-token-BBBB-0123456789", hello["pairing"]!.GetValue<string>());
+        await TestSite.SendAsync(again, _site.Welcome("pairing-token-BBBB-0123456789"));
+        await WaitUntil(() => connection.State == DirectState.Connected);
+        Assert.Equal("the site asked the wallet to try again later: " + code, Links.First(e => e.Outcome == "error").Note);
+        await TestSite.SendAsync(again, Call(4));
+        Assert.True((await TestSite.ReceiveAsync(again))["ok"]!.GetValue<bool>());
+    }
+
+    [Fact]
+    public async Task ATryLaterErrorOnTheFirstConnectionKeepsTheCodeAndTheWalletTriesAgainWithinTheWindow()
+    {
+        _ui.Consent = new ConsentAnswer(true, 0.05m, AutoDecide: false, []);
+        var code = TestSite.NewCode();
+        var connection = await Transport().HandleLinkAsync(_site.Link(code));
+        var first = await _site.NextSocketAsync();
+        await TestSite.ReceiveAsync(first);
+        await TestSite.SendAsync(first, new JsonObject { ["type"] = "error", ["code"] = "rate-limited" });
+        var second = await _site.NextSocketAsync();                                // the same code, a moment later
+        Assert.Equal(code, (await TestSite.ReceiveAsync(second))["session"]!.GetValue<string>());
+        await TestSite.SendAsync(second, _site.Welcome());
+        Assert.True(await connection!.Welcomed.WaitAsync(TimeSpan.FromSeconds(10)));
+        Assert.Equal(SiteStatus.Allowed, _engine.FindSite(_site.Origin)!.Status);
+    }
+
     [Fact]
     public async Task ByeFromTheSiteEndsTheConnectionEvenWithAPairing()
     {

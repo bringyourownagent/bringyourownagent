@@ -260,6 +260,17 @@ public sealed class DirectConnection
             if (type == "error")
             {
                 var code = Code(first["code"]);
+                if (code is not null && RetryableCodes.Contains(code))
+                {
+                    // "Try again later": the site did not look at the code or the pairing (its own rate limit, a server that is busy),
+                    // so both are still good. The wallet keeps them and tries again by its usual backoff: a restarted site must
+                    // not cost the visitor their pairing because many wallets behind one router came back at once.
+                    if (!_toldFailure) Record("error", "the site asked the wallet to try again later: " + code);
+                    _toldFailure = true;
+                    await CloseAsync(ws, WebSocketCloseStatus.NormalClosure).ConfigureAwait(false);
+                    return (Outcome.Dropped, false);
+                }
+
                 _session = null;                                 // an explicit answer: the code is spent or bad
                 Record("error", "the site refused the connection: " + code);
                 if (resumed && _token is not null) _owner.Pairings.Forget(Origin, _token);
@@ -643,6 +654,9 @@ public sealed class DirectConnection
     /// <summary>A pairing token: 22 to 1024 URL-safe characters (opaque to the wallet).</summary>
     internal static bool IsToken(string? token) => token is not null && token.Length is >= 22 and <= 1024
         && token.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_');
+
+    /// <summary>Error codes that mean "try again later" (CONTRACT-DIRECT.md section 4): the wallet keeps its code and its pairing and retries.</summary>
+    static readonly HashSet<string> RetryableCodes = new(["rate-limited", "busy"], StringComparer.Ordinal);
 
     static string Code(JsonNode? node)
     {
