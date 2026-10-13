@@ -47,6 +47,22 @@ public sealed class WalletEngine
 
     const int MaxAudioBytes = 6 * 1024 * 1024;
     const int MaxManifestChars = 64 * 1024;
+
+    /// <summary>
+    /// A page may ask this many times a minute without a click (a request is made once per visit, so a real page asks once or twice). The rest are
+    /// answered with nothing and not written down: a loop in a page must not turn into a settings write, an activity line and a
+    /// window refresh for every iteration.
+    /// </summary>
+    public const int RequestsPerMinutePerOrigin = 30;
+
+    readonly ConcurrentDictionary<string, RequestWindow> _requestWindows = new(StringComparer.Ordinal);
+
+    sealed class RequestWindow
+    {
+        public DateTimeOffset Start;
+        public int Count;
+        public bool Told;
+    }
     const int MaxTextChars = 4000;
 
     // Hard caps of a text.generate call, whatever the page asks for.
@@ -388,6 +404,10 @@ public sealed class WalletEngine
     {
         var entry = new ActivityEntry { Origin = origin, Kind = Wire.Request, Via = via, Note = userActivation ? "after a click" : "without a click" };
         if (!Origins.TryParse(origin, out var host, out var secure)) return Done(entry, "invalid", "origin not allowed");
+        // Only a page's request without a click counts here: a request with a click needs a person and opens a window, a link has its own
+        // flood limit (the transport), and a renewal comes from the wallet itself.
+        if (via is null && !renewal && !userActivation && !WithinRequestRate(origin, out var tell))
+            return tell ? Done(entry, "limit", "more than " + RequestsPerMinutePerOrigin + " requests in a minute: the others are not written down") : null;
         if (payload["manifest"] is not JsonObject manifestNode) return Done(entry, "invalid", "no manifest");
         var manifestText = manifestNode.ToJsonString();
         if (manifestText.Length > MaxManifestChars) return Done(entry, "invalid", "manifest too large");
@@ -397,7 +417,9 @@ public sealed class WalletEngine
 
         PauseIfDue(origin);                             // before this request counts as use: a site unused too long is paused first
         var site = _store.Read(s => s.Site(origin) is { } r ? Copy(r) : null) ?? new SiteRecord { Origin = origin };
-        _store.Update(s => Site(s, origin).LastRequest = Now);
+        // Written at most once a minute: "last used" is counted in hours, and every write is the whole settings file.
+        if (site.LastRequest is not { } lastRequest || Now - lastRequest >= TimeSpan.FromMinutes(1))
+            _store.Update(s => Site(s, origin).LastRequest = Now);
 
         if (site.Status == SiteStatus.Blocked) return Done(entry, "blocked", "blocked site: no notice");
         // A declined origin is intentionally indistinguishable from an absent wallet. Do not run the prompt
@@ -462,6 +484,39 @@ public sealed class WalletEngine
         finally
         {
             Leave(ask, ref left);
+        }
+    }
+
+    /// <summary>True while the origin is within its requests for this minute. <paramref name="tell"/> is true once per minute, at the first refusal.</summary>
+    bool WithinRequestRate(string origin, out bool tell)
+    {
+        var now = Now;
+        if (_requestWindows.Count > 512)
+        {
+            foreach (var (key, old) in _requestWindows)
+                if (now - old.Start >= TimeSpan.FromMinutes(1)) _requestWindows.TryRemove(key, out _);
+        }
+
+        var window = _requestWindows.GetOrAdd(origin, _ => new RequestWindow { Start = now });
+        lock (window)
+        {
+            if (now - window.Start >= TimeSpan.FromMinutes(1))
+            {
+                window.Start = now;
+                window.Count = 0;
+                window.Told = false;
+            }
+
+            window.Count++;
+            if (window.Count <= RequestsPerMinutePerOrigin)
+            {
+                tell = false;
+                return true;
+            }
+
+            tell = !window.Told;
+            window.Told = true;
+            return false;
         }
     }
 

@@ -65,6 +65,32 @@ public class EngineTests
     }
 
     [Fact]
+    public async Task APageThatAsksInALoopIsCutAndTheRestIsNotWrittenDown()
+    {
+        var changes = 0;
+        _store.Changed += () => changes++;
+        for (var i = 0; i < WalletEngine.RequestsPerMinutePerOrigin; i++)
+            Assert.Null(await _engine.HandleAsync(Clips.Request(Site, click: false)));
+        Assert.Equal(WalletEngine.RequestsPerMinutePerOrigin, _store.Read(s => s.Site(Site)!.QuietRequests));
+        Assert.True(changes <= WalletEngine.RequestsPerMinutePerOrigin + 1, $"{changes} settings writes for {WalletEngine.RequestsPerMinutePerOrigin} requests");   // LastRequest once, not every time
+
+        var before = changes;
+        var quietBefore = _ui.Quiet;
+        for (var i = 0; i < 500; i++) Assert.Null(await _engine.HandleAsync(Clips.Request(Site, click: false)));
+        Assert.Equal(before, changes);                                                       // the loop writes no settings
+        Assert.Equal(WalletEngine.RequestsPerMinutePerOrigin, _store.Read(s => s.Site(Site)!.QuietRequests));
+        Assert.Single(_log.Recent(), e => e.Outcome == "limit");                             // and one line in the activity
+        Assert.Equal(quietBefore, _ui.Quiet);                                                // no badge refresh either
+
+        Assert.Null(await _engine.HandleAsync(Clips.Request(Other, click: false)));          // another site is not cut
+        Assert.Equal(1, _store.Read(s => s.Site(Other)!.QuietRequests));
+
+        _time.Now += TimeSpan.FromMinutes(1);                                                // a minute later the page may ask again
+        Assert.Null(await _engine.HandleAsync(Clips.Request(Site, click: false)));
+        Assert.Equal(WalletEngine.RequestsPerMinutePerOrigin + 1, _store.Read(s => s.Site(Site)!.QuietRequests));
+    }
+
+    [Fact]
     public async Task NoClickGivesNullAQuietBadgeAndNoNotice()
     {
         Assert.Null(await _engine.HandleAsync(Clips.Request(Site, click: false)));
