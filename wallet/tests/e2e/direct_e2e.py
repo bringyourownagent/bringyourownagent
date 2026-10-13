@@ -13,9 +13,10 @@ request of any kind reaches the site before Allow; the notice and consent (real 
 models loaded first, and the site's welcome echoing the manifest; calls with real Russian and Slovak speech over the
 connection; activity marked "via link"; a restart of the wallet reconnects with the stored pairing and no notice; a
 site that asks for more on a reconnect gets bye, and a new link shows only the difference; a site whose welcome does
-not echo its link's manifest gets bye and nothing of the link is stored or revoked; decline and block from a link: the
-site never hears from the wallet, and nothing is stored, so a later link asks again; a bad session gets an error and
-no retry; Revoke in the settings closes the
+not echo its link's manifest gets bye and nothing of the link is stored or revoked; decline and "Block in Sites…" from a
+link: the site never hears from the wallet, and nothing is stored (activity: declined), so a later link asks again; a
+link to a paired site that decides on its own still asks first (notice, consent), and a bad session then gets an error
+and no retry; Revoke in the settings closes the
 connection; once, a real click in a headed Chromium (its own prompt, then the wallet, which gets the link from the
 second process over the pipe).
 Needs: aiohttp, uiautomation, pillow, patchright (for the browser step). Windows only.
@@ -232,24 +233,34 @@ ui.invoke(w, "NoticeDecline")
 time.sleep(4)
 check("decline: the site never hears from the wallet (no request of any kind)", dec.requests == 0)
 
-# ---------------------------------------------------------------------------------------------- block
+# ---------------------------------------------------------------------------------------------- "Block in Sites…" on a link's notice
 open_link(blk.new_link())
 w = ui.find_window("Agent wallet notice", 20)
-ui.invoke(w, "NoticeBlock")
+ui.invoke(w, "NoticeBlock")                                  # a link's notice has no block: this opens Sites, and the answer is "not now"
 time.sleep(2)
 open_link(blk.new_link())
-w2 = ui.find_window("Agent wallet notice", 20)               # a block from a link stores nothing: the site is asked again
+w2 = ui.find_window("Agent wallet notice", 20)               # nothing was stored: the site is asked again
 seen = w2 is not None
 if w2 is not None:
     ui.invoke(w2, "NoticeBlock")
 time.sleep(1)
-check("block from a link: no connection to the site, nothing stored, so a later link asks again",
-      blk.requests == 0 and seen
-      and any(e.get("kind") == "link" and e.get("outcome") == "blocked" for e in activity()))
+not_now = [e for e in activity() if e.get("origin") == blk.origin and e.get("kind") == "request" and e.get("outcome") == "declined"
+           and e.get("note") == "declined from a link: nothing stored"]
+check("\"Block in Sites…\" on a link's notice: no connection to the site, nothing stored (declined, never blocked), so a later link asks again",
+      blk.requests == 0 and seen and len(not_now) == 2
+      and not any(e.get("origin") == blk.origin and e.get("outcome") == "blocked" for e in activity()), f"{len(not_now)} entries")
 
 # ---------------------------------------------------------------------------------------------- a bad session
+# A link always asks, also for a paired site that decides on its own: the visitor shows and allows it, then the site answers error.
 upgrades, errors = main.upgrades, main.errors_sent
 open_link(main.new_link(code="a-code-this-site-never-made-0123456789"))
+w = ui.find_window("Agent wallet notice", 20)
+check("a link to a paired site that decides on its own still shows a notice (no silent grant)", w is not None)
+if w is not None:
+    ui.invoke(w, "NoticeShow")
+    c = ui.find_window("Agent wallet consent", 10)
+    if c is not None:
+        ui.invoke(c, "ConsentAllow")
 got_error = wait(lambda: main.errors_sent == errors + 1, 20)
 time.sleep(4)
 refused = [e for e in activity() if e.get("kind") == "link" and e.get("outcome") == "error"]
