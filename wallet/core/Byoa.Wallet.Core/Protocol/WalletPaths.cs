@@ -29,8 +29,28 @@ public static class WalletPaths
     /// <summary>True when <see cref="HomeVariable"/> points the wallet at a separate data folder.</summary>
     public static bool IsCustomHome => !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(HomeVariable));
 
-    /// <summary>Downloaded models in the active wallet home.</summary>
-    public static string Models => Path.Combine(Home, "models");
+    /// <summary>
+    /// Downloaded models: <c>models</c> in the active wallet home. A visitor of an older build has them in
+    /// <c>%LOCALAPPDATA%\BYOA\models</c>, where that build put them for every data folder; they stay there and are
+    /// used from there, so an update never makes the visitor download a gigabyte twice and the wallet never moves it.
+    /// </summary>
+    public static string Models => ModelsFor(Home, LocalAppData, IsCustomHome);
+
+    internal static string ModelsFor(string home, string localAppData, bool customHome)
+    {
+        var current = Path.Combine(home, "models");
+        if (customHome) return current;
+        var legacy = Path.Combine(localAppData, "BYOA", "models");
+        try
+        {
+            var currentInUse = Directory.Exists(current) && Directory.EnumerateFileSystemEntries(current).Any();
+            return !currentInUse && Directory.Exists(legacy) ? legacy : current;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return current;
+        }
+    }
 
     /// <summary>
     /// The named pipe the native host uses to reach the running wallet. It is per user (the name carries a hash of

@@ -78,5 +78,5 @@ if ($WhatIfPreference) {
 }
 Write-Host "  App and host:   $InstallDir"
 Write-Host "  Data:           $(Join-Path $env:LOCALAPPDATA 'BYOA\wallet')"
-Write-Host "  Models:         $(Join-Path $env:LOCALAPPDATA 'BYOA\models')"
+Write-Host "  Models:         $(Join-Path $env:LOCALAPPDATA 'BYOA\wallet\models') (and $(Join-Path $env:LOCALAPPDATA 'BYOA\models') if an older version of the wallet downloaded them there)"
 Write-Host 'Quit the wallet from its tray icon, and remove the unpacked extension in chrome://extensions.'

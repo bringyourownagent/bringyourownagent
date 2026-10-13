@@ -185,7 +185,7 @@ Write-Host ''
 Write-Host 'Installed the BYOA agent wallet 0.1.'
 Write-Host "  App, host, MCP: $InstallDir"
 Write-Host "  Data:           $(Join-Path $env:LOCALAPPDATA 'BYOA\wallet') (settings, DPAPI-protected keys, activity)"
-Write-Host "  Models:         $(Join-Path $env:LOCALAPPDATA 'BYOA\wallet\models')"
+Write-Host "  Models:         $(Join-Path $env:LOCALAPPDATA 'BYOA\wallet\models') (models that an older version downloaded to $(Join-Path $env:LOCALAPPDATA 'BYOA\models') stay there and are used from there)"
 Write-Host "  Extension ID:   $extensionId"
 Write-Host ''
 Write-Host 'Load the extension in Chrome: open chrome://extensions, turn on Developer mode,'

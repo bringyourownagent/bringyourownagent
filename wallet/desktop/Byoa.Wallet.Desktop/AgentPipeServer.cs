@@ -229,15 +229,26 @@ sealed class AgentPipeServer : IDisposable
 
     static bool IsInstalledBridge(string? path)
     {
+        var configured = Environment.GetEnvironmentVariable("BYOA_WALLET_MCP_PATH");
+        return IsBridgeIn(path, string.IsNullOrWhiteSpace(configured) ? AppContext.BaseDirectory : configured);
+    }
+
+    /// <summary>
+    /// True when <paramref name="path"/> is <c>byoa-mcp.exe</c> inside <paramref name="walletFolder"/>. The wallet's own
+    /// folder comes from <c>AppContext.BaseDirectory</c>, which ends in a backslash, while the folder of the
+    /// bridge's image path does not: both are compared without a trailing separator.
+    /// </summary>
+    internal static bool IsBridgeIn(string? path, string walletFolder)
+    {
         if (string.IsNullOrWhiteSpace(path) || !Path.IsPathFullyQualified(path) ||
             !string.Equals(Path.GetFileName(path), "byoa-mcp.exe", StringComparison.OrdinalIgnoreCase))
             return false;
         try
         {
-            var configured = Environment.GetEnvironmentVariable("BYOA_WALLET_MCP_PATH");
-            var folder = string.IsNullOrWhiteSpace(configured) ? AppContext.BaseDirectory : configured;
+            var folder = walletFolder;
             if (string.Equals(Path.GetExtension(folder), ".exe", StringComparison.OrdinalIgnoreCase)) folder = Path.GetDirectoryName(folder)!;
-            return string.Equals(Path.GetFullPath(Path.GetDirectoryName(path)!), Path.GetFullPath(folder), StringComparison.OrdinalIgnoreCase);
+            static string Normal(string value) => Path.TrimEndingDirectorySeparator(Path.GetFullPath(value));
+            return string.Equals(Normal(Path.GetDirectoryName(path)!), Normal(folder), StringComparison.OrdinalIgnoreCase);
         }
         catch (Exception e) when (e is ArgumentException or IOException or NotSupportedException) { return false; }
     }
