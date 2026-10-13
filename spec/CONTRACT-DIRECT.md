@@ -29,13 +29,15 @@
 ## 3. Before Allow
 
 - **No network contact of any kind.** The wallet reads the manifest from the link (§7), shows the notice and consent from it, and does nothing else. Without a click the browser will not launch the protocol, so "only after a click" is enforced by the browser. That guarantee covers links a browser launches. A link handed to the wallet by anything else (another program on the visitor's computer, a command line) is treated like a click: the visitor still sees the notice with the site's origin and can decline, and a program running as the visitor could do worse anyway.
-- **Decline and Block.** The wallet never connects. The site cannot tell this from "no wallet installed": it simply never sees a connection. Block also makes later links for that origin do nothing (an activity entry only).
+- **Decline and Block.** The wallet never connects. The site cannot tell this from "no wallet installed": it simply never sees a connection.
+- **What a link's Decline or Block keeps.** A Decline or Block chosen on a page's own request (through the extension) is stored, as before: it silences later requests and links for that origin. A Decline or Block chosen on a link is **not stored**: it means "not now" for that link, and the next link or request asks again. A site can prove a link only by connecting, and the wallet makes no contact with a site it was told to block, so a link cannot switch a real site off for good. The visitor blocks a site for good in the wallet's Sites list.
+- **An Allow from a link is provisional.** The wallet keeps the visitor's Allow (budget, skills, "decide on my own", and the site's summary and privacy) in memory only. It stores them, and keeps the pairing, only when the site's `welcome` echoes the link's manifest (§7): that echo is the proof that the named server issued the link. Until then the summary shown in the consent window comes from the link, and the window says so ("came by a link: confirmed after you allow"). The held answer is dropped when the connection ends first: an `error`, a timeout, a failed connection, a manifest that differs, or the wallet closing. It is also dropped when the visitor decides about the site in the wallet meanwhile (a Decline, an Allow in a page's window, "decide on my own" switched, a revoke, a block or a pause): the visitor's later decision stands, and the site's link connections end.
 - **Already granted.** If the origin already has a grant covering the manifest with "decide on my own" ticked, the wallet connects without a notice.
 - **Asking for more.** The consent shows only the difference, as in [CONTRACT.md](CONTRACT.md).
 
 ## 4. The channel
 
-JSON text frames over a WebSocket, at most 4 MB per frame.
+JSON text frames over a WebSocket. The wallet accepts a frame of up to 4 MB from the site (a larger one ends the connection). A site MUST accept at least 64 KB per frame from a wallet and MAY refuse more. The wallet's frames stay well below that: the largest is a `result` of `text.generate`, at most 4,000 characters escaped as JSON (about 24 KB in the worst case); `hello` is a few hundred bytes, and the wallet never sends the manifest.
 
 Wallet to server, first frame:
 
@@ -62,7 +64,7 @@ Rules for calls and the connection:
 - Revoking the site in the wallet closes the socket and forgets the pairing.
 - The wallet sends a ping every 30 seconds.
 - On a disconnect, the wallet reconnects with backoff (1, 2, 5, 10, 30 seconds) while the grant is valid **and** the pairing is stored. Otherwise it stays disconnected.
-- A frame over 4 MB, in either direction, ends the connection. A site MUST NOT send one, and MUST bound the size of what it accepts back.
+- A frame over 4 MB from the site ends the connection. A site MUST NOT send one, and MUST bound the size of what it accepts from the wallet (at least 64 KB, see above).
 
 **What ends what**
 
@@ -71,7 +73,8 @@ Rules for calls and the connection:
 | A one-time code | it is used once, or 120 seconds pass, or the page cancels it |
 | The wallet's retries with a code | 60 seconds after the link (the wallet gives up; the code itself lives 120 s) |
 | A `bad-session` error | the wallet forgets any pairing it was trying and stops; the visitor needs a new link |
-| A pairing | the visitor revokes or blocks the site, the manifest the site echoes differs from the link's, the site forgets it (idle for 24 hours or more is a sensible limit), or the site restarts (a site that keeps pairings in memory forgets them all) |
+| A pairing | the visitor revokes or blocks the site, a reconnect's welcome asks for more than the grant covers, the site forgets it (idle for 24 hours or more is a sensible limit), or the site restarts (a site that keeps pairings in memory forgets them all) |
+| A visitor's Allow for a link, held | the site's welcome echoes the link's manifest (then the answer is stored, §3), or the connection ends first |
 | A connection | either side says `bye`, a frame breaks a rule, it is silent too long, or the site lets it go (a long-lived connection may be let go with `bye`; the wallet comes back by itself with its pairing) |
 
 ## 5. The site's side (what a site has to do)
@@ -90,7 +93,7 @@ Rules for calls and the connection:
 - **Server limits.**
   - Codes are single use, expire after 120 seconds, and are rate-limited per IP.
   - At most one wallet connection per pairing.
-  - Frames up to 4 MB.
+  - Frames from the wallet: at least 64 KB each. The server MAY refuse more, and then closes the connection.
   - Unknown frames are ignored; malformed JSON closes the connection.
   - The server sends nothing before a valid `hello`.
 
@@ -105,5 +108,5 @@ Fetching a manifest from the site before consent would let the site learn that a
 - The link carries the manifest itself: `manifest=<base64url, no padding, of the manifest JSON bytes, at most 4096 bytes decoded>`.
 - The wallet makes **no** network request of any kind before Allow (or before a silent "decide on my own" grant). It parses and validates the manifest from the link and shows the consent from it.
 - The site MUST keep **the exact string** it put in the link and echo that string: the comparison is over bytes, and the same manifest serialised again (another key order, other escaping, another process) is a different string. A site that builds links on one server and accepts wallets on another keeps the string where both can read it.
-- After Allow, `hello` as in §4. The server's `welcome` must echo the manifest it put in the link: `{"type":"welcome","pairing":"...","manifest":"<the same base64url string>"}`. The wallet compares it byte for byte with the link's; on a mismatch it sends `bye`, closes, forgets any pairing, and records "the site's manifest differs from its link" in its activity log (the grant is revoked).
+- After Allow, `hello` as in §4. The server's `welcome` must echo the manifest it put in the link: `{"type":"welcome","pairing":"...","manifest":"<the same base64url string>"}`. The wallet compares it byte for byte with the link's. On a match it stores the visitor's answer to the link (§3) and the pairing, if the site has "decide on my own". On a mismatch it sends `bye`, closes, drops the held answer, and records "the site's manifest differs from its link" in its activity log. It does not revoke the site or forget its pairing: a link from anywhere can name any site, so a link must not be able to switch one off.
 - On a reconnect with a pairing (no link), `welcome.manifest` is the site's current manifest; if it asks for more than the stored grant covers, the wallet sends `bye`, closes, and needs a new link and a new consent (which shows only the difference).

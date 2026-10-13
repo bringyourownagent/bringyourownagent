@@ -13,8 +13,9 @@ request of any kind reaches the site before Allow; the notice and consent (real 
 models loaded first, and the site's welcome echoing the manifest; calls with real Russian and Slovak speech over the
 connection; activity marked "via link"; a restart of the wallet reconnects with the stored pairing and no notice; a
 site that asks for more on a reconnect gets bye, and a new link shows only the difference; a site whose welcome does
-not echo its link's manifest gets bye and is revoked; decline and block: the site never hears from the wallet, and
-after a block later links do nothing; a bad session gets an error and no retry; Revoke in the settings closes the
+not echo its link's manifest gets bye and nothing of the link is stored or revoked; decline and block from a link: the
+site never hears from the wallet, and nothing is stored, so a later link asks again; a bad session gets an error and
+no retry; Revoke in the settings closes the
 connection; once, a real click in a headed Chromium (its own prompt, then the wallet, which gets the link from the
 second process over the pipe).
 Needs: aiohttp, uiautomation, pillow, patchright (for the browser step). Windows only.
@@ -209,9 +210,9 @@ ui.invoke(c, "ConsentAllow")
 got_bye = wait(lambda: liar.byes == 1, 45)
 time.sleep(1)
 lies = [e for e in activity() if e.get("origin") == liar.origin]
-check("a welcome whose manifest differs from the link's: bye, and the site's grant is revoked",
+check("a welcome whose manifest differs from the link's: bye, and nothing is stored or revoked",
       got_bye and any(e.get("kind") == "link" and e.get("note") == "the site's manifest differs from its link" for e in lies)
-      and any(e.get("outcome") == "revoked" for e in lies), f"{len(lies)} entries")
+      and not any(e.get("outcome") == "revoked" for e in lies), f"{len(lies)} entries")
 
 # ---------------------------------------------------------------------------------------------- decline (the link goes to the running wallet)
 open_link(dec.new_link())
@@ -227,10 +228,13 @@ w = ui.find_window("Agent wallet notice", 20)
 ui.invoke(w, "NoticeBlock")
 time.sleep(2)
 open_link(blk.new_link())
-seen = ui.find_window("Agent wallet notice", 5) is not None
+w2 = ui.find_window("Agent wallet notice", 20)               # a block from a link stores nothing: the site is asked again
+seen = w2 is not None
+if w2 is not None:
+    ui.invoke(w2, "NoticeBlock")
 time.sleep(1)
-check("block: no connection, and a later link does nothing (no notice, no request to the site)",
-      blk.requests == 0 and not seen
+check("block from a link: no connection to the site, nothing stored, so a later link asks again",
+      blk.requests == 0 and seen
       and any(e.get("kind") == "link" and e.get("outcome") == "blocked" for e in activity()))
 
 # ---------------------------------------------------------------------------------------------- a bad session
