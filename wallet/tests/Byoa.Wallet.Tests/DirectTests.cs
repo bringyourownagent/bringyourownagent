@@ -626,6 +626,61 @@ public class DirectTransportTests : IDisposable
     }
 
     [Fact]
+    public async Task ALinkToASiteThatDecidesOnItsOwnStillAsksAndStoresNothingUntilTheWelcomeEchoesIt()
+    {
+        var (transport, _, _, _) = await PairAsync(auto: true, token: "pairing-token-AAAA-0123456789");   // allowed at $0.05, paired
+        _ui.Consent = new ConsentAnswer(true, 0.10m, AutoDecide: true, []);
+        var code = TestSite.NewCode();
+        var connection = await transport.HandleLinkAsync(_site.Link(code));      // a new link asks, though the grant covers it
+        Assert.NotNull(connection);
+        Assert.Equal(2, _ui.Notices);
+        Assert.Equal(2, _ui.Consents.Count);
+        Assert.False(_ui.Consents[^1].IsDifference);                              // what is already allowed, as for any link
+        var socket = await SocketOfAsync(code);
+
+        Assert.Equal(Money.ToSpec(0.05m), _engine.FindSite(_site.Origin)!.Budget);   // the new Allow waits for the welcome
+        Assert.Equal("pairing-token-AAAA-0123456789", _pairings.Get(_site.Origin)!.Token);
+        await TestSite.SendAsync(socket, _site.Welcome("pairing-token-BBBB-0123456789"));
+        Assert.True(await connection!.Welcomed.WaitAsync(TimeSpan.FromSeconds(10)));
+
+        Assert.Equal(Money.ToSpec(0.10m), _engine.FindSite(_site.Origin)!.Budget);   // stored by the welcome's echo
+        Assert.Equal("pairing-token-BBBB-0123456789", _pairings.Get(_site.Origin)!.Token);   // and the new pairing replaces the stored one
+        await TestSite.SendAsync(socket, Call(3));
+        Assert.True((await TestSite.ReceiveAsync(socket))["ok"]!.GetValue<bool>());
+    }
+
+    [Fact]
+    public async Task ADeclinedLinkToASiteThatDecidesOnItsOwnLeavesItsGrantAndPairingAlone()
+    {
+        var (transport, paired, pairedSocket, _) = await PairAsync(auto: true, token: "pairing-token-AAAA-0123456789");
+        _ui.Consent = ConsentAnswer.Declined;
+        Assert.Null(await transport.HandleLinkAsync(_site.Link()));               // "not now": the visitor is asked and says no
+        Assert.Equal(2, _ui.Consents.Count);
+        var request = _log.Recent().First(e => e.Kind == "request");
+        Assert.Equal(("declined", "declined from a link: nothing stored"), (request.Outcome, request.Note));
+
+        Assert.Equal(SiteStatus.Allowed, _engine.FindSite(_site.Origin)!.Status);
+        Assert.Equal(Money.ToSpec(0.05m), _engine.FindSite(_site.Origin)!.Budget);
+        Assert.Equal("pairing-token-AAAA-0123456789", _pairings.Get(_site.Origin)!.Token);
+        Assert.Equal(DirectState.Connected, paired.State);
+        await TestSite.SendAsync(pairedSocket, Call(5));
+        Assert.True((await TestSite.ReceiveAsync(pairedSocket))["ok"]!.GetValue<bool>());   // the grant still serves calls
+        await Task.Delay(300);
+        Assert.Equal(1, _site.Upgrades);                                          // no connection was made for the link
+    }
+
+    [Fact]
+    public async Task ALinkWithoutAClickToASiteThatDecidesOnItsOwnIsHeldQuietly()
+    {
+        var (transport, _, _, _) = await PairAsync(auto: true);
+        Assert.Null(await transport.HandleLinkAsync(_site.Link(), userActivation: false));   // no click: the quiet rule, as for any link
+        Assert.Equal(1, _ui.Notices);
+        Assert.Equal(1, _ui.Quiet);
+        await Task.Delay(300);
+        Assert.Equal(1, _site.Upgrades);
+    }
+
+    [Fact]
     public async Task ASecondLinkWhileTheFirstIsUnconfirmedAsksAgainAndOnlyTheSecondIsKept()
     {
         _ui.Consent = new ConsentAnswer(true, 0.05m, AutoDecide: false, []);
@@ -1196,6 +1251,36 @@ public class DirectTransportTests : IDisposable
         Assert.Equal(2, _site.Accepts);                                            // only the two WebSocket connections
         var request = _log.Recent().First(e => e.Kind == "request");
         Assert.Equal(("auto", "link"), (request.Outcome, request.Via));
+    }
+
+    [Fact]
+    public async Task AReconnectThatRenewsAGrantEndedAfterTwelveHoursStaysSilent()
+    {
+        var (_, connection, socket, _) = await PairAsync(auto: true, token: "pairing-token-AAAA-0123456789");
+        _time.Now = _time.Now.AddHours(13);                                       // the 12-hour grant has ended; the pairing stays
+        socket.Abort();
+        var again = await _site.NextSocketAsync();
+        var hello = await TestSite.ReceiveAsync(again);
+        Assert.Null(hello["session"]);                                            // no new link
+        Assert.Equal("pairing-token-AAAA-0123456789", hello["pairing"]!.GetValue<string>());
+        await TestSite.SendAsync(again, _site.Welcome("pairing-token-AAAA-0123456789"));
+        await WaitUntil(() => connection.State == DirectState.Connected);
+        Assert.Equal(1, _ui.Notices);                                             // renewed silently: no notice, no consent
+        Assert.Single(_ui.Consents);
+        var request = _log.Recent().First(e => e.Kind == "request");
+        Assert.Equal(("auto", "link"), (request.Outcome, request.Via));
+    }
+
+    [Fact]
+    public async Task APageRequestToASiteThatDecidesOnItsOwnStaysSilent()
+    {
+        await PairAsync(auto: true);
+        var answer = await _engine.HandleAsync(Clips.Request(_site.Origin, click: true, _site.Manifest));
+        Assert.NotNull(answer!["grantId"]);                                       // the extension's request is granted on its own
+        Assert.Equal(1, _ui.Notices);
+        var request = _log.Recent().First(e => e.Kind == "request");
+        Assert.Equal("auto", request.Outcome);
+        Assert.Null(request.Via);
     }
 
     [Fact]
