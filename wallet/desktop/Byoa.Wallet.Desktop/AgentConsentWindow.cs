@@ -12,7 +12,7 @@ namespace Byoa.Wallet.Desktop;
 sealed class AgentConsentWindow : Window
 {
     readonly TaskCompletionSource<AgentConsentAnswer> _answer = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    readonly CheckBox _full = new() { Content = "Full access (also site access, limits, paid approvals, and other agents)", IsChecked = false };
+    readonly CheckBox _full = new() { Content = "Full access (site names and access, limits, built-in sources, API keys)", IsChecked = false };
     bool _closed;
 
     public AgentConsentWindow(AgentConsentModel model, Func<int>? waitingCount = null)
@@ -39,18 +39,18 @@ sealed class AgentConsentWindow : Window
             : Ui.Text("", "small");
         _full.IsVisible = model.FullAccessAllowed;
         var accessNote = model.FullAccessAllowed
-            ? "It cannot open a site's access, change your limits, approve another agent, or approve paid use unless you turn on Full access below."
+            ? "Without Full access it cannot see site names, change site access or limits, switch built-in sources, or write or remove API keys. Even with Full access, no tool lets it allow a site, approve a paid call or approve another agent."
             : null;
         var body = Ui.Column(12,
             Ui.Row(12, Ui.Tile(Ui.Screen, 38), startedBy),
             Ui.Wrap("It can manage sources and routes (you confirm any source on another computer).", "muted"),
             Ui.Wrap("It can download models and, after your confirmation, delete them.", "muted"),
-            Ui.Wrap("It can write API keys (it cannot read them).", "muted"),
+            Ui.Wrap("It can ask you to type an API key into the wallet; the wallet never sends a key back to it.", "muted"),
             Ui.Wrap("It can read the activity log (site names only with Full access).", "muted"),
             accessNote is null ? Ui.Text("", "small") : Ui.Wrap(accessNote, "muted"),
             _full,
             interpreterNote,
-            Ui.Wrap((waitingCount?.Invoke() is { } count && count > 1 ? (count - 1).ToString() + " more waiting. " : "") + "The wallet identifies this agent by the parent program it observed. You can change Full access or Revoke it later in Settings.", "muted", "small"));
+            Ui.Wrap((waitingCount?.Invoke() is { } count && count > 1 ? (count - 1).ToString() + " more waiting. " : "") + "The wallet identifies this agent by the parent program it observed. Another program you run can start the same bridge, so allow only agents you trust. You can change Full access or Revoke it later in Settings.", "muted", "small"));
         body.Margin = new Thickness(26, 24, 26, 18);
         var allow = Ui.Button("Allow", "allow", "AgentAllow", () => Answer(AgentConsentDecision.Allow), "small");
         var notNow = Ui.Button("Not now", "deny", "AgentNotNow", () => Answer(AgentConsentDecision.NotNow), "small");

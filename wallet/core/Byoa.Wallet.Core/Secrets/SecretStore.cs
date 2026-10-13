@@ -13,7 +13,7 @@ namespace Byoa.Wallet.Secrets;
 [SupportedOSPlatform("windows")]
 public sealed class SecretStore
 {
-    // Extra entropy: another program running as the same user must at least know it to decrypt the file.
+    // Extra entropy. It is a constant in this public source, so it is not a secret: DPAPI keeps the file from other accounts, but not from a program running as this user.
     static readonly byte[] Entropy = Encoding.UTF8.GetBytes("BYOA agent wallet secrets v1");
 
     readonly string _path;

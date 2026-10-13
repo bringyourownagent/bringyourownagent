@@ -361,7 +361,7 @@ sealed class SettingsWindow : Window
 
     void SourcesPage(StackPanel page)
     {
-        Head(page, "Sources", "Your models and keys. The site never learns which one answered, and keys never leave this computer.");
+        Head(page, "Sources", "Your models and keys. The site never learns which one answered, and a key goes only to its own provider.");
         var settings = _w.Store.Snapshot();
 
         page.Children.Add(Ui.Columns("*,Auto", Ui.Wrap("Add a local model or a provider model with your own key. The short wizard tests it before it changes your route.", "muted"),
@@ -932,7 +932,7 @@ sealed class SettingsWindow : Window
 
     void AgentsPage(StackPanel page)
     {
-        Head(page, "Agents", "AI agents can manage sources and routes by default. Full access is a separate switch for sites, limits, paid approvals, and other agents.");
+        Head(page, "Agents", "AI agents can manage sources and routes by default. Full access is a separate switch for site names and access, limits, built-in sources and API keys. No tool lets an agent allow a site, approve a paid call or approve another agent.");
         var agents = _w.Store.Snapshot().Agents.OrderByDescending(a => a.LastUsed ?? DateTimeOffset.MinValue).ToList();
         if (agents.Count == 0)
         {

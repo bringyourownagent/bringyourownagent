@@ -34,7 +34,7 @@ sealed class ApiKeyEntryWindow : Window
         AutomationProperties.SetAutomationId(_key, "ApiKeyEntry");
         var body = Ui.Column(13,
             Ui.Text("Enter your API key", "h1"),
-            Ui.Wrap("The key is saved in this wallet for " + sourceName + ". Your AI agent will only see that it was saved; it cannot read the key.", "muted"),
+            Ui.Wrap("The key is saved in this wallet for " + sourceName + ". Your AI agent is told only that it was saved; the wallet does not send the key to it.", "muted"),
             Ui.Text("API key", "label"),
             _key,
             Ui.Wrap("Prefer this field over pasting a key into your AI agent.", "muted", "small"),
