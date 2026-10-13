@@ -134,13 +134,15 @@ public sealed class WalletEngine
 
     /// <summary>
     /// The site's welcome echoed the link's manifest, so the site issued the link: the visitor's Allow for it is stored
-    /// now. A grant with no held answer (a silent grant under "decide on my own") has nothing to store.
+    /// now. False when no answer waits under this grant any more: the visitor decided about the site meanwhile, so
+    /// nothing is stored and the link's connection must end.
     /// </summary>
-    public void ConfirmLinkDecision(string grantId)
+    public bool ConfirmLinkDecision(string grantId)
     {
-        if (!_linkDecisions.TryRemove(grantId, out var decision)) return;
+        if (!_linkDecisions.TryRemove(grantId, out var decision)) return false;
         _store.Update(s => decision.Apply(Site(s, decision.Origin)));
         SitesChanged?.Invoke();
+        return true;
     }
 
     /// <summary>
@@ -556,6 +558,8 @@ public sealed class WalletEngine
             released = true;
             // The page gets its grant once the routed models are loaded, with "Preparing your model…" meanwhile.
             var waited = await WarmBeforeResolveAsync(session, host, showPreparing: true, ct).ConfigureAwait(false);
+            // The visitor may have decided about the site while the models loaded: then the link gets no grant.
+            if (via == ViaLink && !_linkDecisions.ContainsKey(session.Id)) return Done(entry, "declined", "the visitor decided about the site while the models loaded");
             entry.Note = "after a click" + (model.PausedNote is not null ? "; resumed" : "") + (model.IsDifference ? "; only the difference was shown" : "")
                 + (answer.AutoDecide ? "; decide on my own from now on" : "") + (via == ViaLink ? "; kept once the site confirms the link" : "") + Ready(waited);
             return Done(entry, "allowed", null, session.ToResult());
@@ -2020,11 +2024,16 @@ public sealed class WalletEngine
         DropLinkDecisions(origin);
     }
 
-    /// <summary>Forgets the answers to a site's links that wait for the site's welcome. True when there were any.</summary>
+    /// <summary>Forgets the answers to a site's links that wait for the site's welcome, with their grants. True when there were any.</summary>
     bool DropLinkDecisions(string origin)
     {
         var held = _linkDecisions.Where(d => d.Value.Origin == origin).Select(d => d.Key).ToList();
-        foreach (var id in held) _linkDecisions.TryRemove(id, out _);
+        foreach (var id in held)
+        {
+            _linkDecisions.TryRemove(id, out _);
+            _sessions.TryRemove(id, out _);
+        }
+
         return held.Count > 0;
     }
 

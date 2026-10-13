@@ -853,6 +853,46 @@ public class DirectTransportTests : IDisposable
     }
 
     [Fact]
+    public async Task AnAnswerDroppedAfterItWasGivenGivesNoGrantAndNoCall()
+    {
+        _ui.Consent = new ConsentAnswer(true, 0.05m, AutoDecide: false, []);
+        Assert.NotNull(await _engine.HandleAsync(Clips.Request(_site.Origin, click: true, _site.Manifest)));   // the site is allowed at $0.05
+        _ui.Consent = new ConsentAnswer(true, 0.60m, AutoDecide: false, []);
+        var answer = await _engine.RequestViaLinkAsync(_site.Origin, JsonNode.Parse(Manifest("0.60 USD"))!.AsObject(), userActivation: true);   // more: waits for the welcome
+        var grant = answer!["grantId"]!.GetValue<string>();
+        _engine.SetAutoDecide(_site.Origin, true);                                // the visitor switches "decide on my own" before the welcome
+        Assert.False(_engine.ConfirmLinkDecision(grant));                         // no answer waits any more: nothing is stored
+        Assert.Null(_engine.FindGrant(grant));
+        Assert.False((await _engine.HandleAsync(Clips.Call(_site.Origin, grant)))!["ok"]!.GetValue<bool>());   // and no call is served on it
+        Assert.Equal(Money.ToSpec(0.05m), _engine.FindSite(_site.Origin)!.Budget);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task AVisitorsDecisionWhileTheModelLoadsLeavesTheLinkNoConnectionAndNoGrant(bool switchDecideOnMyOwn)
+    {
+        var engine = new WalletEngine(new SettingsStore(null), [new WarmingSource("gigaam-v3", languages: ["ru"]) { WarmTime = TimeSpan.FromSeconds(1.5) }, _whisper], _log, _ui, _time);
+        _ui.Consent = new ConsentAnswer(true, 0.05m, AutoDecide: false, []);
+        var link = Transport(engine).HandleLinkAsync(_site.Link());
+        await WaitUntil(() => _ui.Preparing.Count == 1);                          // "Preparing your model…": the grant waits for the model
+        if (switchDecideOnMyOwn)
+        {
+            engine.SetAutoDecide(_site.Origin, true);                             // the visitor switches "decide on my own" in Sites
+        }
+        else
+        {
+            _ui.Notice = NoticeAnswer.Decline;                                    // or declines the site on a page's own request
+            Assert.Null(await engine.HandleAsync(Clips.Request(_site.Origin, click: true, _site.Manifest)));
+        }
+
+        Assert.Null(await link.WaitAsync(TimeSpan.FromSeconds(10)));              // the answer that waited for the model is gone
+        Assert.Equal(0, _site.Accepts);
+        Assert.Equal(0, engine.ActiveSessions(_site.Origin));
+        Assert.NotEqual(SiteStatus.Allowed, engine.FindSite(_site.Origin)!.Status);
+    }
+
+    [Fact]
     public async Task CallsMeetTheSameGateLimitsAndPaidQuestionAsExtensionCalls()
     {
         var (_, _, socket, _) = await PairAsync(auto: false);

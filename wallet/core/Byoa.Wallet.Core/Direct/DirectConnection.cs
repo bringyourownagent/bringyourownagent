@@ -285,8 +285,15 @@ public sealed class DirectConnection
 
             if (!resumed)
             {
-                // The site echoed the link's manifest, so it issued the link: the visitor's answer to it is stored now.
-                _owner.Engine.ConfirmLinkDecision(_grant!.Id);
+                // The site echoed the link's manifest, so it issued the link: the visitor's answer to it is stored now. If the
+                // visitor decided about the site meanwhile, the answer is gone and so is the grant: nothing is served on it.
+                if (_provisional is not null && !_owner.Engine.ConfirmLinkDecision(_provisional))
+                {
+                    Record("closed", "the visitor decided about the site before the welcome");
+                    await ByeAsync(ws).ConfigureAwait(false);
+                    return (Outcome.Stop, false);
+                }
+
                 _provisional = null;
             }
 
