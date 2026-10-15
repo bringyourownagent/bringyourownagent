@@ -109,7 +109,7 @@ public class TextRoutingTests
         var paidFirst = Router.PlanText(s.Chain(Vocabulary.Generate), [Paid], _ => true, null);
         Assert.StartsWith("Manager suggests FakeText openrouter:google/gemma-3-12b-it because it is paid, about $0.004 for a short answer, and it asks you first.", Router.ExplainText(paidFirst));
 
-        Assert.Equal("None of your sources can do this. Add a model in LM Studio or Ollama, or an API key, in Detailed settings.",
+        Assert.Equal("None of your sources can do this. Add a model in LM Studio, Ollama or Llama, or an API key, in Detailed settings.",
             Router.ExplainText(new TextRoutePlan([], [])));
     }
 }

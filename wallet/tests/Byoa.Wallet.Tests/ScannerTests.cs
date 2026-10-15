@@ -83,6 +83,21 @@ public class ScannerTests
         var infos = await Scanner((SourceKinds.OpenRouter, "http://127.0.0.1:5330")).ScanAsync(default);
 
         Assert.DoesNotContain(infos, r => r.Endpoint.Contains("5330"));               // OpenRouter is a key, not a runtime
-        Assert.Equal(2, infos.Count);                             // only the two built-in ports were probed
+        Assert.Equal(3, infos.Count);                             // only the three built-in ports were probed
+    }
+
+    [Fact]
+    public async Task TheLlamaAppIsWatchedOnItsPortEvenWithNothingAddedAndIsNotListedTwice()
+    {
+        // Nothing is faked on 9931 here: a real Llama may be running on this computer. Whatever answers, there is
+        // exactly one entry, and an added source of the same address does not make a second one.
+        var plain = await Scanner().ScanAsync(default);
+        var llama = plain.Single(r => r.Endpoint == LocalRuntimes.LlamaEndpoint);
+        Assert.Equal(SourceKinds.OpenAiCompatible, llama.Kind);
+        Assert.Equal("Llama", LocalRuntimes.Name(llama.Kind, llama.Endpoint));
+
+        var added = await Scanner((SourceKinds.OpenAiCompatible, LocalRuntimes.LlamaEndpoint + "/")).ScanAsync(default);
+        Assert.Single(added, r => r.Endpoint == LocalRuntimes.LlamaEndpoint);
+        Assert.Equal(3, added.Count);
     }
 }

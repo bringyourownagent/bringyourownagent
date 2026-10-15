@@ -4,8 +4,8 @@ using Byoa.Wallet.Sources;
 namespace Byoa.Wallet.Providers;
 
 /// <summary>
-/// Probes the local runtimes: LM Studio and Ollama on their usual ports, plus every OpenAI-compatible endpoint
-/// added in the settings. Each probe gets well under a second; a runtime that does not answer in time is simply
+/// Probes the local runtimes: LM Studio, Ollama and the Llama app on their usual ports, plus every OpenAI-compatible
+/// endpoint added in the settings. Each probe gets well under a second; a runtime that does not answer in time is simply
 /// not running. The scan never throws. The HttpClient comes without automatic redirects, so an endpoint on this
 /// computer cannot send the wallet's requests onward to another computer.
 /// </summary>
@@ -33,6 +33,9 @@ public sealed class RuntimeScanner : IRuntimeScanner
         {
             await ProbeAsync(SourceKinds.LmStudio, LmStudioEndpoint, ct).ConfigureAwait(false),
             await ProbeAsync(SourceKinds.Ollama, OllamaEndpoint, ct).ConfigureAwait(false),
+            // The Llama app is a plain OpenAI-compatible server: a model added from it is an ordinary
+            // openai-compatible source, only the window and the messages call it by its name.
+            await ProbeAsync(SourceKinds.OpenAiCompatible, LocalRuntimes.LlamaEndpoint, ct).ConfigureAwait(false),
         };
         if (_added is not null)
         {
@@ -41,7 +44,9 @@ public sealed class RuntimeScanner : IRuntimeScanner
                 var address = endpoint?.Trim().TrimEnd('/');
                 if (string.IsNullOrEmpty(address) || kind == SourceKinds.OpenRouter) continue;
                 if (address.Equals(LmStudioEndpoint, StringComparison.OrdinalIgnoreCase) ||
-                    address.Equals(OllamaEndpoint, StringComparison.OrdinalIgnoreCase)) continue;
+                    address.Equals(OllamaEndpoint, StringComparison.OrdinalIgnoreCase) ||
+                    (kind == SourceKinds.OpenAiCompatible &&
+                     address.Equals(LocalRuntimes.LlamaEndpoint, StringComparison.OrdinalIgnoreCase))) continue;
                 found.Add(await ProbeAsync(kind, address, ct).ConfigureAwait(false));
             }
         }

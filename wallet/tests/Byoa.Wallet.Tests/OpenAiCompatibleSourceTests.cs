@@ -204,6 +204,22 @@ public class OpenAiCompatibleSourceTests
         Assert.Equal(Runs.ThisDevice, source.Runs);
     }
 
+    [Fact]
+    public void TheLlamaAppIsCalledByItsNameOnlyOnItsOwnPort()
+    {
+        var llama = new OpenAiCompatibleSource(SourceKinds.OpenAiCompatible, "gemma-4-e4b", null, LocalRuntimes.LlamaEndpoint, NoRedirects());
+        Assert.Equal("Llama", llama.RuntimeName);
+        Assert.Equal("ready when Llama runs", llama.StateText);
+        llama.Up = false;
+        Assert.Equal("Llama is not running", llama.StateText);
+        Assert.Equal("openai-compatible:gemma-4-e4b@http://127.0.0.1:9931/v1", llama.Id);   // an ordinary source: no new kind
+
+        Assert.Equal("Llama", LocalRuntimes.Name(SourceKinds.OpenAiCompatible, "http://localhost:9931/v1"));
+        Assert.Equal("OpenAI-compatible server", LocalRuntimes.Name(SourceKinds.OpenAiCompatible, "http://127.0.0.1:9932/v1"));
+        Assert.Equal("OpenAI-compatible server", LocalRuntimes.Name(SourceKinds.OpenAiCompatible, "http://192.168.1.50:9931/v1"));   // not this computer
+        Assert.Equal("LM Studio", LocalRuntimes.Name(SourceKinds.LmStudio, LocalRuntimes.LlamaEndpoint));                            // the kind wins
+    }
+
     [Theory]
     [InlineData("http://[::1]:5321/v1")]
     [InlineData("http://[::ffff:127.0.0.1]:5321/v1")]

@@ -20,6 +20,35 @@ public static class SourceKinds
     public const string OpenRouter = "openrouter";
 }
 
+/// <summary>
+/// The local model apps the wallet knows by name, so that the window and its messages can say which one they mean.
+/// None of them is a source kind of its own: LM Studio and Ollama have kinds, Llama is an OpenAI-compatible server.
+/// </summary>
+public static class LocalRuntimes
+{
+    /// <summary>The port the Llama app (llama.cpp team and Hugging Face, https://llama.app) serves on.</summary>
+    public const int LlamaPort = 9931;
+
+    /// <summary>The Llama app's OpenAI-compatible address.</summary>
+    public const string LlamaEndpoint = "http://127.0.0.1:9931/v1";
+
+    /// <summary>Where a visitor who has no local model app yet can get Llama (free, open source).</summary>
+    public const string LlamaPage = "https://llama.app";
+
+    /// <summary>Whether an endpoint is the Llama app's port on this computer.</summary>
+    public static bool IsLlama(string? endpoint) =>
+        Uri.TryCreate(endpoint?.Trim(), UriKind.Absolute, out var uri) && uri.IsLoopback && uri.Port == LlamaPort;
+
+    /// <summary>The name a person knows the runtime by.</summary>
+    public static string Name(string kind, string? endpoint) => kind switch
+    {
+        SourceKinds.LmStudio => "LM Studio",
+        SourceKinds.Ollama => "Ollama",
+        SourceKinds.OpenAiCompatible when IsLlama(endpoint) => "Llama",
+        _ => "OpenAI-compatible server",
+    };
+}
+
 /// <summary>One message of a text.generate call, as the page sent it.</summary>
 /// <param name="Role">"system", "user" or "assistant".</param>
 public sealed record ChatMessage(string Role, string Content);

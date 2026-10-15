@@ -59,6 +59,7 @@ A thinking model must not leak its thoughts to a page. The wallet removes closed
 
 - **LM Studio** on `127.0.0.1:1234`: `/api/v0/models` (its `state` says which models are loaded), falling back to plain `/v1/models`.
 - **Ollama** on `127.0.0.1:11434`: `/api/tags` for the installed models, `/api/ps` for the loaded ones.
+- **Llama** (the app from the llama.cpp team and Hugging Face, <https://llama.app>) on `127.0.0.1:9931`: a plain OpenAI-compatible server, asked at `/v1/models`. It has no source kind of its own: the scanner lists it under `openai-compatible` and only the window and the messages call it "Llama" (`LocalRuntimes`). A model added from it is an ordinary `openai-compatible` source. When no local model app answers, Add a model offers a "Get Llama" button that opens `llama.app` in the browser; the wallet downloads and installs nothing itself. The standard-port rule for agents is unchanged: an agent that adds port 9931 still needs the visitor's confirmation.
 - an added openai-compatible server on the address the visitor typed: `/models`.
 
 The scanner sets each source's `Up` (is the runtime running) and `Listed` (does it still offer the model); the router reads those to skip a source with a reason people can read: "not running", "model not found", "no API key", "failed to load", "turned off". OpenRouter is never probed on the local network. A source whose address is not a parsed loopback IP is marked "runs on another computer (host)" and shown that way.

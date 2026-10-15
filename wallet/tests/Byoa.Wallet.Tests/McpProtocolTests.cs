@@ -53,12 +53,23 @@ public sealed class McpProtocolTests
     [Fact]
     public async Task NonHelpToolSaysWalletIsAbsent()
     {
-        var responses = await Run(
-            "{\"jsonrpc\":\"2.0\",\"id\":\"status\",\"method\":\"tools/call\",\"params\":{\"name\":\"status\",\"arguments\":{}}}");
+        // A data folder of its own gives a pipe name that no wallet listens on, so a wallet running on the
+        // developer's computer does not turn "absent" into an answer.
+        var oldHome = Environment.GetEnvironmentVariable(WalletPaths.HomeVariable);
+        Environment.SetEnvironmentVariable(WalletPaths.HomeVariable, TestFolder.New());
+        try
+        {
+            var responses = await Run(
+                "{\"jsonrpc\":\"2.0\",\"id\":\"status\",\"method\":\"tools/call\",\"params\":{\"name\":\"status\",\"arguments\":{}}}");
 
-        var result = Assert.Single(responses)["result"]!;
-        Assert.True(result["isError"]!.GetValue<bool>());
-        Assert.Contains("not running", result["content"]![0]!["text"]!.GetValue<string>(), StringComparison.OrdinalIgnoreCase);
+            var result = Assert.Single(responses)["result"]!;
+            Assert.True(result["isError"]!.GetValue<bool>());
+            Assert.Contains("not running", result["content"]![0]!["text"]!.GetValue<string>(), StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(WalletPaths.HomeVariable, oldHome);
+        }
     }
 
     [Fact]

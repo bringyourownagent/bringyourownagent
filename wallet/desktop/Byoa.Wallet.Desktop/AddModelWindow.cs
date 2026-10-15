@@ -35,10 +35,12 @@ sealed class AddModelWindow : Window
     [
         new RegistryRuntimeInfo(SourceKinds.LmStudio, "http://127.0.0.1:1234/v1", false, []),
         new RegistryRuntimeInfo(SourceKinds.Ollama, "http://127.0.0.1:11434", false, []),
+        new RegistryRuntimeInfo(SourceKinds.OpenAiCompatible, LocalRuntimes.LlamaEndpoint, false, []),
     ];
     bool _local = true;
     bool _tested;
     bool _scanning;
+    bool _scanned;
     int _scanNumber;
 
     public AddModelWindow(WalletServices services, string? sourceId = null)
@@ -143,9 +145,12 @@ sealed class AddModelWindow : Window
         foreach (var runtime in _runtimes)
         {
             var state = runtime.Running ? "running" : "not running";
-            _runtime.Items.Add(new ComboBoxItem { Content = RuntimeName(runtime.Kind) + " · " + state, Tag = runtime });
+            _runtime.Items.Add(new ComboBoxItem { Content = LocalRuntimes.Name(runtime.Kind, runtime.Endpoint) + " · " + state, Tag = runtime });
         }
-        if (_runtime.Items.Count > 0 && _runtime.SelectedIndex < 0) _runtime.SelectedIndex = 0;
+        // Start on the first runtime that answered: with only Llama running, "LM Studio · not running" is no use.
+        if (_runtime.Items.Count > 0 && _runtime.SelectedIndex < 0)
+            _runtime.SelectedIndex = Math.Max(0, _runtimes.FindIndex(r => r.Running));
+        if (_scanned && !_scanning && !_runtimes.Any(r => r.Running)) _body.Children.Add(NoRuntimeCard());
         _body.Children.Add(Ui.Wrap("The wallet only uses a local server after it answers here. A stopped runtime is shown so you know what to start.", "muted", "small"));
         _body.Children.Add(Ui.Text("Runtime", "label"));
         _body.Children.Add(_runtime);
@@ -157,17 +162,31 @@ sealed class AddModelWindow : Window
         _body.Children.Add(_label);
         if (_runtimes.Count > 8) _body.Children.Add(_search);
         var stopped = _runtimes.Where(r => !r.Running).ToList();
-        if (_runtimes.Count == 0 && !_scanning) _body.Children.Add(Ui.Wrap("No runtimes answered. Start LM Studio or Ollama, then scan again.", "muted"));
+        if (_runtimes.Count == 0 && !_scanning) _body.Children.Add(Ui.Wrap("No runtimes answered. Start LM Studio, Ollama or Llama, then scan again.", "muted"));
         if (stopped.Count > 0) _body.Children.Add(Ui.Wrap("Not running — start it or download it. A stopped runtime cannot be tested.", "muted", "small"));
         _body.Children.Add(Ui.Button(_scanning ? "Scanning…" : "Scan again", "deny", "RuntimeScan", StartScan, "small"));
     }
 
-    static string RuntimeName(string kind) => kind switch
+    /// <summary>Shown when no local model app answers: a visitor with none yet is pointed to Llama, free and open source.</summary>
+    Control NoRuntimeCard() => Ui.Box("card", Ui.Column(7,
+        Ui.Text("No local model app is running", "strong"),
+        Ui.Wrap("Llama is free and open source, from the llama.cpp team and Hugging Face. It suggests a model that fits this PC " +
+                "and downloads it. Install it, let it download a model, then press Scan again. " +
+                "Already use LM Studio or Ollama? Start it and scan again.", "muted", "small"),
+        Ui.Row(9, Ui.Button("Get Llama", "allow", "GetLlama", OpenLlamaPage, "small"), Ui.Text("llama.app", "muted", "small"))));
+
+    /// <summary>One click by the visitor opens the fixed address in the browser; nothing is downloaded by the wallet.</summary>
+    void OpenLlamaPage()
     {
-        SourceKinds.LmStudio => "LM Studio",
-        SourceKinds.Ollama => "Ollama",
-        _ => "OpenAI-compatible server",
-    };
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(LocalRuntimes.LlamaPage) { UseShellExecute = true })?.Dispose();
+        }
+        catch (Exception e) when (e is not OutOfMemoryException)
+        {
+            _result.Text = "Could not open the browser. Go to " + LocalRuntimes.LlamaPage + " yourself.";
+        }
+    }
 
     void ApiStep()
     {
@@ -190,6 +209,7 @@ sealed class AddModelWindow : Window
             if (!_scanning || scanNumber != _scanNumber) return;
             _runtimes = [];
             _scanning = false;
+            _scanned = true;
             Render();
         }, TimeSpan.FromSeconds(5));
         IReadOnlyList<RegistryRuntimeInfo> runtimes;
@@ -205,6 +225,7 @@ sealed class AddModelWindow : Window
             if (scanNumber != _scanNumber) return;
             _runtimes = runtimes.ToList();
             _scanning = false;
+            _scanned = true;
             Render();
         });
     }

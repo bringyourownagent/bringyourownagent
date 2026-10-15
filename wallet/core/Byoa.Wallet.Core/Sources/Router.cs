@@ -228,12 +228,12 @@ public static class Router
             if (plan.Skipped.FirstOrDefault(x => x.Why.StartsWith("unavailable:", StringComparison.Ordinal)) is { } unavailable)
                 return "No source can do text generation here: " + unavailable.Why + ".";
             if (plan.Skipped.Any(x => x.Why == "not running"))
-                return "No local text runtime is running. Start LM Studio or Ollama, or add a model.";
+                return "No local text runtime is running. Start LM Studio, Ollama or Llama, or add a model.";
             if (plan.Skipped.Any(x => x.Why == "no API key"))
                 return "No API-key source is ready. Add its key in the wallet, or add a local model.";
             if (plan.Skipped.Any(x => x.Why == "model is still preparing"))
                 return "Your model is still preparing. Wait for it to finish or add another model as a fallback.";
-            return "None of your sources can do this. Add a model in LM Studio or Ollama, or an API key, in Detailed settings.";
+            return "None of your sources can do this. Add a model in LM Studio, Ollama or Llama, or an API key, in Detailed settings.";
         }
 
         var s = first.Source;

@@ -2,7 +2,7 @@
 
 The first working agent wallet for [BYOA](../README.md): a tray app on your computer, a small native messaging host and a Chrome extension. A web page asks for your AI with `window.byoa`; the wallet shows a short notice, then a short consent window, and answers the page's calls with **your** models: local speech recognition, local text generation, a compatible home server, or your own API key as a paid fallback that asks first.
 
-0.1 serves `audio.transcribe` (speech to text) from built-in sources and `text.generate` from LM Studio, Ollama, another OpenAI-compatible endpoint, or OpenRouter. The same source registry manages both skills:
+0.1 serves `audio.transcribe` (speech to text) from built-in sources and `text.generate` from LM Studio, Ollama, the Llama app, another OpenAI-compatible endpoint, or OpenRouter. The same source registry manages both skills:
 
 | Source | Runs | Languages | Cost | Notes |
 |---|---|---|---|---|

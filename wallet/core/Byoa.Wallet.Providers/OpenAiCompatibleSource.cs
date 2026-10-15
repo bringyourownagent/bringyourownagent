@@ -74,12 +74,7 @@ public sealed class OpenAiCompatibleSource : ITextSource, ILiveness, ITextSource
         // IsLoopback has not treated every IPv4-mapped IPv6 spelling consistently across supported Windows builds.
         return address.IsIPv4MappedToIPv6 && IPAddress.IsLoopback(address.MapToIPv4());
     }
-    public string RuntimeName => _kind switch
-    {
-        SourceKinds.LmStudio => "LM Studio",
-        SourceKinds.Ollama => "Ollama",
-        _ => "OpenAI-compatible server",
-    };
+    public string RuntimeName => LocalRuntimes.Name(_kind, Endpoint);
     public string Name => (Label ?? Model) + " · " + (_loopback ? "this computer" : DisplayAuthority(_base));
 
     public string Runs => _loopback ? Sources.Runs.ThisDevice : "another computer (" + _base.IdnHost + ")";
