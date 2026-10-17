@@ -368,10 +368,26 @@ sealed class SettingsWindow : Window
             Ui.Button("Add a model", "allow", "AddModel", () => _w.Ui.OpenAddModel(), "small")));
 
         page.Children.Add(Section("On this PC"));
-        page.Children.Add(Ui.Box("card", Ui.Column(4,
-            Ui.Wrap("The wallet holds no model of its own. A model runs in a program on this PC, and the wallet only hands it the request: the Llama app (the easiest start), LM Studio, Ollama, or any OpenAI-compatible server.", "muted"),
-            Ui.Wrap("For speech to text, run a speech model in that program (Qwen3-ASR in Llama works well) and add it with Add a model, skill Speech to text.", "muted", "small"),
-            Ui.Button("Get Llama", "deny", "SettingsGetLlama", OpenLlamaPage, "small"))));
+        // A model that needs no key runs in a program on this PC (or on a home server): once one is added, the wallet does not
+        // offer to get such a program; it only says what is still missing (a speech model).
+        var programModels = settings.Sources.Where(s => s.Kind is not null && s.SecretRef is null).ToList();
+        if (programModels.Count == 0)
+        {
+            page.Children.Add(Ui.Box("card", Ui.Column(4,
+                Ui.Wrap("The wallet holds no model of its own. A model runs in a program on this PC, and the wallet only hands it the request: the Llama app (the easiest start), LM Studio, Ollama, or any OpenAI-compatible server.", "muted"),
+                Ui.Wrap("For speech to text, run a speech model in that program (Qwen3-ASR in Llama works well) and add it with Add a model, skill Speech to text.", "muted", "small"),
+                Ui.Button("Get Llama", "deny", "SettingsGetLlama", OpenLlamaPage, "small"))));
+        }
+        else
+        {
+            var lines = new List<Control>
+            {
+                Ui.Wrap("The wallet holds no model of its own: your models run in a program on this PC, and the wallet only hands it the request. Add more with Add a model.", "muted"),
+            };
+            if (!programModels.Any(s => s.Skills.Contains(Vocabulary.Transcribe)))
+                lines.Add(Ui.Wrap("There is no speech model yet: run one in that program (Qwen3-ASR in Llama works well) and add it with Add a model, skill Speech to text.", "muted", "small"));
+            page.Children.Add(Ui.Box("card", Ui.Column(4, lines.ToArray())));
+        }
 
         page.Children.Add(Section("Paid speech (your own key)"));
         page.Children.Add(SourceCard(_w.Sources.OpenRouter, settings,
@@ -409,7 +425,7 @@ sealed class SettingsWindow : Window
         var buttons = Ui.Row(8, enabled, edit, remove);
         var order = AddedSourceOrder(source);
         return Ui.Box("card", Ui.Column(7,
-            Ui.Columns("*,Auto", Ui.Column(2, Ui.Text(info?.Name ?? source.Label ?? source.Model ?? source.Id, "h2"), Ui.Text(source.Id, "mono", "small")), buttons),
+            Ui.Columns("*,Auto", Ui.Column(2, Ui.Wrap(info?.Name ?? source.Label ?? source.Model ?? source.Id, "h2"), Ui.Wrap(source.Id, "mono", "small")), buttons),
             Ui.Wrap(detail, "muted"),
             Ui.Wrap((source.Endpoint is null ? "No endpoint" : source.Endpoint) + (source.Model is null ? "" : " · " + source.Model), "mono", "small"),
             order));
