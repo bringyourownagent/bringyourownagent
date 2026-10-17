@@ -211,7 +211,9 @@ $licenseFiles = Copy-PackageLicenses $app $artifacts $packages $licenses $noLice
 $ortLicenses = Join-Path $licenses 'onnxruntime-1.28.2'
 New-Item -ItemType Directory -Force -Path $ortLicenses | Out-Null
 Copy-Item -LiteralPath (Join-Path $packaging 'licenses\onnxruntime-1.28.2\LICENSE') -Destination (Join-Path $ortLicenses 'LICENSE')
-$licenseFiles++
+# ...and its own third-party notices, which its license asks to keep with the software. A missing file fails the build.
+Copy-Item -LiteralPath (Join-Path $packaging 'licenses\onnxruntime-1.28.2\ThirdPartyNotices.txt') -Destination (Join-Path $ortLicenses 'ThirdPartyNotices.txt')
+$licenseFiles += 2
 New-Item -ItemType Directory -Force -Path (Join-Path $licenses 'Barlow-fonts') | Out-Null
 Copy-Item -LiteralPath (Join-Path $wallet 'desktop\Byoa.Wallet.Desktop\Assets\Fonts\OFL.txt') -Destination (Join-Path $licenses 'Barlow-fonts\OFL.txt')
 $licenseFiles++

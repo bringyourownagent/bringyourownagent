@@ -27,7 +27,7 @@ Whisper.net and its runtime packages         MIT                 Copyright (c) 2
   whisper.cpp and ggml (inside the native runtimes)  MIT         The ggml authors
 sherpa-onnx (org.k2fsa.sherpa.onnx)          Apache-2.0          Copyright 2019-2023 Xiaomi Corporation
   ONNX Runtime (onnxruntime.dll, version 1.28.2)  MIT           Copyright (c) Microsoft Corporation
-  its license is in licenses\onnxruntime-1.28.2\LICENSE; its own third-party notices are not in this package
+  its license and its own third-party notices are in licenses\onnxruntime-1.28.2\ (LICENSE and ThirdPartyNotices.txt)
 BringYourOwnAgent (the BYOA rules library)   Apache-2.0          the BYOA project
 Barlow fonts (inside Byoa.Wallet.dll)        SIL OFL 1.1         Copyright 2017 The Barlow Project Authors
 
@@ -46,7 +46,7 @@ Where the license text of a component is not in the package, it is published her
   sherpa-onnx    https://github.com/k2-fsa/sherpa-onnx/blob/dc5583f49917e4c95f6e7d862bb378e4ed5e9076/LICENSE
                  (its Apache-2.0 text is the same as LICENSE of this package)
   ONNX Runtime   https://github.com/microsoft/onnxruntime/blob/v1.28.2/ThirdPartyNotices.txt
-                 (its full third-party notices, not in this package)
+                 (its full third-party notices; the same file is in this package, in licenses\onnxruntime-1.28.2\ThirdPartyNotices.txt)
   Barlow         https://github.com/jpt/barlow
 
 Models the wallet downloads on request (not in this package; no model weights are included here):
