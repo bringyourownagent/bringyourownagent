@@ -328,7 +328,9 @@ sealed class AddModelWindow : Window
     async void Test()
     {
         _test.IsEnabled = false;
-        _result.Text = "Testing…";
+        _result.Text = SelectedSkill() == Vocabulary.Transcribe && _local
+            ? "Testing… the first test can take a minute while the program loads the model."
+            : "Testing…";
         try
         {
             RegistryTestResult result;

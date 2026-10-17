@@ -287,6 +287,14 @@ public sealed class WalletEngine
         {
             var clip = new WavClip(TestSample(), Wav.TargetRate, 1, 32);
             var chain = TestChain(Vocabulary.Transcribe, source.Id);
+            // A program that has to load its model first (a minute, on a cold disk) must not fail the visitor's Test: the
+            // model is loaded before the sample goes in. A refusal here is reported by the test call that follows.
+            if (source is IWarmable warmable && !source.Paid)
+            {
+                try { await warmable.WarmAsync(source.Languages?.FirstOrDefault() ?? "ru").WaitAsync(ct).ConfigureAwait(false); }
+                catch (Exception e) when (e is not OperationCanceledException and not OutOfMemoryException) { }
+            }
+
             var entry = new ActivityEntry
             {
                 Origin = TestOrigin, Kind = "test", Via = "wallet", Skill = Vocabulary.Transcribe,

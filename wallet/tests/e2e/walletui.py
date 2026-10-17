@@ -16,6 +16,18 @@ from PIL import ImageGrab
 
 auto.SetGlobalSearchTimeout(1)
 
+# A test sets EXCLUDE_PIDS to the wallet processes that were running before it started (the visitor's own wallet, maybe
+# showing its settings): their windows are never touched, whatever a window is called. ONLY_PIDS (a set) does the
+# opposite when the test knows the process ids of the wallet it started.
+EXCLUDE_PIDS = frozenset()
+ONLY_PIDS = None
+
+
+def _mine(control, depth):
+    if ONLY_PIDS is not None:
+        return control.ProcessId in ONLY_PIDS
+    return control.ProcessId not in EXCLUDE_PIDS
+
 # UI runs use an isolated wallet home. Inherit this Windows error mode into the wallet child so a
 # deliberate managed crash writes errors.log without opening a native crash dialog on the owner's desktop.
 if os.name == "nt":
@@ -26,7 +38,7 @@ def find_window(title, timeout=10.0):
     """The top-level window with this exact title, or None."""
     end = time.time() + timeout
     while time.time() < end:
-        w = auto.WindowControl(searchDepth=1, Name=title)
+        w = auto.WindowControl(searchDepth=1, Name=title, Compare=_mine)
         if w.Exists(0.2, 0.1):
             return w
         time.sleep(0.2)
@@ -36,7 +48,7 @@ def find_window(title, timeout=10.0):
 def window_gone(title, timeout=5.0):
     end = time.time() + timeout
     while time.time() < end:
-        if not auto.WindowControl(searchDepth=1, Name=title).Exists(0, 0):
+        if not auto.WindowControl(searchDepth=1, Name=title, Compare=_mine).Exists(0, 0):
             return True
         time.sleep(0.2)
     return False
@@ -60,7 +72,10 @@ def invoke(window, automation_id):
 
 
 def click(window, automation_id):
-    """Presses a button with a real mouse click at its centre (real input)."""
+    """Presses a button with a real mouse click at its centre (real input). With BYOA_E2E_NO_REAL_INPUT=1 it presses it
+    through UI Automation instead, so a run on a computer that somebody is using does not move the mouse."""
+    if os.environ.get("BYOA_E2E_NO_REAL_INPUT") == "1":
+        return invoke(window, automation_id)
     c = control(window, automation_id)
     c.Click(simulateMove=False, waitTime=0.2)
     return c

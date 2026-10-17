@@ -98,6 +98,18 @@ public class OpenAiCompatibleSpeechSourceTests
     }
 
     [Fact]
+    public async Task TheRuntimesErrorIsOnePlainShortLine()
+    {
+        using var server = new FakeHttp(Port);
+        server.Respond(500, "{\"error\":{\"message\":\"line one\\nline\\ttwo \\u001b[31mred " + new string('x', 400) + "\"}}");
+        var error = await Assert.ThrowsAsync<HttpRequestException>(() => Source(server).TranscribeAsync(Clip(0.5), "en", default));
+
+        Assert.StartsWith("OpenAI-compatible server answered HTTP 500: line one line two", error.Message, StringComparison.Ordinal);
+        Assert.All(error.Message, c => Assert.False(char.IsControl(c)));
+        Assert.True(error.Message.Length < 260, error.Message.Length.ToString());
+    }
+
+    [Fact]
     public async Task ASuccessClearsTheLastErrorAndMeasuresTheSpeed()
     {
         using var server = new FakeHttp(Port);
@@ -423,6 +435,19 @@ public sealed class SpeechRegistryTests
     }
 
     [Fact]
+    public async Task TheTestLoadsTheModelFirstSoAColdProgramDoesNotFailIt()
+    {
+        var slow = new WarmingSource("draft-asr", ["ru"]) { WarmTime = TimeSpan.FromMilliseconds(300), Answer = "tone" };
+        var (registry, _, _, _) = Registry(_ => slow);
+
+        var result = await registry.TestDraftAsync(Speech(languages: ["ru"]), visitorInitiated: true);
+
+        Assert.True(result.Ok, result.Message);
+        Assert.Equal(["ru"], slow.Warmed);                                  // loaded in the source's own language
+        Assert.Equal(1, slow.Calls);
+    }
+
+    [Fact]
     public async Task ADraftThatTheProviderSetCannotBuildFailsInPlainWords()
     {
         var (registry, _, _, _) = Registry(_ => null);
@@ -437,7 +462,7 @@ public sealed class SpeechRegistryTests
     public async Task ARuntimeThatRefusesAudioFailsTheTestWithItsOwnReason()
     {
         using var server = new FakeHttp(5343);
-        server.Respond(400, """{"error":{"message":"audio input is not supported by this model"}}""");
+        server.Handler = _ => (400, """{"error":{"message":"audio input is not supported by this model"}}""");   // the warm-up is refused too
         using var http = new HttpClient();
         var (registry, _, _, _) = Registry(setting => new OpenAiCompatibleSpeechSource(setting.Kind!, setting.Model!, null, setting.Endpoint, null, http));
 

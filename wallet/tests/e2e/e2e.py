@@ -158,6 +158,7 @@ def wallet_pids():
 
 
 before = wallet_pids()
+ui.EXCLUDE_PIDS = frozenset(before)                      # the visitor's own wallet may be running too: never touch its windows
 
 
 def activity():
@@ -250,7 +251,10 @@ with sync_playwright() as p:
     preparing = ui.find_window("Agent wallet preparing", 5)
     if preparing is not None:
         time.sleep(0.4)
-        ui.shot(preparing, os.path.join(a.shots, "15-preparing.png"))
+        try:
+            ui.shot(preparing, os.path.join(a.shots, "15-preparing.png"))
+        except Exception:  # a program that has its model loaded already answers at once: the toast may be gone by now
+            pass
     grant = wait_grant(main)
     check("Allow gives a grant {grantId, skills, expiresAt}",
           isinstance(grant, dict) and isinstance(grant.get("grantId"), str) and grant.get("skills") == ["audio.transcribe"] and "expiresAt" in grant, grant)
@@ -258,7 +262,11 @@ with sync_playwright() as p:
     allow_to_grant = round((ev(main, "window.grantAt") - allowed_at) / 1000, 2)
     allowed_entry = [e for e in activity() if e.get("kind") == "request" and e.get("outcome") == "allowed"][-1:]
     results["allow_to_grant_seconds"] = {"ru+sk": allow_to_grant}
-    check("while the models load, the toast says \"Preparing your model…\"", preparing is not None and ui.window_gone("Agent wallet preparing", 35))
+    note = (allowed_entry[0].get("note") or "") if allowed_entry else ""
+    ready_after = re.search(r"models ready after ([0-9.]+) s", note)
+    quick = ready_after is not None and float(ready_after.group(1)) < 0.5      # the toast only shows after 150 ms of waiting
+    check("while the models load, the toast says \"Preparing your model…\" (or the program had its model loaded already)",
+          (preparing is not None and ui.window_gone("Agent wallet preparing", 35)) or quick, note)
     check("Allow resolves once the routed models are ready (at most ~30 s)", 0 < allow_to_grant <= 32 and "models ready after" in (allowed_entry[0].get("note") or "" if allowed_entry else ""),
           f"{allow_to_grant} s from the click; {allowed_entry[0].get('note') if allowed_entry else ''}")
 
@@ -318,18 +326,28 @@ with sync_playwright() as p:
     pp.close()
     ui.select(settings, "Tab-sources")
     time.sleep(1)
+    def toggle_speech(on):
+        """The page redraws itself when a switch changes, so a press may meet a control that is gone: find it again."""
+        for _ in range(6):
+            try:
+                ui.toggle(settings, "AddedSourceEnabled-" + SPEECH_ID, on)
+                return
+            except Exception:
+                time.sleep(0.8)
+        raise RuntimeError("the Use switch of the speech model could not be pressed")
+
     check("the speech model is listed among the added models, with its Use switch", settings.CheckBoxControl(AutomationId="AddedSourceEnabled-" + SPEECH_ID, searchDepth=60).Exists(3, 0.2))
     ui.shot(settings, os.path.join(a.shots, "10-sources.png"))
-    ui.toggle(settings, "AddedSourceEnabled-" + SPEECH_ID, False)
+    toggle_speech(False)
     time.sleep(1)
     off = run_clip(main, words["ru"][0])
     check("with the speech model turned off, the call is not answered by it (no paid fallback in this run)",
           off["got"] is None or not (off["source"] or "").startswith("Qwen3-ASR"), f"{off['fallback']} -> {off['got']}")
-    ui.toggle(settings, "AddedSourceEnabled-" + SPEECH_ID, True)
+    toggle_speech(True)
     time.sleep(1)
     again = run_clip(main, words["ru"][0])
     check("turned on again, the speech model answers again", again["got"] is not None and (again["source"] or "").startswith("Qwen3-ASR"), f"{again['source']} -> {again['got']}")
-    ui.toggle(settings, "AddedSourceEnabled-" + SPEECH_ID, False)
+    toggle_speech(False)
     time.sleep(1)
 
     # ------------------------------------------------------------------ the paid fallback asks first
@@ -381,7 +399,7 @@ with sync_playwright() as p:
         if info:
             ui.shot(info, os.path.join(a.shots, "05-limit-toast.png"))
             ui.invoke(info, "NoticeClose")
-    ui.toggle(settings, "AddedSourceEnabled-" + SPEECH_ID, True)
+    toggle_speech(True)
     time.sleep(1)
 
     # ------------------------------------------------------------------ no click: null, no notice, a quiet badge

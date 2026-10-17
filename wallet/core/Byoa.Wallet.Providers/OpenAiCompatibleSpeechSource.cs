@@ -222,7 +222,9 @@ public sealed class OpenAiCompatibleSpeechSource : ISpeechSource, ILiveness, IWa
             var node = JsonNode.Parse(body)?["error"];
             var message = ChatCompletions.Str(node?["message"]) ?? ChatCompletions.Str(node);
             if (string.IsNullOrWhiteSpace(message)) return null;
-            message = string.Join(' ', message.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+            // One plain line: whatever control characters a program puts in its error never reach a window or an agent.
+            message = string.Join(' ', new string(message.Select(c => char.IsControl(c) ? ' ' : c).ToArray())
+                .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
             return message.Length > 200 ? message[..200] : message;
         }
         catch (JsonException)

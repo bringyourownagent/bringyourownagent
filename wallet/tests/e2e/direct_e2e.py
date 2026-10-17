@@ -130,6 +130,7 @@ samples = json.load(open(os.path.join(a.samples, "samples.json"), encoding="utf-
 words = {lang: [s for s in samples if s["lang"] == lang and s["kind"] == "word"] for lang in ("ru", "sk")}
 sentences = [s for s in samples if s["kind"] == "sentence"]
 before = wallet_pids()
+ui.EXCLUDE_PIDS = frozenset(before)                      # the visitor's own wallet may be running too: never touch its windows
 started_pids = set()
 main, dec, blk, web_site, liar = (FakeSite(n).start() for n in ("main", "decline", "block", "browser", "liar"))
 

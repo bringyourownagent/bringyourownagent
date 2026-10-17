@@ -87,22 +87,15 @@ Receipts give the cost with at least three decimals and `provider` as `local`, `
 
 ## 6. Measured on the development machine (RTX 5080 Laptop, 16 GB)
 
+The wallet holds no model, so these are the speeds of the programs it hands the request to, and what the hand-over adds (the wallet's own part is a few milliseconds).
+
 | Source | Typical time inside the wallet | Notes |
 |---|---|---|
-| GigaAM v3, CPU | 45-70 ms for a 2-3 s word, 100-160 ms for an 8 s sentence | Russian: 7 of 8 synthetic single words exact, sentence word error rate 0.05 |
-| Whisper large-v3 q5_0, GPU (Vulkan) | 400-700 ms per clip | Slovak single words spoken by a person: 12 of 20 exact, 15 of 20 counting numbers written as digits; large-v3-turbo got 9 of 20, so large-v3 is the default |
-| Whisper small-q5_1, CPU | about 1.2-1.5 s for a 4 s clip | The CPU-only default for non-Russian languages; a slow but local fallback |
+| Qwen3-ASR 1.7B FP16 in the Llama app, on the GPU | 0.1-0.9 s per clip (183-335 ms from the site's server over a link, for Russian words and phrases) | Russian: 8 of 8 single words exact, phrase word error rate 0.00 in the wallet's end-to-end run; on the 96 synthetic clips of text-generate.md section 6, 19 of 24 words and 10 of 12 phrases. Slovak is weak (0 of 8 words exact): a model that hears Slovak better would have to be added for it |
+| The same model, the first request after the program starts | about 75 s once | The program loads the model on demand; the wallet's warm-up clip (and the Test button) pays for it, so a site's first call is not the one that waits |
 | Scribe v2 through OpenRouter | 0.6-1.7 s | about $0.00006 for a 2 s word |
 
-From Allow to `request()` resolved, on a freshly started wallet (the models are loaded before the grant, section 3):
-
-| Manifest languages | Allow → grant | Model ready after | First call after the grant |
-|---|---|---|---|
-| ru | 1.1 s | GigaAM 0.9 s | 80 ms (GigaAM) |
-| sk | 1.95-2.1 s | Whisper 1.7-1.9 s | 470-480 ms (Whisper) |
-| ru + sk (the e2e test; Geo-1) | 2.4 s | both 1.9-2.0 s | 80 ms (ru), 476 ms (sk) |
-
-A silent grant ("decide on my own") on a wallet that the request itself starts: 2.1 s (ru) and 2.5 s (sk), wallet start included. The first Whisper load ever on a machine takes 8-15 s (it prepares its GPU shaders); the page receives its grant after the first usable route source is ready, or after the next fallback is ready if loading fails.
+From Allow to `request()` resolved, with the model already loaded in the program (the extension end-to-end run; the Russian and Slovak clips came after it): Allow to grant 2.4 s, which includes the 0.4 s the warm-up took, and the first call after the grant took 0.19 s (Russian) and 0.11 s (Slovak). Through a link, with the wallet starting cold: Allow to the site's `hello` 4.7 s, then 183-335 ms per call.
 
 ## 7. What 0.1 does not do
 
@@ -188,4 +181,4 @@ Agent-added endpoints on another computer, and loopback ports other than standar
 
 API keys are write-only. `request_api_key_entry` opens a field in the wallet so the visitor enters or replaces the key; the agent sees only the saved result. `set_api_key` always needs Full access because the value was supplied through the agent. Neither path returns the key, and Activity records only that a key was saved. Help articles are embedded once in the core assembly and are rendered by the Help window and returned by the MCP `help` tool.
 
-Measured on the development machine with the end-to-end test (`wallet/tests/e2e/direct_e2e.py`, fake sites on `ws://localhost` that count every request they get): no request reaches a site before Allow; link to notice 1.2-3.0 s with the wallet starting cold; Allow to `hello` 2.5-3.5 s (the models loaded first, 2.4-3.3 s); calls round trip from the site's server 46-180 ms in Russian (GigaAM) and 490-830 ms in Slovak (Whisper); a restarted wallet back on the connection 2.9-3.5 s after it starts. Against the Geo-1 game run locally (its direct mode, no extension in the browser, the manifest in its link): Allow to the game saying the wallet is connected 2.8-3.8 s; the server's phrases answered by GigaAM in 61-76 ms; a page reload binds the same connection again; a restarted wallet is bound again 3.4-3.6 s after it starts; every welcome echoed the link's manifest. A real click in a headed Chromium shows Chromium's own prompt ("Open <the app>?", with the exe's description, "Agent wallet", once Windows has not cached an older name) and then the wallet's notice; that second process hands the link to the running wallet over the pipe.
+Measured on the development machine with the end-to-end test (`wallet/tests/e2e/direct_e2e.py`, fake sites on `ws://localhost` that count every request they get): no request reaches a site before Allow; link to notice 1.2-3.0 s with the wallet starting cold; Allow to `hello` 4.7 s (the model asked to load first, 0.2 s, because the program already had it); calls round trip from the site's server 183-335 ms in Russian, answered by Qwen3-ASR in the Llama app; a restarted wallet back on the connection 1.9 s after it starts. In an earlier build, with the speech engines inside the wallet, the Geo-1 game run locally (its direct mode, no extension in the browser, the manifest in its link) saw: a page reload binds the same connection again; a restarted wallet is bound again 3.4-3.6 s after it starts; every welcome echoed the link's manifest. A real click in a headed Chromium shows Chromium's own prompt ("Open <the app>?", with the exe's description, "Agent wallet", once Windows has not cached an older name) and then the wallet's notice; that second process hands the link to the running wallet over the pipe.
