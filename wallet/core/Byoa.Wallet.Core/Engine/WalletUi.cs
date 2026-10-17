@@ -27,6 +27,32 @@ public sealed record NoticeModel(string Origin, string Host, bool FromLink = fal
 /// <summary>One language of a skill and the source the manager suggests for it.</summary>
 public sealed record RouteLine(string? Language, string SourceName, string Where, bool Paid, bool Fits, string? Detail = null);
 
+/// <summary>
+/// The languages of a skill that go to the same source, as one line: a site that lists four languages, all read by one
+/// local model, shows that model once, not four times. The groups keep the order in which their first language came.
+/// </summary>
+public sealed record RouteGroup(RouteLine Route, IReadOnlyList<string> Languages)
+{
+    public static IReadOnlyList<RouteGroup> Of(IEnumerable<RouteLine> routes)
+    {
+        var groups = new List<(RouteLine Route, List<string> Languages)>();
+        foreach (var route in routes)
+        {
+            var at = groups.FindIndex(g => g.Route.SourceName == route.SourceName && g.Route.Where == route.Where
+                && g.Route.Paid == route.Paid && g.Route.Fits == route.Fits && g.Route.Detail == route.Detail);
+            if (at < 0)
+            {
+                groups.Add((route, []));
+                at = groups.Count - 1;
+            }
+
+            if (route.Language is { } language && !groups[at].Languages.Contains(language)) groups[at].Languages.Add(language);
+        }
+
+        return groups.Select(g => new RouteGroup(g.Route, g.Languages)).ToList();
+    }
+}
+
 /// <summary>One row of the consent window: a skill, the sources that will answer it, and the reason.</summary>
 public sealed record ConsentRow(
     string Skill,

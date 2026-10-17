@@ -151,7 +151,10 @@ sealed class ConsentWindow : CornerWindow
             : Ui.Row(4, Ui.Text("local test page (http)", "muted", "small"));
         if (_model.Secure && !_model.FromLink) ((TextBlock)verified.Children[1]).Foreground = Ui.Brush("Sign");
         var hostInfo = Ui.Column(3, host, verified);
-        hostInfo.Width = 290;
+        // the chips ("updated", "paused") sit to the right of the host: they take their room from the host's column, not from the window's edge
+        var chips = (_model.IsDifference ? 1 : 0) + (_model.PausedNote is not null ? 1 : 0);
+        hostInfo.Width = chips switch { 0 => 290, 1 => 240, _ => 170 };
+        linkProof.Width = Math.Min(220, hostInfo.Width);
         var hostRow = Ui.Row(9, Ui.Tile(Ui.Globe, 28), hostInfo);
         if (_model.IsDifference) hostRow.Children.Add(Ui.Chip("updated", "outline"));
         if (_model.PausedNote is not null) hostRow.Children.Add(Ui.Chip("paused", "outline"));
@@ -229,27 +232,29 @@ sealed class ConsentWindow : CornerWindow
         }
         else
         {
-            var multi = row.Routes.Count > 1;
-            foreach (var route in row.Routes)
+            // Languages that go to the same source are one line; only when the sources differ is each line told its languages.
+            var groups = RouteGroup.Of(row.Routes);
+            foreach (var group in groups)
             {
-                var line = Ui.Row(6,
-                    Ui.Glyph(Ui.Arrow, Ui.Brush("Muted"), 14, 2),
-                    Ui.Glyph(route.Where == "API key" ? Ui.Key : Ui.Screen, Ui.Brush("Ink2"), 14, 2),
-                    Ui.Text(route.SourceName, "strong"),
-                    Ui.Text("· " + route.Where + " · " + (route.Paid ? "paid" : "free")
-                        + (multi && route.Language is not null ? " · " + Vocabulary.LanguageName(route.Language) : ""), "muted"));
-                if (route.Fits) line.Children.Add(Ui.InkCheck(15));
-                ((TextBlock)line.Children[2]).FontSize = 14;
-                if (route.Detail is { Length: > 0 } detail)
-                {
-                    // Keep download size and CPU latency on a second line: the source row remains readable at the
-                    // narrow consent width instead of clipping the explanation after the provider name.
-                    panel.Children.Add(Ui.Column(2, line, Ui.Text(detail, "muted", "small")));
-                }
-                else
-                {
-                    panel.Children.Add(line);
-                }
+                var route = group.Route;
+                // the name wraps when it is long (a model id and "this computer"), and the check mark stays at the right edge
+                var arrow = Ui.Glyph(Ui.Arrow, Ui.Brush("Muted"), 14, 2);
+                var kind = Ui.Glyph(route.Where == "API key" ? Ui.Key : Ui.Screen, Ui.Brush("Ink2"), 14, 2);
+                var name = Ui.Wrap(route.SourceName, "strong");
+                name.FontSize = 14;
+                arrow.Margin = new Thickness(0, 0, 6, 0);
+                kind.Margin = new Thickness(0, 0, 6, 0);
+                Control mark = route.Fits ? Ui.InkCheck(15) : new Panel();
+                mark.Margin = new Thickness(6, 0, 0, 0);
+                var line = Ui.Columns("Auto,Auto,*,Auto", arrow, kind, name, mark);
+                // Where it runs, its price and (when the sources differ) its languages go under the name, and the speed note under that:
+                // at the narrow consent width a long model name leaves no room for them on its own line.
+                var about = route.Where + " · " + (route.Paid ? "paid" : "free")
+                    + (groups.Count > 1 && group.Languages.Count > 0 ? " · " + string.Join(", ", group.Languages.Select(Vocabulary.LanguageName)) : "");
+                var lines = Ui.Column(2, line, Ui.Wrap(about, "muted", "small"));
+                if (route.Detail is { Length: > 0 } detail) lines.Children.Add(Ui.Wrap(detail, "muted", "small"));
+                foreach (var under in lines.Children.Skip(1)) under.Margin = new Thickness(20, 0, 0, 0);
+                panel.Children.Add(lines);
             }
         }
 
