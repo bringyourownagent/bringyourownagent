@@ -131,10 +131,7 @@ sealed class ConsentWindow : CornerWindow
             Child = Ui.Columns("Auto,*,Auto", icon, Ui.Text("Agent wallet", "label"), close),
         };
         icon.Margin = new Thickness(0, 0, 8, 0);
-        bar.PointerPressed += (_, e) =>
-        {
-            if (e.GetCurrentPoint(bar).Properties.IsLeftButtonPressed) BeginMoveDrag(e);
-        };
+        bar.Cursor = DragCursor;        // the whole window drags (CornerWindow); the title bar is where one looks for the handle
         return bar;
     }
 

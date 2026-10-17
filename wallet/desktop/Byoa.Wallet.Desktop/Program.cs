@@ -52,7 +52,10 @@ static class Program
         var userActivation = !args.Contains("--no-user-activation", StringComparer.Ordinal);
         if (!first)
         {
-            if (LinkArgument is not null) HandOffLink(LinkArgument, userActivation);
+            if (LinkArgument is not null && !HandOffLink(LinkArgument, userActivation) && !WalletPaths.IsCustomHome)
+                Native.MessageBox(IntPtr.Zero,
+                    "The wallet is running but did not take this link.\n\nIf it was started as administrator, close it from the tray icon and open it again normally (from the Start menu); a wallet started that way cannot be reached from the browser.",
+                    "Agent wallet", 0x30);
             else if (!Background) AskRunningWalletToOpen();
             return 0;
         }
@@ -78,11 +81,11 @@ static class Program
         }
     }
 
-    /// <summary>Hands a link to the running wallet over its pipe; every step is time-limited (LinkHandOff).</summary>
-    static void HandOffLink(string link, bool userActivation)
+    /// <summary>Hands a link to the running wallet over its pipe; every step is time-limited (LinkHandOff). False when it did not take it.</summary>
+    static bool HandOffLink(string link, bool userActivation)
     {
         if (link.Length > DirectLink.MaxLength) link = link[..(DirectLink.MaxLength + 1)];   // the wallet refuses it as too long
-        LinkHandOff.Send(WalletPaths.PipeName(), link, userActivation: userActivation);
+        return LinkHandOff.Send(WalletPaths.PipeName(), link, userActivation: userActivation);
     }
 
     /// <summary>Crashes go to errors.log in the data folder (types and stack only; no content, no secrets).</summary>
@@ -95,5 +98,8 @@ static class Program
     {
         [DllImport("kernel32.dll")]
         internal static extern uint SetErrorMode(uint mode);
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        internal static extern int MessageBox(IntPtr window, string text, string caption, uint type);
     }
 }

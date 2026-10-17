@@ -26,7 +26,7 @@ sealed class ToastWindow : CornerWindow
     {
         Title = title;
         ShowActivated = false;
-        var card = new Border { Child = _body, Padding = new Thickness(14, 12, 12, 12), Margin = new Thickness(ShadowMargin), Background = Brushes.White };
+        var card = new Border { Child = _body, Padding = new Thickness(14, 12, 12, 12), Margin = new Thickness(ShadowMargin), Background = Brushes.White, Cursor = DragCursor };
         card.Classes.Add("popup");
         card.Classes.Add("notice");
         Content = card;
