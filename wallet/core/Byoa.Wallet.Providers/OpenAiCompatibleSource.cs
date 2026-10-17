@@ -63,8 +63,8 @@ public sealed class OpenAiCompatibleSource : ITextSource, ILiveness, ITextSource
     public string Id => MakeId(_kind, Model, Endpoint);
 
     /// <summary>Stable id for two settings that offer the same model at different endpoints.</summary>
-    public static string MakeId(string kind, string model, string? endpoint)
-        => SourceIds.OpenAiCompatible(kind, model, endpoint);
+    public static string MakeId(string kind, string model, string? endpoint, string skill = Vocabulary.Generate)
+        => SourceIds.OpenAiCompatible(kind, model, endpoint, skill);
 
     public static bool IsLoopback(string host)
     {

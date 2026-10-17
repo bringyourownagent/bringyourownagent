@@ -1,8 +1,6 @@
-using Byoa.Wallet.Providers;
-
 namespace Byoa.Wallet.Tests;
 
-/// <summary>The license notices that ship with the package must agree with what the wallet downloads, and with the
+/// <summary>The license notices that ship with the package must agree with what the package holds, and with the
 /// license files at the root of the repository.</summary>
 public sealed class PackagingNoticeTests
 {
@@ -16,15 +14,13 @@ public sealed class PackagingNoticeTests
     }
 
     [Fact]
-    public void TheNoticesNameTheGigaAmModelAndTheLicenseTheWalletDownloads()
+    public void TheNoticesNameNoModelAndNoEngineTheWalletDoesNotShip()
     {
         var notices = File.ReadAllText(Path.Combine(RepoRoot(), "wallet", "packaging", "THIRD-PARTY-NOTICES.txt"));
-        var license = GigaAmSource.DownloadFiles.Single(file => file.Name == "LICENSE");
 
-        Assert.Contains(GigaAmSource.ModelFolderName, notices, StringComparison.Ordinal);
-        Assert.Contains(license.Sha256, notices, StringComparison.Ordinal);
-        Assert.Contains("Copyright (c) 2024 GigaChat Team", notices, StringComparison.Ordinal);
-        Assert.DoesNotContain("only from a folder", notices, StringComparison.Ordinal);
+        foreach (var gone in new[] { "Whisper", "whisper", "sherpa", "ONNX", "onnxruntime", "GigaAM" })
+            Assert.DoesNotContain(gone, notices, StringComparison.Ordinal);
+        Assert.Contains("holds no model", notices, StringComparison.Ordinal);
     }
 
     [Fact]

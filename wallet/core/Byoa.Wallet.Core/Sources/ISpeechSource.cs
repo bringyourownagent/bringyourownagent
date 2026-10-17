@@ -12,13 +12,7 @@ public enum SourceState
 {
     Ready,
 
-    /// <summary>The model is known but not downloaded yet (it downloads on first use).</summary>
-    NeedsDownload,
-
-    /// <summary>Downloading now.</summary>
-    Downloading,
-
-    /// <summary>No model files found.</summary>
+    /// <summary>The runtime does not offer the model any more.</summary>
     Missing,
 
     /// <summary>No API key added.</summary>
@@ -27,23 +21,24 @@ public enum SourceState
     /// <summary>It failed to load.</summary>
     Broken,
 
-    /// <summary>This source is deliberately not attempted on this processor.</summary>
+    /// <summary>The wallet refuses to use it right now (for example, an endpoint that is not allowed); the state text says why.</summary>
     Unavailable,
 }
 
 /// <summary>The result of one transcription.</summary>
 /// <param name="Text">What the source heard.</param>
 /// <param name="Cost">What it cost in dollars (0 for a local model).</param>
-/// <param name="Detail">A short note for the activity log, e.g. "GPU (Vulkan)".</param>
+/// <param name="Detail">A short note for the activity log, e.g. "Llama · Qwen3-ASR · 0.2 s".</param>
 public sealed record Transcript(string Text, decimal Cost, string? Detail = null);
 
 /// <summary>
-/// A source of the skill <c>audio.transcribe</c>. A source is described by properties (languages, where it runs,
-/// its approximate speed and cost), and routing works from those properties, not from names.
+/// A source of the skill <c>audio.transcribe</c>: a speech model in a program on this computer (or a home server), or a
+/// paid API behind the visitor's key. The wallet itself holds no model. A source is described by properties
+/// (languages, where it runs, its approximate speed and cost), and routing works from those properties, not from names.
 /// </summary>
 public interface ISpeechSource
 {
-    /// <summary>A stable id used in settings: "gigaam-v3", "whisper", "openrouter-scribe".</summary>
+    /// <summary>A stable id used in settings and chains: "openrouter-scribe", "openai-compatible:qwen3-asr@http://127.0.0.1:9931/v1#transcribe".</summary>
     string Id { get; }
 
     /// <summary>The name people see.</summary>
@@ -58,13 +53,13 @@ public interface ISpeechSource
     /// <summary>Languages it handles well (primary BCP 47 tags); null means many languages.</summary>
     IReadOnlyList<string>? Languages { get; }
 
-    /// <summary>How many languages it knows, for showing ("99").</summary>
+    /// <summary>How many languages it was set up for, for showing; 0 when it takes any language.</summary>
     int LanguageCount { get; }
 
     /// <summary>True when it costs money.</summary>
     bool Paid { get; }
 
-    /// <summary>The typical seconds per short clip: measured on this computer once it has run, a default before.</summary>
+    /// <summary>The typical seconds per short clip: measured once it has run, a default before.</summary>
     double ApproxSeconds { get; }
 
     /// <summary>True only after this wallet has measured a real clip on this computer.</summary>
@@ -72,7 +67,7 @@ public interface ISpeechSource
 
     SourceState State { get; }
 
-    /// <summary>One line about its state for people: "ready · GPU (Vulkan)", "not downloaded (874 MB)".</summary>
+    /// <summary>One line about its state for people: "ready · Llama", "Llama is not running".</summary>
     string StateText { get; }
 
     /// <summary>The estimated cost of one clip, before it runs.</summary>
@@ -83,25 +78,9 @@ public interface ISpeechSource
     Task<Transcript> TranscribeAsync(float[] samples, string? language, CancellationToken ct);
 }
 
-/// <summary>A source that has to download its model first.</summary>
-public interface IDownloadableSource
-{
-    /// <summary>0..1 while downloading, null otherwise.</summary>
-    double? DownloadProgress { get; }
-
-    /// <summary>The size of the download in bytes, when known.</summary>
-    long? DownloadSize { get; }
-
-    /// <summary>Starts the download if it is not running; completes when the model is there (or the download failed).</summary>
-    Task EnsureDownloadedAsync(CancellationToken ct);
-
-    /// <summary>Raised when the progress or the state changes.</summary>
-    event Action? ProgressChanged;
-}
-
-/// <summary>A source that can load its model ahead of the first call, so that the first phrase is as fast as the others.</summary>
+/// <summary>A source that can have its runtime load the model ahead of the first call, so that the first phrase is as fast as the others.</summary>
 public interface IWarmable
 {
-    /// <summary>Loads the model and runs one short silent clip through it, for <paramref name="language"/> when that matters.</summary>
+    /// <summary>Asks the runtime to load the model by running one short silent clip through it, for <paramref name="language"/> when that matters.</summary>
     Task WarmAsync(string? language);
 }

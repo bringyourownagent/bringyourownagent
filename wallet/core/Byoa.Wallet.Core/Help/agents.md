@@ -10,7 +10,6 @@ Approval is by the program that started the bridge. Another program of your Wind
 Allow gives these normal capabilities:
 
 - manage sources and routes (you confirm any source on another computer);
-- download models and, after your confirmation, delete them;
 - ask you to type an API key into the wallet; the wallet never sends a key back to the agent;
 - read the activity log (site names only with Full access).
 

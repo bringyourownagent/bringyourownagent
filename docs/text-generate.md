@@ -1,6 +1,6 @@
 # text.generate: the wallet's second skill
 
-Status: working version, 12 October 2026. The wallet serves speech and text generation through the same engine, gate, route and activity log. The measurements in section 6 come from real runs on the machine this was built on.
+Status: working version, 12 October 2026; the speech sources were reworked on 17 October 2026 (section 6). The wallet serves speech and text generation through the same engine, gate, route and activity log, and holds no model: both skills are served by programs that run one. The measurements in section 6 come from real runs on the machine this was built on.
 
 ## 1. The page API
 
@@ -51,6 +51,8 @@ A thinking model must not leak its thoughts to a page. The wallet removes closed
 
 **`OpenRouterTextSource`** — paid, through the visitor's OpenRouter key (from the secret store, by `SecretRef`). The cost comes back from the API's `usage` (asked for explicitly); before a call, the estimate comes from OpenRouter's public price list (read about once an hour) or a conservative flat $0.02 per answer. A failed call never quotes the key, not even when OpenRouter's own error echoes it.
 
+**`OpenAiCompatibleSpeechSource`** — the same kind of runtime, for the skill `audio.transcribe`: see section 6.
+
 **`FakeTextSource`** — the tests'. The engine, the router and the hygiene rules do not know the difference.
 
 ## 4. The runtime scanner
@@ -66,33 +68,33 @@ The scanner sets each source's `Up` (is the runtime running) and `Listed` (does 
 
 ## 5. The chain and the settings
 
-One `SourceSetting` in the settings builds one text source (kind, model, optional label, optional endpoint, skills). `SourceSet` keeps them in one stable list (`SourceSet.Text`) that the engine holds for its whole life — a settings change swaps one array, atomically; `SourceSet.FindText(id)` returns one source by its canonical id, including the endpoint. The registry adds a new source and its route stop in one settings write, before the first paid stop, so a local model is tried before anything that costs money. A rebuild never writes settings back while handling its own `Changed` event. The desktop needs no adapter of its own — see [agents/NEEDS-text.md](agents/NEEDS-text.md).
+One `SourceSetting` in the settings builds one source (kind, model, optional label, optional endpoint, one skill): a text source, or, with the skill `audio.transcribe`, a speech source. `SourceSet` keeps the text sources in one stable list (`SourceSet.Text`) and the speech sources, the paid one last, in another (`SourceSet.All`), which the engine holds for its whole life — a settings change swaps one array, atomically; `SourceSet.FindText(id)` returns one source by its canonical id, including the endpoint. The registry adds a new source and its route stop in one settings write, before the first paid stop, so a local model is tried before anything that costs money. A rebuild never writes settings back while handling its own `Changed` event. The desktop needs no adapter of its own — see [agents/NEEDS-text.md](agents/NEEDS-text.md).
 
-## 6. GigaAM, CPU Whisper and hardware defaults
+## 6. Speech to text through a program: no model inside the wallet
 
-GigaAM v3 is the first speech choice for Russian. If the visitor has no matching model folder, the wallet downloads the five pinned files (about 230 MB) into `models\\gigaam\\sherpa-onnx-nemo-transducer-giga-am-v3-russian-2025-12-16`. It writes to an owned staging directory, checks every published size and SHA-256, and moves the complete directory into place only at the end. An interrupted or corrupt download never becomes a usable model. A GigaAM folder already found in the visitor's own model folders is used without copying or changing it.
+Until 16 October 2026 the wallet carried its own speech engines (GigaAM through sherpa-onnx, Whisper through Whisper.net, with model downloads, folders, GPU probes and the licences that came with them). They are gone. A wallet is a go-between: the model runs in a program the visitor already trusts, and the wallet hands it the request. That removes the native libraries, the download manager, and the question of who updates a model, from the wallet.
 
-The pinned Hugging Face LFS metadata is: `encoder.int8.onnx` 224,570,814 bytes, SHA-256 `0ec54e5f130a91c0f228d21795ede10b31c992a1f73e45dcd827e843a71a9b50`; `decoder.onnx` 3,331,651, `5d1cfef155d8e07f213bd2f3229b5f6c5c29355c7fa5c1b9eb62cb1925725254`; `joiner.onnx` 1,440,448, `fd1d02f45c2ad3d6b67cc149811ad794ab4b020ed49a0a9e2790a8619d1cddd8`; `tokens.txt` 196, `17cc514451bcceac9c280068c71502f8448f99e9fb1456b8d0761651fd0392f2`; and `LICENSE` 1,070, `f00de6715714c7a63d08639cdbfaa40224eefc407302614bd19f1a8b98c875aa`.
+**`OpenAiCompatibleSpeechSource`** is the speech counterpart of `OpenAiCompatibleSource`: one speech model in a program on this PC (or a confirmed home server) that takes audio in a chat request. The clip goes to `POST {endpoint}/chat/completions` as a user message with an `input_audio` part (16 kHz mono WAV, base64) and one text part: "The audio is in Russian (write it in Cyrillic). Transcribe it word for word in Russian, exactly as spoken. Do not translate. Output only the transcription, nothing else." (the language from the call; without one, "in the language of the speaker"). `temperature` is 0, `max_tokens` grows with the clip (16 per second plus 64, never above 2048), and `chat_template_kwargs.enable_thinking` is false. The answer is the message's `content`, without the `language Russian<asr_text>` tag that Qwen3-ASR puts in front, and without a `<think>` block. One clip at a time per source: a local runtime answers one request, and the second clip waits. The error text of a refused call (`error.message`, one short line) is kept, so a Test with a model that cannot hear audio says so ("image input is not supported - hint: provide the mmproj") instead of "did not answer".
 
-At startup the wallet probes Vulkan once, before any Whisper factory exists. It accepts a real integrated, discrete, or usable virtual physical device; software renderers such as llvmpipe and Microsoft Basic Render are rejected. With AVX and a usable GPU the native order is `[Vulkan, Cpu, CpuNoAvx]`: large Whisper uses the GPU and the CPU Whisper source says that the GPU build is in use. Without a usable GPU the order is `[Cpu, CpuNoAvx]`, and the default speech chain is GigaAM for Russian, small CPU Whisper for other languages, then the paid fallback; the large model remains available as an explicit choice. Without AVX both local Whisper sources say `unavailable: this processor has no AVX (too slow)` and are skipped. `BYOA_WHISPER_RUNTIME=auto|gpu|cpu` overrides the automatic GPU choice for diagnostics or an informed visitor; it is read once at startup.
+The first call after the program starts may load the model, which took about 75 s through the Llama app from a cold disk; later calls 0.1-0.9 s. That is what the preparing step is for: after Allow the wallet sends one short silent clip to the first local speech source of each language, so the first real phrase is as quick as the others, and waits at most 30 s for it.
 
-The CPU fallback (`WhisperCpuSource`) is the speech skill's safety net for machines where the big GPU Whisper does not work. It is the same whisper.cpp engine with the GPU switched off and all cores allowed, its own copy of **ggml-small-q5_1** (190 MB) in the models folder of the wallet home, downloaded and SHA-256-checked on first use.
+One added source serves one skill, and a speech source's id ends in `#transcribe` (`openai-compatible:renesas/qwen3-asr-1.7b-gguf:fp16@http://127.0.0.1:9931/v1#transcribe`), so the same model can be added once for text and once for speech. The paid ElevenLabs Scribe v2 through OpenRouter (`openrouter-scribe`) is still built in, as the last stop of the speech route; the wallet's route for a new install is that stop alone.
 
-**Why small and not base** — both measured on this machine (24 logical cores, CPU runtime), six synthesized speech clips of 3.9–4.4 s, three English (Piper `lessac-medium`) and three Spanish (Piper `davefx-medium`), word error rate against the spoken text:
+**Which model.** The same 96 synthetic clips (Piper voices: Russian and English country names and short sentences; no noise, no children's voices, so absolute numbers are friendlier than life) went through each candidate. Russian and English words out of 24, sentences exact out of 12 (word error rate in brackets), time per clip:
 
-| model | download | per clip | real time | wer all | en | es |
-|---|---|---|---|---|---|---|
-| ggml-base-q5_1 | 60 MB | 0.4 s | 10.2× | 6.2% | 8.6% | 3.3% |
-| ggml-small-q5_1 | 190 MB | 1.2–1.5 s | 2.9× | 0.0% | 0.0% | 0.0% |
+| Model | RU words | RU sentences | EN words | EN sentences | Time |
+|---|---|---|---|---|---|
+| **Qwen3-ASR 1.7B, in the Llama app** | 19 | 10 (0.03) | 22 | 12 | 0.15-0.9 s on a GPU |
+| Whisper large-v3 (CPU int8; what Speaches / faster-whisper servers run) | 17 | 10 (0.07) | 22 | 12 | about 4.5 s on a CPU |
+| GigaAM v3 (what the wallet used to carry) | 17 | 9 (0.07) | – | – | 0.07-0.1 s |
+| Parakeet v3 | 14 | 10 (0.07) | 19 | 12 | 0.08-0.14 s |
+| Gemma 4 E4B Q4_0, in Llama | 14 | 10 (0.07) | 20 | 12 | 0.15-0.35 s |
+| Gemma Q8_0, in Llama | 12 | 8 (0.09) | – | – | – |
 
-Base misheard real words: "She poured a" → "Cheap or to", Spanish "duerme" → "tuerme" — exactly the kind of single-word mistake the wallet's clips are full of. Small was letter-perfect in both languages, including "mañana" and "niños" with the diacritics. Three times slower is still a fifth of a second's speech in half a second — fine for a fallback, so the extra 130 MB download buys the accuracy.
-
-**The native-runtime lesson.** whisper.net chooses its native library order process-wide. The wallet decides that order once, before either factory exists: Vulkan first only when the probe found a usable GPU, then the AVX CPU build and the no-AVX build; otherwise CPU first. This keeps the CPU factory from loading after Vulkan without locking GPU machines out of the fast path. On a processor without AVX both Whisper sources are unavailable with the honest state `unavailable: this processor has no AVX (too slow)` and the router skips them.
-
-The router keeps the two out of each other's way: while the big Whisper is ready, the CPU source is skipped ("the big Whisper already works on this PC"). If the big model is still downloading, the CPU stop remains eligible when its own model is ready, so a fresh machine does not pay or wait unnecessarily.
+Qwen3-ASR is both the best of these on the clips and a model the Llama app runs with no extra server, so it is the one we recommend; accuracy did not depend on the text prompt (it was the same without one). The one hard Russian voice ("denis") was hard for every model. Slovak is third priority and was left out of this round. Qwen3-ASR sits in `Renesas/Qwen3-ASR-1.7B-GGUF` (FP16 with its `mmproj` file); it works the same through the Llama app's router (model id `Renesas/Qwen3-ASR-1.7B-GGUF:FP16`) as through a plain `llama.exe serve`.
 
 **text.generate against the real LM Studio** (qwen/qwen3.5-4b on 127.0.0.1:1234, through `OpenAiCompatibleSource`, 12 October 2026): a plain question took 1.4 s (2.5 s on the day's first, cold call — the model's warm-up); ten yes/no questions with `choices: ["yes", "no"]` came back **10/10 valid and 10/10 correct**, 0.3–0.5 s per answer, schema-constrained, no retries needed.
 
 ## 7. What the tests cover
 
-`wallet/tests/Byoa.Wallet.Tests` covers the engine path end to end (caps, gate limits, paid settlement on empty and choice-miss failures, the second paid attempt, cancellation, hidden reasoning, fallback order, the paid question and the session budget); the OpenAI-compatible source and OpenRouter against raw loopback fakes (bounded bodies, redirects, schema fallbacks, token retries, the key that never shows in an error, prices from usage and from the price list); the scanner and `SourceSet` (stable replacement, duplicate ids, malformed endpoints, endpoint-aware identities and disposal); language-specific routes, consent wording, and CPU Whisper's no-AVX state. The same tests cover `CleanAnswer` and `MatchChoice` formats documented above.
+`wallet/tests/Byoa.Wallet.Tests` covers the engine path end to end (caps, gate limits, paid settlement on empty and choice-miss failures, the second paid attempt, cancellation, hidden reasoning, fallback order, the paid question and the session budget); the OpenAI-compatible source and OpenRouter against raw loopback fakes (bounded bodies, redirects, schema fallbacks, token retries, the key that never shows in an error, prices from usage and from the price list); the scanner and `SourceSet` (stable replacement, duplicate ids, malformed endpoints, endpoint-aware identities and disposal); the speech source against a fake Llama (the `input_audio` body, the language instruction, the tag stripped from the answer, the runtime's own error, one clip at a time, the warm-up clip), the provider set's speech list and the migration of a settings file from the version with the engines inside, speech models added, tested, moved and removed through the registry; language-specific routes and consent wording. The same tests cover `CleanAnswer` and `MatchChoice` formats documented above.

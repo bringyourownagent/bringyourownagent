@@ -5,13 +5,15 @@ sites (fake_site.py) on ws://localhost under the developer switch.
     python direct_e2e.py --samples <dir from make_samples.py> --shots <screenshot dir> --work <empty work dir>
                          [--app %LOCALAPPDATA%\\BYOA\\wallet-app] [--no-browser]
 
-Before: run install.ps1 (it registers the scheme). The test uses its own wallet data folder (BYOA_WALLET_HOME) and
-BYOA_WALLET_DEV_LOCAL=1, both inherited by the wallet that the link starts.
+Before: run install.ps1 (it registers the scheme), and start the Llama app with a speech model (Qwen3-ASR) on
+127.0.0.1:9931 (--llama / --model name another program or model). The wallet holds no model: the test seeds its own
+data folder with that program as the speech source, and every call goes to it. The test uses its own wallet data
+folder (BYOA_WALLET_HOME) and BYOA_WALLET_DEV_LOCAL=1, both inherited by the wallet that the link starts.
 
 Checks: the scheme is registered; a link (with its manifest inside, CONTRACT-DIRECT.md §7) starts the wallet and no
 request of any kind reaches the site before Allow; the notice and consent (real clicks); hello after Allow, with the
 models loaded first, and the site's welcome echoing the manifest; calls with real Russian and Slovak speech over the
-connection; activity marked "via link"; a restart of the wallet reconnects with the stored pairing and no notice; a
+connection (answered by the program's speech model); activity marked "via link"; a restart of the wallet reconnects with the stored pairing and no notice; a
 site that asks for more on a reconnect gets bye, and a new link shows only the difference; a site whose welcome does
 not echo its link's manifest gets bye and nothing of the link is stored or revoked; decline and "Block in Sites…" from a
 link: the site never hears from the wallet, and nothing is stored (activity: declined), so a later link asks again; a
@@ -40,6 +42,8 @@ ap.add_argument("--shots", required=True)
 ap.add_argument("--work", required=True)
 ap.add_argument("--app", default=os.path.join(os.environ["LOCALAPPDATA"], "BYOA", "wallet-app"))
 ap.add_argument("--no-browser", action="store_true")
+ap.add_argument("--llama", default="http://127.0.0.1:9931/v1", help="the OpenAI-compatible program that runs the speech model")
+ap.add_argument("--model", default="Renesas/Qwen3-ASR-1.7B-GGUF:FP16", help="the speech model's id in that program")
 a = ap.parse_args()
 
 os.makedirs(a.shots, exist_ok=True)
@@ -56,6 +60,24 @@ def check(label, ok, extra=""):
     results["checks"].append({"check": label, "ok": bool(ok), "extra": str(extra)})
     if not ok:
         failed.append(label)
+
+
+def seed_speech_source():
+    """The wallet holds no model: its settings name the program that runs one, as the Add a model window would write them."""
+    os.makedirs(HOME, exist_ok=True)
+    source = {"id": "seeded", "enabled": True, "kind": "openai-compatible", "label": "Qwen3-ASR", "endpoint": a.llama, "model": a.model,
+              "skills": ["audio.transcribe"], "endpointConfirmed": True}
+    with open(os.path.join(HOME, "settings.json"), "w", encoding="utf-8") as f:
+        json.dump({"version": 1, "sources": [source]}, f)
+
+
+def llama_offers_the_model():
+    import urllib.request
+    try:
+        with urllib.request.urlopen(a.llama.rstrip("/") + "/models", timeout=5) as r:
+            return a.model in [m.get("id") for m in json.load(r).get("data", [])]
+    except Exception:
+        return False
 
 
 def wallet_pids():
@@ -116,6 +138,10 @@ reg = subprocess.run(["reg", "query", r"HKCU\Software\Classes\bringyourownagent\
 proto = subprocess.run(["reg", "query", r"HKCU\Software\Classes\bringyourownagent", "/v", "URL Protocol"], capture_output=True, text=True).returncode == 0
 check("bringyourownagent:// is registered for this user: URL Protocol, Byoa.Wallet.exe --url \"%1\"", proto and "Byoa.Wallet.exe" in reg and '--url "%1"' in reg)
 check("no wallet with this data folder is running before the test", not os.path.exists(os.path.join(HOME, "settings.json")))
+check("the speech program is up and offers the model", llama_offers_the_model(), a.llama + " " + a.model)
+if not llama_offers_the_model():
+    sys.exit("start the Llama app with the speech model first")
+seed_speech_source()
 
 # ---------------------------------------------------------------------------------------------- pair: link, notice, consent, hello
 t0 = time.time()
@@ -162,10 +188,12 @@ for item in words["ru"][:4] + words["sk"][:4] + sentences[:2]:
                              "source_ms": entry.get("milliseconds"), "via": entry.get("via"), "receipt": r.get("receipt")})
 ru = [c for c in results["calls"] if c["lang"] == "ru"]
 sk = [c for c in results["calls"] if c["lang"] == "sk"]
-check("Russian over the connection: answered by GigaAM", all(c["ok"] and (c["source"] or "").startswith("GigaAM") for c in ru),
+check("Russian over the connection: answered by the speech model in the program", all(c["ok"] and (c["source"] or "").startswith("Qwen3-ASR") for c in ru),
       "; ".join(f"{c['text']} ({c['site_ms']} ms)" for c in ru))
-check("Slovak over the connection: answered by Whisper", all(c["ok"] and (c["source"] or "").startswith("Whisper") for c in sk),
+check("Slovak over the connection: also answered by it (any language)", all(c["ok"] and (c["source"] or "").startswith("Qwen3-ASR") for c in sk),
       "; ".join(f"{c['text']} ({c['site_ms']} ms)" for c in sk))
+check("the words came back as spoken (at least 3 of the 4 Russian words)", sum(1 for c in ru if c["kind"] == "word" and c["text"] and c["expect"].lower().replace("\u0451", "\u0435") in c["text"].lower().replace("\u0451", "\u0435")) >= 3,
+      "; ".join(f"{c['expect']} -> {c['text']}" for c in ru))
 check("receipts say local, 0.000 USD", all(c["receipt"] == {"cost": "0.000 USD", "provider": "local"} for c in results["calls"]))
 check("the activity marks the request and the calls \"via link\"", all(c["via"] == "link" for c in results["calls"])
       and any(e.get("kind") == "link" and e.get("outcome") == "connected" for e in activity()))

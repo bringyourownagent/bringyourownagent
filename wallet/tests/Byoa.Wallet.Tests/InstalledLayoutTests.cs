@@ -52,47 +52,4 @@ public class InstalledLayoutTests
             Environment.SetEnvironmentVariable("BYOA_WALLET_MCP_PATH", old);
         }
     }
-
-    static string Fresh(string name) => Path.Combine(AppContext.BaseDirectory, "layout-tests", name + "-" + Guid.NewGuid().ToString("N")[..8]);
-
-    [Fact]
-    public void ModelsOfAnOlderBuildAreUsedWhereTheyAre()
-    {
-        var local = Fresh("local");
-        var home = Path.Combine(local, "BYOA", "wallet");
-        var legacy = Path.Combine(local, "BYOA", "models");
-        Directory.CreateDirectory(Path.Combine(legacy, "whisper"));
-        File.WriteAllText(Path.Combine(legacy, "whisper", "ggml-large-v3-q5_0.bin"), "x");
-        Directory.CreateDirectory(home);
-
-        Assert.Equal(legacy, WalletPaths.ModelsFor(home, local, customHome: false));
-    }
-
-    [Fact]
-    public void ModelsAreInTheWalletHomeWhenThereIsNothingOlderOrTheHomeAlreadyHasThem()
-    {
-        var local = Fresh("local");
-        var home = Path.Combine(local, "BYOA", "wallet");
-        var current = Path.Combine(home, "models");
-        var legacy = Path.Combine(local, "BYOA", "models");
-
-        // nothing anywhere: the new place
-        Assert.Equal(current, WalletPaths.ModelsFor(home, local, customHome: false));
-
-        // an older folder exists, but the home already holds models: the home wins (the visitor chose to download there)
-        Directory.CreateDirectory(Path.Combine(legacy, "whisper"));
-        Directory.CreateDirectory(Path.Combine(current, "whisper"));
-        File.WriteAllText(Path.Combine(current, "whisper", "ggml-small-q5_1.bin"), "x");
-        Assert.Equal(current, WalletPaths.ModelsFor(home, local, customHome: false));
-    }
-
-    [Fact]
-    public void ASeparateDataFolderNeverReachesIntoTheVisitorsModels()
-    {
-        var local = Fresh("local");
-        var home = Fresh("test-home");
-        Directory.CreateDirectory(Path.Combine(local, "BYOA", "models", "whisper"));
-
-        Assert.Equal(Path.Combine(home, "models"), WalletPaths.ModelsFor(home, local, customHome: true));
-    }
 }

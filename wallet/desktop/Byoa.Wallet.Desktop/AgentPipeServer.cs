@@ -27,8 +27,8 @@ sealed class AgentPipeServer : IDisposable
     };
     static readonly HashSet<string> NormalAccessTools = new(StringComparer.Ordinal)
     {
-        "help", "status", "list_runtimes", "list_downloadable_models", "add_source", "update_source",
-        "remove_source", "enable_source", "test_source", "download_model", "remove_model", "set_order",
+        "help", "status", "list_runtimes", "add_source", "update_source",
+        "remove_source", "enable_source", "test_source", "set_order",
         "request_api_key_entry", "activity",
     };
 
@@ -402,14 +402,11 @@ sealed class AgentPipeServer : IDisposable
                 "help" => Help(args),
                 "status" => Status(access),
                 "list_runtimes" => await RuntimesAsync(ct).ConfigureAwait(false),
-                "list_downloadable_models" => DownloadableModels(),
                 "add_source" => await AddSourceAsync(args, actor, session, ct).ConfigureAwait(false),
                 "update_source" => await UpdateSourceAsync(args, actor, session, ct).ConfigureAwait(false),
                 "remove_source" => await RemoveSourceAsync(args, actor, access, ct).ConfigureAwait(false),
                 "enable_source" => EnableSource(args, actor, access),
                 "test_source" => await TestSourceAsync(args, ct).ConfigureAwait(false),
-                "download_model" => await DownloadModelAsync(args, actor, ct).ConfigureAwait(false),
-                "remove_model" => await RemoveModelAsync(args, actor, ct).ConfigureAwait(false),
                 "set_order" => SetOrder(args, actor),
                 "request_api_key_entry" => await RequestKeyAsync(args, actor, access, session, ct).ConfigureAwait(false),
                 "set_api_key" => await SetKeyAsync(args, actor, access).ConfigureAwait(false),
@@ -525,18 +522,6 @@ sealed class AgentPipeServer : IDisposable
         return clean.EndsWith("/v1", StringComparison.OrdinalIgnoreCase) ? clean[..^3].TrimEnd('/') : clean;
     }
 
-    JsonObject DownloadableModels()
-    {
-        var result = Success();
-        result["models"] = new JsonArray(_w.Registry.ListDownloadableModels().Select(m => (JsonNode)new JsonObject
-        {
-            ["id"] = m.Id, ["name"] = m.Name, ["skill"] = m.Skill, ["sizeBytes"] = m.SizeBytes,
-            ["languages"] = new JsonArray(m.Languages.Select(language => (JsonNode?)JsonValue.Create(language)).ToArray()), ["hardware"] = m.Hardware,
-            ["downloaded"] = m.Downloaded, ["canDownload"] = m.CanDownload,
-        }).ToArray());
-        return result;
-    }
-
     async Task<JsonObject> AddSourceAsync(JsonObject args, string actor, AgentSession session, CancellationToken ct)
     {
         var draft = new SourceDraft(String(args, "kind"), StringOrNull(args, "model"), StringOrNull(args, "endpoint"),
@@ -590,31 +575,6 @@ sealed class AgentPipeServer : IDisposable
             return answer;
         }
         return Test(result);
-    }
-
-    async Task<JsonObject> DownloadModelAsync(JsonObject args, string actor, CancellationToken ct)
-    {
-        var model = _w.Registry.ListDownloadableModels().FirstOrDefault(m => m.Id == String(args, "model_id"));
-        if (model is null) return Failure("There is no downloadable model with that id. Call list_downloadable_models first.");
-        var result = await _w.Registry.DownloadModelAsync(String(args, "model_id"), null, actor, ct).ConfigureAwait(false);
-        return Operation(result, "modelId");
-    }
-
-    async Task<JsonObject> RemoveModelAsync(JsonObject args, string actor, CancellationToken ct)
-    {
-        var model = _w.Registry.ListDownloadableModels().FirstOrDefault(m => m.Id == String(args, "model_id"));
-        if (model is null) return Failure("There is no downloadable model with that id. Call list_downloadable_models first.");
-        if (!model.Downloaded || string.IsNullOrWhiteSpace(model.OwnedPath))
-            return Failure("That model is not a downloaded file owned by this wallet, so there is nothing to remove.");
-        var note = _w.Registry.ListSources().Count(source => source.BuiltIn && source.Skills.Contains(model.Skill, StringComparer.Ordinal)) == 1
-            ? "This is the only listed source for " + model.Skill + ". The skill may be unavailable until you add another source."
-            : null;
-        bool confirmed;
-        try { confirmed = await _w.Ui.ConfirmModelDeleteAsync(model, note, ct, agentInitiated: true).ConfigureAwait(false); }
-        catch (RegistryPromptBusyException e) { return Failure(e.Message); }
-        if (!confirmed) return Failure("The visitor declined to delete this model.");
-        var result = await _w.Registry.RemoveDownloadedModelAsync(String(args, "model_id"), actor, ct).ConfigureAwait(false);
-        return Operation(result, "modelId");
     }
 
     JsonObject SetOrder(JsonObject args, string actor) => Operation(_w.Registry.SetOrder(String(args, "skill"), StringOrNull(args, "language"),

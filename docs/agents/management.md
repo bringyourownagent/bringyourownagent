@@ -4,12 +4,10 @@ The visitor first chooses **Allow** in the wallet's agent-consent window. Full a
 
 | Tool or operation | Full access needed? | Visitor window shown? |
 |---|---:|---:|
-| `help`, `status`, `list_runtimes`, `list_downloadable_models`, `activity` | No | No |
+| `help`, `status`, `list_runtimes`, `activity` | No | No |
 | Add or update a loopback source | No | No |
 | Add or update a source on another computer | No | Yes, before save or probing |
 | `test_source`, `set_order`, edit an added source, enable/disable an added source | No | No, except any endpoint confirmation already required |
-| Download a model | No | No; Activity records the start and progress is shown |
-| Delete a downloaded model | No | Yes, confirm Delete |
 | Write or replace an API key typed by the visitor | No | Yes, through `request_api_key_entry`; the wallet never returns the key to the agent |
 | Supply an API key through `set_api_key` | Yes | No; Full access is required for every agent-supplied key |
 | Remove a source without a saved key | No | No |

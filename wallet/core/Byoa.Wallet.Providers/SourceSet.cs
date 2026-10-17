@@ -9,47 +9,16 @@ using System.Collections.ObjectModel;
 
 namespace Byoa.Wallet.Providers;
 
-/// <summary>An added text source setting that the provider set could not construct.</summary>
+/// <summary>An added source setting (text or speech) that the provider set could not construct.</summary>
 public sealed record InvalidTextSource(string Id, string Label, string Message);
 
-/// <summary>The models found in the visitor's model folders, rescanned at most once a minute (or on demand).</summary>
-public sealed class ModelCatalog
-{
-    readonly Func<IEnumerable<string>> _folders;
-    readonly object _gate = new();
-    List<FoundModel> _found = [];
-    DateTime _scanned = DateTime.MinValue;
-
-    public ModelCatalog(Func<IEnumerable<string>> folders) => _folders = folders;
-
-    public IReadOnlyList<FoundModel> Found
-    {
-        get
-        {
-            lock (_gate)
-            {
-                if (DateTime.UtcNow - _scanned > TimeSpan.FromMinutes(1)) Rescan();
-                return _found;
-            }
-        }
-    }
-
-    public void Rescan()
-    {
-        lock (_gate)
-        {
-            _found = ModelScanner.Scan(_folders());
-            _scanned = DateTime.UtcNow;
-        }
-    }
-}
-
 /// <summary>
-/// Builds the wallet's sources from the settings and the secret store: the three speech sources of 0.1 plus the
-/// CPU Whisper fallback, and one text source per added source in the settings (a model in LM Studio or Ollama, an
-/// OpenAI-compatible server, an OpenRouter model). The text sources live in one stable list — the engine holds it
-/// once and never sees a half-built set — and it rebuilds itself whenever the settings change. A background scan
-/// keeps the "is the runtime running" states fresh.
+/// Builds the wallet's sources from the settings and the secret store. The wallet holds no model: every source is a
+/// program that runs one (a model in the Llama app, LM Studio or Ollama, an OpenAI-compatible server) or a paid API
+/// behind the visitor's own key. One speech source or one text source per added source in the settings, plus the paid
+/// OpenRouter speech source. The two lists are stable — the engine holds each once and never sees a half-built set —
+/// and rebuild themselves whenever the settings change. A background scan keeps the "is the runtime running" states
+/// fresh.
 /// </summary>
 [System.Runtime.Versioning.SupportedOSPlatform("windows")]
 public sealed class SourceSet : IDisposable
@@ -57,23 +26,23 @@ public sealed class SourceSet : IDisposable
     readonly SettingsStore _store;
     readonly SecretStore _secrets;
     readonly CancellationTokenSource _scans = new();
-    readonly SourceList _text = new();
+    readonly SourceList<ITextSource> _text = new();
+    readonly SourceList<ISpeechSource> _speech = new();
     int _rebuilding;
     int _rebuildPending;
     Task? _scanLoop;
     readonly object _sourceGate = new();
     readonly Func<string, CancellationToken, Task<IPAddress[]>> _resolveEndpoint;
     Dictionary<string, ITextSource> _lastGood = new(StringComparer.Ordinal);
+    Dictionary<string, ISpeechSource> _lastGoodSpeech = new(StringComparer.Ordinal);
     IReadOnlyList<InvalidTextSource> _invalid = [];
 
     public SourceSet(SettingsStore store, SecretStore secrets, HttpClient http,
-        CpuFeatureSet? cpuFeatures = null, Func<VulkanProbeResult>? vulkanProbe = null,
         Func<string, CancellationToken, Task<IPAddress[]>>? endpointResolver = null)
     {
         _store = store;
         _secrets = secrets;
         _resolveEndpoint = endpointResolver ?? ((host, ct) => Dns.GetHostAddressesAsync(host, ct));
-        var features = cpuFeatures ?? CpuFeatures.Current;
         // Text calls go through a client that never follows redirects: an endpoint on this computer must not send
         // the wallet's requests (and the visitor's API key) onward to another computer.
         var textHandler = new SocketsHttpHandler
@@ -88,39 +57,25 @@ public sealed class SourceSet : IDisposable
             MaxResponseContentBufferSize = BoundedHttp.MaxJsonBytes,
         };
 
-        // A new wallet looks in its own models folder and the usual model folders on this computer.
-        if (store.Read(s => s.ModelFolders.Count == 0))
-        {
-            var defaults = ModelScanner.DefaultFolders();
-            defaults.Add(Path.Combine(WalletPaths.Home, "models"));
-            store.Update(s => s.ModelFolders.AddRange(defaults));
-        }
-
-        Catalog = new ModelCatalog(() => store.Read(s => s.ModelFolders.ToList()));
-        // The Whisper loader's order is process-global. Decide it before any source can create a native factory.
-        WhisperSource.ConfigureProcessRuntime(features, cpuSourceEnabled: true, probe: vulkanProbe);
-        GigaAm = new GigaAmSource(() => Catalog.Found.FirstOrDefault(m => m.Kind == "gigaam")?.Path, http);
-        Whisper = new WhisperSource(() => store.Read(s => s.WhisperModel), () => Catalog.Found, http, features);
-        WhisperCpu = new WhisperCpuSource(() => Catalog.Found, http, features, processGpuOverride: WhisperSource.ProcessUsesGpu);
         OpenRouter = new OpenRouterSource(http, () => secrets.Get(OpenRouterSource.SecretName), () => secrets.Has(OpenRouterSource.SecretName));
-        All = [GigaAm, Whisper, WhisperCpu, OpenRouter];
         Scanner = new RuntimeScanner(TextHttp, AddedEndpoints);
-        // Older settings used an Ollama id without /v1. Canonicalise those ids once before route repair.
+        // Older settings used an Ollama id without /v1, and carried the speech engines that were once built into the
+        // wallet. Canonicalise the ids and drop those engines once, before route repair.
+        _store.UpdateIfChanged(Router.EnsureDefaults);
         _store.UpdateIfChanged(NormalizeAddedSourceIds);
         // The registry normally adds the route in the same settings update as the source. For older settings,
-        // repair the route once before subscribing to Changed; a rebuild must never write settings.json again.
+        // repair the routes once before subscribing to Changed; a rebuild must never write settings.json again.
         _store.UpdateIfChanged(Router.EnsureTextChainFromSettings);
-        RebuildText();
-        store.Changed += RebuildText;
+        _store.UpdateIfChanged(Router.EnsureSpeechChainFromSettings);
+        Rebuild();
+        store.Changed += Rebuild;
         _scanLoop = Task.Run(() => ScanLoop(_scans.Token));
     }
 
-    public ModelCatalog Catalog { get; }
-    public GigaAmSource GigaAm { get; }
-    public WhisperSource Whisper { get; }
-    public WhisperCpuSource WhisperCpu { get; }
     public OpenRouterSource OpenRouter { get; }
-    public IReadOnlyList<ISpeechSource> All { get; }
+
+    /// <summary>The speech sources as the settings list them, the paid OpenRouter one last. The engine keeps this list for its whole life.</summary>
+    public IReadOnlyList<ISpeechSource> All => _speech;
 
     /// <summary>The HttpClient every text source and the runtime scanner use: no redirects, patient but bounded.</summary>
     public HttpClient TextHttp { get; }
@@ -191,11 +146,15 @@ public sealed class SourceSet : IDisposable
     {
         foreach (var source in _text.OfType<OpenAiCompatibleSource>())
             if (EndpointMatches(source.Endpoint, host, port)) source.MarkUnavailable(reason);
+        foreach (var source in _speech.OfType<OpenAiCompatibleSpeechSource>())
+            if (EndpointMatches(source.Endpoint, host, port)) source.MarkUnavailable(reason);
     }
 
     void MarkEndpointAvailable(string host, int port)
     {
         foreach (var source in _text.OfType<OpenAiCompatibleSource>())
+            if (EndpointMatches(source.Endpoint, host, port)) source.MarkAvailable();
+        foreach (var source in _speech.OfType<OpenAiCompatibleSpeechSource>())
             if (EndpointMatches(source.Endpoint, host, port)) source.MarkAvailable();
     }
 
@@ -212,6 +171,9 @@ public sealed class SourceSet : IDisposable
     /// <summary>The text source with this id ("lmstudio:qwen/qwen3.5-4b"), or null.</summary>
     public ITextSource? FindText(string id) => _text.FirstOrDefault(s => s.Id == id);
 
+    /// <summary>The speech source with this id, or null.</summary>
+    public ISpeechSource? FindSpeech(string id) => _speech.FirstOrDefault(s => s.Id == id);
+
     /// <summary>Added source settings that could not be materialised; the Sources page can show the readable reason.</summary>
     public IReadOnlyList<InvalidTextSource> InvalidTextSources
     {
@@ -219,9 +181,9 @@ public sealed class SourceSet : IDisposable
     }
 
     // ------------------------------------------------------------------------------------------------
-    // the text sources follow the settings
+    // the sources follow the settings
 
-    void RebuildText()
+    void Rebuild()
     {
         Interlocked.Exchange(ref _rebuildPending, 1);
         if (Interlocked.CompareExchange(ref _rebuilding, 1, 0) == 1) return;
@@ -236,7 +198,7 @@ public sealed class SourceSet : IDisposable
                 {
                     // Keep disabled sources materialised so the registry and the Skills page can show them and
                     // Router.PlanText can explain "turned off". The route, not this list, owns the enabled check.
-                    if (setting.Skills.Count > 0 && !setting.Skills.Contains(Vocabulary.Generate)) continue;
+                    if (setting.Kind is null || setting.Skills.Count > 0 && !setting.Skills.Contains(Vocabulary.Generate)) continue;
                     try
                     {
                         var source = CreateTextSource(setting);
@@ -267,25 +229,59 @@ public sealed class SourceSet : IDisposable
                     }
                 }
 
+                var speech = new List<ISpeechSource>();
+                foreach (var setting in settings.Sources.Where(s => s.Kind is not null && s.Skills.Contains(Vocabulary.Transcribe)))
+                {
+                    try
+                    {
+                        var source = CreateSpeechSource(setting);
+                        if (source is null)
+                        {
+                            invalid.Add(new InvalidTextSource(setting.Id, setting.Label ?? setting.Model ?? setting.Id,
+                                "A speech source needs a model in a program on this computer or on a home server."));
+                            continue;
+                        }
+
+                        if (speech.Any(s => s.Id == source.Id))
+                        {
+                            invalid.Add(new InvalidTextSource(setting.Id, setting.Label ?? setting.Model ?? setting.Id,
+                                "This source has the same id as another source."));
+                            continue;
+                        }
+
+                        speech.Add(source);
+                    }
+                    catch (Exception e) when (e is not OutOfMemoryException)
+                    {
+                        invalid.Add(new InvalidTextSource(setting.Id, setting.Label ?? setting.Model ?? setting.Id, e.Message));
+                        lock (_sourceGate)
+                        {
+                            if (_lastGoodSpeech.TryGetValue(setting.Id, out var old) && !speech.Any(s => s.Id == old.Id)) speech.Add(old);
+                        }
+                    }
+                }
+
+                speech.Add(OpenRouter);
                 _text.Replace(list);
+                _speech.Replace(speech);
                 lock (_sourceGate)
                 {
                     _lastGood = list.ToDictionary(s => s.Id, StringComparer.Ordinal);
+                    _lastGoodSpeech = speech.ToDictionary(s => s.Id, StringComparer.Ordinal);
                     _invalid = invalid;
                 }
-
             }
         }
         catch (Exception e) when (e is not OutOfMemoryException)
         {
             // A malformed setting, serializer problem, or a provider constructor must never escape SettingsStore.Update.
             lock (_sourceGate)
-                _invalid = [new InvalidTextSource("settings", "Text sources", e.Message)];
+                _invalid = [new InvalidTextSource("settings", "Sources", e.Message)];
         }
         finally
         {
             Interlocked.Exchange(ref _rebuilding, 0);
-            if (Volatile.Read(ref _rebuildPending) == 1) RebuildText();
+            if (Volatile.Read(ref _rebuildPending) == 1) Rebuild();
         }
     }
 
@@ -326,6 +322,24 @@ public sealed class SourceSet : IDisposable
         return source;
     }
 
+    /// <summary>
+    /// Materialises one speech source: a model in the Llama app, LM Studio, Ollama or another OpenAI-compatible server.
+    /// A paid API is not a speech source of this kind (the wallet has its own paid speech source).
+    /// </summary>
+    public ISpeechSource? CreateSpeechSource(SourceSetting setting)
+    {
+        if (setting.Kind is null || string.IsNullOrWhiteSpace(setting.Model)) return null;
+        var kind = setting.Kind.Trim().ToLowerInvariant();
+        var endpoint = setting.Endpoint?.Trim() is { Length: > 0 } configured ? configured : OpenAiCompatibleSource.DefaultEndpoint(kind);
+        if (kind is not (SourceKinds.LmStudio or SourceKinds.Ollama or SourceKinds.OpenAiCompatible) ||
+            kind == SourceKinds.OpenAiCompatible && string.IsNullOrWhiteSpace(setting.Endpoint)) return null;
+        var endpointPolicy = EndpointPolicy.Check(endpoint, agentSupplied: false);
+        if (!endpointPolicy.Allowed) throw new ArgumentException(endpointPolicy.Message);
+        var source = new OpenAiCompatibleSpeechSource(setting.Kind, setting.Model.Trim(), setting.Label, setting.Endpoint, setting.Languages, TextHttp);
+        if (setting.AddedByAgent && !setting.EndpointConfirmed) source.MarkUnavailable("waiting for visitor endpoint confirmation");
+        return source;
+    }
+
     static string SecretName(string? secretRef) =>
         string.IsNullOrWhiteSpace(secretRef) ? OpenRouterSource.SecretName : secretRef;
 
@@ -349,7 +363,7 @@ public sealed class SourceSet : IDisposable
         var replacements = settings.Sources.Where(s => s.Kind is not null && !string.IsNullOrWhiteSpace(s.Model))
             .Select(s => (Old: s.Id, New: s.Kind!.Equals(SourceKinds.OpenRouter, StringComparison.OrdinalIgnoreCase)
                 ? SourceKinds.OpenRouter + ":" + s.Model!.Trim()
-                : OpenAiCompatibleSource.MakeId(s.Kind!, s.Model!, s.Endpoint)))
+                : OpenAiCompatibleSource.MakeId(s.Kind!, s.Model!, s.Endpoint, SkillOf(s))))
             .Where(pair => pair.Old != pair.New).ToArray();
         foreach (var (oldId, newId) in replacements)
         {
@@ -363,6 +377,10 @@ public sealed class SourceSet : IDisposable
                 foreach (var stop in chain.Stops.Where(stop => stop.SourceId == oldId)) stop.SourceId = newId;
         }
     }
+
+    /// <summary>The one skill an added source serves: speech when it says so, text otherwise.</summary>
+    static string SkillOf(SourceSetting setting) =>
+        setting.Skills.Contains(Vocabulary.Transcribe) ? Vocabulary.Transcribe : Vocabulary.Generate;
 
     /// <summary>The base address a runtime is watched on: the kind's default, or the setting without its /v1 tail.</summary>
     public static string ScannerEndpoint(string kind, string? endpoint)
@@ -393,19 +411,24 @@ public sealed class SourceSet : IDisposable
         foreach (var setting in settings.Sources)
         {
             if (setting is not { Enabled: true, Kind: not null, Model: { Length: > 0 } }) continue;
-            var sourceId = OpenAiCompatibleSource.MakeId(setting.Kind, setting.Model, setting.Endpoint);
-            if (_text.FirstOrDefault(t => t.Id == sourceId || t.Id == setting.Id) is not OpenAiCompatibleSource source) continue;
+            var sourceId = OpenAiCompatibleSource.MakeId(setting.Kind, setting.Model, setting.Endpoint, SkillOf(setting));
             var address = ScannerEndpoint(setting.Kind, setting.Endpoint);
             var info = infos.FirstOrDefault(i => i.Kind == setting.Kind && i.Endpoint.Equals(address, StringComparison.OrdinalIgnoreCase));
-            if (info is null || !info.Running)
+            var running = info is { Running: true };
+            var up = running ? true : info?.Running;
+            var listed = running ? info!.Models.Any(m => m.Id == setting.Model) : (bool?)null;
+            if (SkillOf(setting) == Vocabulary.Transcribe)
             {
-                source.Up = info?.Running;
-                source.Listed = null;
-                continue;
+                if (_speech.FirstOrDefault(t => t.Id == sourceId || t.Id == setting.Id) is not OpenAiCompatibleSpeechSource speech) continue;
+                speech.Up = up;
+                speech.Listed = listed;
             }
-
-            source.Up = true;
-            source.Listed = info.Models.Any(m => m.Id == setting.Model);
+            else
+            {
+                if (_text.FirstOrDefault(t => t.Id == sourceId || t.Id == setting.Id) is not OpenAiCompatibleSource source) continue;
+                source.Up = up;
+                source.Listed = listed;
+            }
         }
 
         var priceTasks = _text.OfType<OpenRouterTextSource>().Select(source => source.PrimePricesAsync(ct)).ToArray();
@@ -443,25 +466,22 @@ public sealed class SourceSet : IDisposable
 
     public void Dispose()
     {
-        _store.Changed -= RebuildText;
+        _store.Changed -= Rebuild;
         _scans.Cancel();
         try { _scanLoop?.WaitAsync(TimeSpan.FromSeconds(2)).GetAwaiter().GetResult(); }
         catch (Exception) { /* disposal must not bring down the tray */ }
         _scans.Dispose();
-        GigaAm.Dispose();
-        Whisper.Dispose();
-        WhisperCpu.Dispose();
         TextHttp.Dispose();
     }
 
-    /// <summary>A text-source list the engine may hold forever: replacing the set swaps one array, atomically.</summary>
-    sealed class SourceList : IReadOnlyList<ITextSource>
+    /// <summary>A source list the engine may hold forever: replacing the set swaps one array, atomically.</summary>
+    sealed class SourceList<T> : IReadOnlyList<T>
     {
-        volatile ITextSource[] _items = [];
-        public ITextSource this[int index] => _items[index];
+        volatile T[] _items = [];
+        public T this[int index] => _items[index];
         public int Count => _items.Length;
-        public IEnumerator<ITextSource> GetEnumerator() => ((IEnumerable<ITextSource>)_items).GetEnumerator();
+        public IEnumerator<T> GetEnumerator() => ((IEnumerable<T>)_items).GetEnumerator();
         System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
-        public void Replace(IEnumerable<ITextSource> sources) => _items = sources.ToArray();
+        public void Replace(IEnumerable<T> sources) => _items = sources.ToArray();
     }
 }

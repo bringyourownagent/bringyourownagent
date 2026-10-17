@@ -19,7 +19,7 @@
          LICENSE               Apache License 2.0
          NOTICE                the project's notice file (Apache style)
          THIRD-PARTY-NOTICES.txt
-         licenses\             the license and notice files of the packages inside app\, of the fonts and of ONNX Runtime
+         licenses\             the license and notice files of the packages inside app\ and of the fonts
     3. Zips it (the folder is the zip's single top folder, entries with forward slashes) into
        <OutDir>\byoa-wallet-<version>-win-x64.zip, writes <zip>.sha256 ("<sha256>  <file name>") next to it and
        prints the size and the SHA-256.
@@ -87,15 +87,12 @@ foreach ($config in 'Byoa.Wallet.runtimeconfig.json', 'byoa-host.runtimeconfig.j
     if (-not $json.runtimeOptions.includedFrameworks -or $json.runtimeOptions.frameworks) { throw "$config is not self-contained" }
 }
 
-# 2. Stage the package. Native libraries that Whisper.net ships for other systems (runtimes\linux-*, osx, arm, x86)
-#    are left out; the wallet runs on Windows x64 only. The Windows x64 builds are kept: the normal CPU build, the
-#    no-AVX CPU build (for processors without AVX, which the Vulkan and the normal builds cannot run) and Vulkan.
+# 2. Stage the package. Native libraries that packages ship for other systems (runtimes\linux-*, osx, arm, x86)
+#    are left out; the wallet runs on Windows x64 only.
 function Test-Wanted([string]$relative) {
     $parts = $relative.Split('\')
-    if ($relative -eq 'ggml-metal.metal') { return $false }          # a shader for Apple's Metal
     if ($parts[0] -ne 'runtimes' -or $parts.Count -lt 3) { return $true }
-    if ($parts[1] -eq $rid) { return $true }
-    return ((@('vulkan', 'noavx') -contains $parts[1]) -and ($parts.Count -ge 4) -and ($parts[2] -eq $rid))
+    return $parts[1] -eq $rid
 }
 function Copy-Into([string]$from, [string]$to, [switch]$Filter) {
     $base = (Resolve-Path -LiteralPath $from).Path.TrimEnd('\')
@@ -120,8 +117,7 @@ function Write-Text([string]$from, [string]$to, [switch]$Ascii) {
 }
 # Copies the license and notice files of the packages the two programs carry into $to, and returns how many it copied.
 # The packages are the ones in the .deps.json files (the runtime included). Some packages add their files through build
-# targets, so they are in no .deps.json file: the Whisper.net runtimes are found in project.assets.json by their content
-# folder. A package with no license file fails the build, unless $noLicenseFile lists it as "id/version".
+# targets, so they are in no .deps.json file: those are found in project.assets.json by their content folder. A package with no license file fails the build, unless $noLicenseFile lists it as "id/version".
 function Copy-PackageLicenses([string]$app, [string]$artifacts, [string]$packages, [string]$to, [string[]]$noLicenseFile) {
     $folders = [ordered]@{}
     foreach ($deps in 'Byoa.Wallet.deps.json', 'byoa-host.deps.json', 'byoa-mcp.deps.json') {
@@ -198,22 +194,9 @@ $noLicenseFile = @(
     'Avalonia.X11/11.3.22'                              # MIT: AvaloniaUI/Avalonia licence.md at commit 627ae9e
     'MicroCom.Runtime/0.11.0'                           # MIT: kekekeks/MicroCom LICENSE on its master branch
     'Microsoft.Extensions.AI.Abstractions/10.2.0'       # MIT: dotnet/extensions LICENSE at commit 7c82ecb
-    'org.k2fsa.sherpa.onnx/1.13.8'                      # Apache-2.0: the Apache License 2.0 in LICENSE (k2-fsa/sherpa-onnx at commit dc5583f)
-    'org.k2fsa.sherpa.onnx.runtime.win-x64/1.13.8'      # Apache-2.0: the Apache License 2.0 in LICENSE (k2-fsa/sherpa-onnx at commit dc5583f)
     'Tmds.DBus.Protocol/0.21.3'                         # MIT: tmds/Tmds.DBus COPYING at commit 8cb04f6
-    'Whisper.net.Runtime/1.9.1'                         # MIT: the LICENSE of Whisper.net, in licenses\Whisper.net-1.9.1
-    'Whisper.net.Runtime.Metal/1.9.1'                   # MIT: the LICENSE of Whisper.net, in licenses\Whisper.net-1.9.1
-    'Whisper.net.Runtime.NoAvx/1.9.1'                   # MIT: the LICENSE of Whisper.net, in licenses\Whisper.net-1.9.1
-    'Whisper.net.Runtime.Vulkan/1.9.1'                  # MIT: the LICENSE of Whisper.net, in licenses\Whisper.net-1.9.1
 )
 $licenseFiles = Copy-PackageLicenses $app $artifacts $packages $licenses $noLicenseFile
-# The license of ONNX Runtime (onnxruntime.dll of the sherpa-onnx runtime package, version 1.28.2), as published upstream.
-$ortLicenses = Join-Path $licenses 'onnxruntime-1.28.2'
-New-Item -ItemType Directory -Force -Path $ortLicenses | Out-Null
-Copy-Item -LiteralPath (Join-Path $packaging 'licenses\onnxruntime-1.28.2\LICENSE') -Destination (Join-Path $ortLicenses 'LICENSE')
-# ...and its own third-party notices, which its license asks to keep with the software. A missing file fails the build.
-Copy-Item -LiteralPath (Join-Path $packaging 'licenses\onnxruntime-1.28.2\ThirdPartyNotices.txt') -Destination (Join-Path $ortLicenses 'ThirdPartyNotices.txt')
-$licenseFiles += 2
 New-Item -ItemType Directory -Force -Path (Join-Path $licenses 'Barlow-fonts') | Out-Null
 Copy-Item -LiteralPath (Join-Path $wallet 'desktop\Byoa.Wallet.Desktop\Assets\Fonts\OFL.txt') -Destination (Join-Path $licenses 'Barlow-fonts\OFL.txt')
 $licenseFiles++

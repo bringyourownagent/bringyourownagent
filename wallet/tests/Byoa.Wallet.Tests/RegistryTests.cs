@@ -58,7 +58,7 @@ public sealed class RegistryTests
         var activity = new ActivityLog(null, DateTimeOffset.UtcNow);
         var store = new SettingsStore(null);
         var registry = new WalletRegistry(store, new SecretStore(Path.Combine(dir, "secrets.dat")), activity,
-            [new FakeSource("speech")], [], new FakeRuntimeScanner(), new FakeModelManager([]));
+            [new FakeSource("speech")], [], new FakeRuntimeScanner());
         var added = registry.AddSource(new SourceDraft(SourceKinds.LmStudio, "local", "http://127.0.0.1:1234/v1", [Vocabulary.Generate]));
 
         Assert.True(added.Ok, added.Message);
@@ -127,25 +127,6 @@ public sealed class RegistryTests
         var source = Assert.Single(registry.ListSources(), item => item.Id == added.Id);
         Assert.Equal("friendly name · 192.168.1.20:5310", source.Name);
         Assert.True(registry.ListSources().Single(item => item.Id == added.Id).Name.Length <= 60 + 3 + 32);
-    }
-
-    [Fact]
-    public async Task ModelRemovalChecksTheActiveWalletFolderBeforeCallingTheManager()
-    {
-        var dir = TestFolder.New();
-        var root = Path.Combine(dir, "models");
-        var manager = new FakeModelManager([
-            new DownloadableModelInfo("inside", "Inside", Vocabulary.Transcribe, 2, ["en"], "CPU", true, Path.Combine(root, "inside.bin")),
-            new DownloadableModelInfo("outside", "Outside", Vocabulary.Transcribe, 2, ["en"], "CPU", true, Path.Combine(dir, "..", "outside.bin")),
-        ]);
-        var registry = NewRegistry(new SettingsStore(null), Path.Combine(dir, "secrets.dat"), manager, modelsRoot: root);
-
-        Assert.Equal("removed", (await registry.RemoveDownloadedModelAsync("inside")).Message);
-        Assert.Equal(1, manager.Removes);
-        var outside = await registry.RemoveDownloadedModelAsync("outside");
-        Assert.False(outside.Ok);
-        Assert.Contains("outside", outside.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Equal(1, manager.Removes);
     }
 
     [Fact]
@@ -224,11 +205,11 @@ public sealed class RegistryTests
         Assert.True(settings.Snapshot().Sources.Single().EndpointConfirmed);
     }
 
-    static WalletRegistry NewRegistry(SettingsStore store, string secretPath, IWalletModelManager? models = null, string? modelsRoot = null)
+    static WalletRegistry NewRegistry(SettingsStore store, string secretPath)
     {
         var secret = new SecretStore(secretPath);
         var activity = new ActivityLog(null, DateTimeOffset.UtcNow);
-        return new WalletRegistry(store, secret, activity, [new FakeSource("fake-local")], [], new FakeRuntimeScanner(), models ?? new FakeModelManager([]), new PassingTester(), modelsRoot);
+        return new WalletRegistry(store, secret, activity, [new FakeSource("fake-local")], [], new FakeRuntimeScanner(), new PassingTester());
     }
 
     sealed class FakeRuntimeScanner : IRuntimeScanner
@@ -252,17 +233,6 @@ public sealed class RegistryTests
         public Task<RegistryTestResult> TestDraftAsync(SourceSetting draft, CancellationToken ct) => Task.FromResult(new RegistryTestResult(true, "ok"));
     }
 
-    sealed class FakeModelManager(IReadOnlyList<DownloadableModelInfo> models) : IWalletModelManager
-    {
-        public IReadOnlyList<DownloadableModelInfo> Models { get; } = models;
-        public int Removes { get; private set; }
-        public Task<RegistryOperationResult> DownloadAsync(string modelId, IProgress<ModelDownloadProgress>? progress, CancellationToken ct) => Task.FromResult(RegistryOperationResult.Success("downloaded"));
-        public Task<RegistryOperationResult> RemoveAsync(DownloadableModelInfo model, CancellationToken ct)
-        {
-            Removes++;
-            return Task.FromResult(RegistryOperationResult.Success("removed"));
-        }
-    }
 }
 
 public sealed class HelpParityTests

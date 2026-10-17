@@ -44,7 +44,6 @@ sealed class AgentConsentWindow : Window
         var body = Ui.Column(12,
             Ui.Row(12, Ui.Tile(Ui.Screen, 38), startedBy),
             Ui.Wrap("It can manage sources and routes (you confirm any source on another computer).", "muted"),
-            Ui.Wrap("It can download models and, after your confirmation, delete them.", "muted"),
             Ui.Wrap("It can ask you to type an API key into the wallet; the wallet never sends a key back to it.", "muted"),
             Ui.Wrap("It can read the activity log (site names only with Full access).", "muted"),
             accessNote is null ? Ui.Text("", "small") : Ui.Wrap(accessNote, "muted"),

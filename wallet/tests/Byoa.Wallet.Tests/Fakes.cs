@@ -1,7 +1,9 @@
 using System.Text.Json.Nodes;
+using Byoa.Wallet.Activity;
 using Byoa.Wallet.Audio;
 using Byoa.Wallet.Engine;
 using Byoa.Wallet.Protocol;
+using Byoa.Wallet.Settings;
 using Byoa.Wallet.Sources;
 
 namespace Byoa.Wallet.Tests;
@@ -58,38 +60,29 @@ class FakeSource : ISpeechSource
     }
 }
 
-/// <summary>A local speech source whose model download is slow enough to prove that Allow waits and reports progress.</summary>
-sealed class SlowDownloadSource : FakeSource, IDownloadableSource, IWarmable
+/// <summary>The test stand-in for what <c>SourceSet</c> does at start: every speech source gets a stop in the route.</summary>
+static class SpeechRoutes
 {
-    public SlowDownloadSource(string id, IReadOnlyList<string>? languages = null, TimeSpan? delay = null)
-        : base(id, languages: languages)
+    /// <summary>Appends a stop for each source that has none, in the order given (a paid one goes last, as in a real wallet).</summary>
+    public static void Ensure(WalletSettings settings, IEnumerable<ISpeechSource> sources)
     {
-        Delay = delay ?? TimeSpan.FromMilliseconds(180);
-        State = SourceState.NeedsDownload;
-        DownloadSize = 100;
+        var chain = settings.Chain(Vocabulary.Transcribe);
+        foreach (var source in sources)
+        {
+            if (chain.Stops.Any(s => s.SourceId == source.Id)) continue;
+            var paid = sources.FirstOrDefault(x => chain.Stops.Any(s => s.SourceId == x.Id) && x.Paid);
+            var index = paid is null ? chain.Stops.Count : chain.Stops.FindIndex(s => s.SourceId == paid.Id);
+            chain.Stops.Insert(index, new ChainStop { SourceId = source.Id });
+        }
     }
 
-    public TimeSpan Delay { get; }
-    public double? DownloadProgress { get; private set; }
-    public long? DownloadSize { get; }
-    public event Action? ProgressChanged;
-
-    public async Task EnsureDownloadedAsync(CancellationToken ct)
+    /// <summary>An engine over these speech sources, with a route that lists them in the order given.</summary>
+    public static WalletEngine Engine(SettingsStore store, IReadOnlyList<ISpeechSource> sources, ActivityLog log, IWalletUi ui,
+        TimeProvider? time = null)
     {
-        if (State == SourceState.Ready) return;
-        State = SourceState.Downloading;
-        DownloadProgress = 0;
-        ProgressChanged?.Invoke();
-        await Task.Delay(Delay, ct);
-        DownloadProgress = 0.41;
-        ProgressChanged?.Invoke();
-        await Task.Delay(Delay, ct);
-        DownloadProgress = 1;
-        State = SourceState.Ready;
-        ProgressChanged?.Invoke();
+        store.Update(s => Ensure(s, sources));
+        return new WalletEngine(store, sources, log, ui, time);
     }
-
-    public Task WarmAsync(string? language) => Task.CompletedTask;
 }
 
 /// <summary>A fake source with a model to load: warming a language takes <see cref="WarmTime"/> the first time.</summary>
@@ -229,7 +222,6 @@ sealed class ScriptedUi : IWalletUi
 
     /// <summary>Every "Preparing your model…" shown, and whether it was closed again.</summary>
     public List<PreparingModel> Preparing { get; } = [];
-    public List<PreparingModel> PreparingUpdates { get; } = [];
     public int PreparingClosed;
 
     /// <summary>When set, the window that shows "Preparing your model…" fails.</summary>
@@ -248,11 +240,6 @@ sealed class ScriptedUi : IWalletUi
     }
 
     public void QuietRequest(string origin) => Quiet++;
-    public void UpdatePreparing(PreparingModel model)
-    {
-        lock (PreparingUpdates) PreparingUpdates.Add(model);
-    }
-    public void DownloadStarted(ISpeechSource source) { }
     public void OpenSettings(string? page = null) { }
 }
 

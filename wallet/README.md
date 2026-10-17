@@ -1,16 +1,19 @@
 # BYOA agent wallet 0.1 (Windows)
 
-The first working agent wallet for [BYOA](../README.md): a tray app on your computer, a small native messaging host and a Chrome extension. A web page asks for your AI with `window.byoa`; the wallet shows a short notice, then a short consent window, and answers the page's calls with **your** models: local speech recognition, local text generation, a compatible home server, or your own API key as a paid fallback that asks first.
+The first working agent wallet for [BYOA](../README.md): a tray app on your computer, a small native messaging host and a Chrome extension. A web page asks for your AI with `window.byoa`; the wallet shows a short notice, then a short consent window, and answers the page's calls with **your** models: a model in a program on your computer, a compatible home server, or your own API key as a paid fallback that asks first.
 
-0.1 serves `audio.transcribe` (speech to text) from built-in sources and `text.generate` from LM Studio, Ollama, the Llama app, another OpenAI-compatible endpoint, or OpenRouter. The same source registry manages both skills:
+**The wallet holds no model.** It is a go-between: a site asks, you allow, and the wallet passes the request to a program that runs a model (the [Llama app](https://llama.app), LM Studio, Ollama, or any server with an OpenAI-compatible `/chat/completions`). The wallet downloads, loads and bundles nothing of its own.
 
-| Source | Runs | Languages | Cost | Notes |
+0.1 serves `audio.transcribe` (speech to text) and `text.generate`. Both are served by the same kind of source, which you add in **Sources > Add a model**:
+
+| Source | Runs | Skill | Cost | Notes |
 |---|---|---|---|---|
-| GigaAM v3 (sherpa-onnx) | this PC, CPU | Russian only | no cloud bill | very fast and accurate for Russian; downloads 230 MB into the wallet's models folder when needed |
-| Whisper large-v3, q5_0 (Whisper.net / whisper.cpp) | this PC, GPU or CPU | 100 | no cloud bill | downloads once (1.1 GB) into the wallet's active `models\whisper` folder on first use, with progress shown |
-| ElevenLabs Scribe v2 through OpenRouter | your API key | 99 | paid, about $0.00004 a second | the last fallback; asks before it runs |
+| A model in the Llama app, LM Studio, Ollama or another OpenAI-compatible server | this PC, or a home server | `text.generate`, or `audio.transcribe` | no cloud bill | one added source serves one skill; add a model twice to serve both |
+| ElevenLabs Scribe v2 through OpenRouter | your API key | `audio.transcribe` | paid, about $0.00004 a second | always in the wallet; the last fallback; asks before it runs |
 
-The default route for speech depends on hardware: GigaAM for `ru`, then Whisper large on a usable GPU; without a usable GPU it uses the small CPU Whisper model for other languages and leaves the large model as an option. OpenRouter is last. Text sources are added to their own route when the visitor chooses them; local sources are tried before paid sources. You can reorder either route, switch sources off and decide whether the paid one asks.
+Speech to text goes to the program as a chat request with the audio in it (`input_audio`), so it needs a model that hears audio. We tested Qwen3-ASR (1.7B) in the Llama app: about 0.15-0.9 s a clip on a GPU, good Russian and English. Run it in Llama, then add it with skill **Speech to text**. A model that cannot hear audio fails the test in the Add window with the program's own reason.
+
+A new wallet's speech route holds only the paid fallback; a speech model you add goes before it. Text models are added to the text route, local ones before paid ones. You can reorder either route, switch sources off and decide whether the paid one asks. A source whose program is not running is skipped with the reason "not running", and the next stop answers.
 
 The design and the security notes are in [docs/wallet-0.1.md](../docs/wallet-0.1.md). The page API is the BYOA 0.1 contract: `window.byoa.request(manifest)`, `call(grantId, skill, input, params)`, `release(grantId)`.
 
@@ -20,11 +23,9 @@ The design and the security notes are in [docs/wallet-0.1.md](../docs/wallet-0.1
 
 The package includes `byoa-mcp.exe`, a small MCP server for Claude Code, Codex, OpenCode, and other MCP clients. Open **Settings → Connect your AI agent**, copy the command or config snippet, and keep the wallet running. The bridge uses a per-user named pipe tied to `BYOA_WALLET_HOME`; it does not start the wallet and it does not hold settings or secrets.
 
-On the first connection the wallet shows the agent's announced name and the parent executable path observed by the wallet. **Allow** gives source, model, route, test, download, and activity tools. **Full access** is a separate visitor choice, and it is off by default. It unlocks `list_sites`, `set_site_access`, `set_limits` and `set_api_key`, and it lets `enable_source` change a built-in source and `remove_source` remove a source with a saved key. No tool allows a site, approves a paid call or approves another agent. Settings → Agents shows last use, the Full access switch, and Revoke. A program running as you can also start the bridge itself, so read the observed path before allowing it, and allow only the agents you trust. API keys are write-only: prefer `request_api_key_entry`, where the visitor types the key in the wallet. The wallet never sends a key back to the agent.
+On the first connection the wallet shows the agent's announced name and the parent executable path observed by the wallet. **Allow** gives source, route, test and activity tools. **Full access** is a separate visitor choice, and it is off by default. It unlocks `list_sites`, `set_site_access`, `set_limits` and `set_api_key`, and it lets `enable_source` change a built-in source and `remove_source` remove a source with a saved key. No tool allows a site, approves a paid call or approves another agent. Settings → Agents shows last use, the Full access switch, and Revoke. A program running as you can also start the bridge itself, so read the observed path before allowing it, and allow only the agents you trust. API keys are write-only: prefer `request_api_key_entry`, where the visitor types the key in the wallet. The wallet never sends a key back to the agent.
 
 The MCP entry point is `help`; it returns the same embedded articles shown by the wallet's Help page. `status`, `list_runtimes`, `add_source`, `test_source`, `set_order`, and `activity` cover the normal “add my local model” path. If the wallet is not running, the bridge says so and never starts it.
-
-`remove_model` is also available after Allow. It asks the visitor for confirmation, then removes only a model that this wallet downloaded into its own active `models` folder. A model found in another folder, or a path outside the wallet home, is never removed. The action appears in Activity with the agent's name.
 
 The same registry backs Sources, Help, and MCP. API keys are write-only: the preferred `request_api_key_entry` tool opens a field in the wallet so the visitor enters the key himself; the agent receives only a saved confirmation.
 
@@ -69,9 +70,7 @@ To remove it: `powershell -ExecutionPolicy Bypass -File wallet\uninstall.ps1` re
 | API keys | `%LOCALAPPDATA%\BYOA\wallet\secrets.dat` (DPAPI, current user) |
 | Pairings of direct links | `%LOCALAPPDATA%\BYOA\wallet\pairings.dat` (DPAPI, current user; only for sites with "decide on my own") |
 | Activity | `%LOCALAPPDATA%\BYOA\wallet\activity-YYYY-MM-DD.jsonl` (no audio, no text) |
-| Downloaded models | in `%LOCALAPPDATA%\BYOA\wallet\models` (or in `%LOCALAPPDATA%\BYOA\models` where an older version put them); under the active `BYOA_WALLET_HOME` when that variable is set |
 | Error log | `%LOCALAPPDATA%\BYOA\wallet\errors.log` (exception types and stacks only) |
-| Model folders searched | the models folder above, plus `<drive>:\AI-MODELS`, `<drive>:\models` and `%USERPROFILE%\models` when they exist; add more in **Sources** |
 
 `BYOA_WALLET_HOME` points the wallet (and the host it is started by) at a separate data folder and pipe; the tests use it so that they never touch your own settings.
 
@@ -81,7 +80,7 @@ An extension request is marked verified because the browser vouches for its orig
 
 - **The notice**, above the tray, only after a click on the page: "*site* wants to use your AI" with **Show**, **Decline** and **Block this site**. A direct link's notice offers **Show**, **Not now** and **Block in Sites…** instead: a link cannot block a site, the block is made in Sites. It does not take the focus from the browser.
 - **The consent window**: the site (verified by the browser for extension requests; a direct link is marked as a link, and its Allow is kept only once the site's welcome echoes the link), its purpose in its own words, one row per skill with the source the manager suggests for each language (and **why?**), the budget per session (**change**), "Next time, decide on my own within these limits", **Decline**, **Allow** and **Detailed settings…**. It takes the focus; Tab moves through it and Esc declines. When an allowed site asks for more, only the difference is shown.
-- **Settings**, from the tray icon or **Detailed settings…**: Sites (grants, pause, revoke, block or unblock, decide on its own; a dot per site: green when it used the wallet in the last 3 minutes, yellow within a day, grey before that), Sources (local models found, model folders, the Whisper model and its download, API keys), Skills & fallbacks (the route, ask before paid, the manager's reasons), Limits (per session, per site per day in money and calls, the whole wallet per day), Activity (every request and call: time, site, skill, the source that answered, the fallback route, cost; grouped by day, today and the days before it, 50, 100 or 200 entries a page).
+- **Settings**, from the tray icon or **Detailed settings…**: Sites (grants, pause, revoke, block or unblock, decide on its own; a dot per site: green when it used the wallet in the last 3 minutes, yellow within a day, grey before that), Sources (the models you added and the programs they run in, the paid speech key), Skills & fallbacks (the route, ask before paid, the manager's reasons), Limits (per session, per site per day in money and calls, the whole wallet per day), Activity (every request and call: time, site, skill, the source that answered, the fallback route, cost; grouped by day, today and the days before it, 50, 100 or 200 entries a page).
 - **Pause.** A site can be paused in Sites, and an allowed site that goes unused for a day (the time is set at the top of Sites: never, an hour, a day or a week) is paused by the wallet. A paused site keeps what you allowed, but nothing runs for it on its own: its open sessions end, it does not reconnect by itself, calls on its old grants are refused. Its next request, after your click, shows the notice and then the consent window with "You allowed this site before. Paused ... Resume it?" and **Resume**.
 - **Paid fallback question**: "Use Scribe v2 (OpenRouter) for this clip? About $0.0001": **Allow once**, **Always for this site**, **No**.
 - A request without a click shows nothing: the tray icon gets a quiet dot and its tooltip says a site asked without a click. A page may make 30 of them a minute; the rest are ignored and not written down.
@@ -102,7 +101,7 @@ python tests\e2e\make_samples.py <samples> --voice ru=<piper ru voice dir> --voi
 python tests\e2e\e2e.py --samples <samples> --shots <screenshots> --work <empty folder>
 ```
 
-It needs `patchright`, `uiautomation`, `pillow`, and for the samples `sherpa-onnx` and `numpy`. With an OpenRouter key in `%USERPROFILE%\.openrouter-key` it makes two paid calls (about $0.0001); `--no-paid` skips them.
+It needs `patchright`, `uiautomation`, `pillow`, and for the samples `sherpa-onnx` and `numpy` (only to make the test clips with Piper voices; the wallet itself uses neither). The real-speech passes need a speech model running in the Llama app (or another OpenAI-compatible program) and added to the wallet. With an OpenRouter key in `%USERPROFILE%\.openrouter-key` it makes two paid calls (about $0.0001); `--no-paid` skips them.
 
 The direct links have their own end-to-end test against small fake sites (`tests\e2e\fake_site.py`, aiohttp) on `ws://localhost` under the developer switch `BYOA_WALLET_DEV_LOCAL=1`: links opened as Windows opens them (`cmd /c start`), the real windows, real speech, a wallet restart with a stored pairing, decline, block, a bad session, revoke, and one click in a headed Chromium:
 
@@ -115,7 +114,7 @@ python tests\e2e\direct_e2e.py --samples <samples> --shots <screenshots> --work 
 ```
 core/Byoa.Wallet.Core        protocol (framing, messages, paths), the engine, settings, DPAPI secrets, WAV, routing,
                              the direct transport (links, address checks, the WebSocket channel, pairings)
-core/Byoa.Wallet.Providers   GigaAM (sherpa-onnx), Whisper (Whisper.net), OpenRouter; the model scanner
+core/Byoa.Wallet.Providers   the sources: a model in an OpenAI-compatible program (text and speech), OpenRouter; the runtime scanner
 desktop/Byoa.Wallet.Desktop  the Avalonia tray app: notice, consent, settings, the pipe server
 host/Byoa.Wallet.Host        byoa-host.exe, the native messaging host
 mcp/Byoa.Wallet.Mcp          byoa-mcp.exe, the stdio MCP bridge for the visitor's own AI agent
@@ -126,4 +125,4 @@ packaging/                   make-package.ps1 (the ready-to-install zip), Instal
 install.ps1, uninstall.ps1   install from the source, or (next to app\ in the package) from the package
 ```
 
-Packages: Avalonia 11.3 (MIT), Whisper.net 1.9 (MIT), org.k2fsa.sherpa.onnx 1.13 (Apache-2.0), BringYourOwnAgent 0.0.2 (Apache-2.0), System.Security.Cryptography.ProtectedData (MIT); xunit (Apache-2.0) for the tests. The Barlow fonts are under the SIL Open Font License (`desktop/Byoa.Wallet.Desktop/Assets/Fonts/OFL.txt`). Model weights are not in the repository: Whisper's ggml files and the pinned GigaAM v3 files come from Hugging Face and are verified before they enter the wallet's active models folder. Visitor-provided folders remain read-only.
+Packages: Avalonia 11.3 (MIT), BringYourOwnAgent 0.0.2 (Apache-2.0), System.Security.Cryptography.ProtectedData (MIT); xunit (Apache-2.0) for the tests. The Barlow fonts are under the SIL Open Font License (`desktop/Byoa.Wallet.Desktop/Assets/Fonts/OFL.txt`). The wallet carries no model weights and no inference engine.

@@ -211,7 +211,8 @@ Write-Host ''
 Write-Host 'Installed the BYOA agent wallet 0.1.'
 Write-Host "  App, host, MCP: $InstallDir"
 Write-Host "  Data:           $(Join-Path $env:LOCALAPPDATA 'BYOA\wallet') (settings, DPAPI-protected keys, activity)"
-Write-Host "  Models:         $(Join-Path $env:LOCALAPPDATA 'BYOA\wallet\models') (models that an older version downloaded to $(Join-Path $env:LOCALAPPDATA 'BYOA\models') stay there and are used from there)"
+Write-Host 'The wallet holds no model: it passes requests to a program on this PC that runs one (the Llama app, LM Studio, Ollama).'
+Write-Host "  (Earlier versions kept speech models in $(Join-Path $env:LOCALAPPDATA 'BYOA\wallet\models') or $(Join-Path $env:LOCALAPPDATA 'BYOA\models'); this version does not use them.)"
 Write-Host "  Extension ID:   $extensionId"
 Write-Host ''
 Write-Host 'Load the extension in Chrome: open chrome://extensions, turn on Developer mode,'

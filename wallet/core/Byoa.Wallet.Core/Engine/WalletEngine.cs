@@ -98,7 +98,7 @@ public sealed class WalletEngine
     readonly SemaphoreSlim _prompt = new(1, 1);
 
     public WalletEngine(SettingsStore store, IReadOnlyList<ISpeechSource> sources, ActivityLog activity, IWalletUi ui,
-        TimeProvider? time = null, IReadOnlyList<ITextSource>? textSources = null, bool? preferGpu = null)
+        TimeProvider? time = null, IReadOnlyList<ITextSource>? textSources = null)
     {
         _store = store;
         _sources = sources;
@@ -106,7 +106,7 @@ public sealed class WalletEngine
         _activity = activity;
         _ui = ui;
         _time = time ?? TimeProvider.System;
-        _store.Update(s => Router.EnsureDefaultsForHardware(s, preferGpu ?? true));
+        _store.Update(Router.EnsureDefaults);
     }
 
     public IReadOnlyList<ISpeechSource> Sources => _sources;
@@ -257,6 +257,13 @@ public sealed class WalletEngine
         return await TestTextSourceAsync(text, visitorInitiated, ct).ConfigureAwait(false);
     }
 
+    /// <summary>Tests a not-yet-saved speech source (a model in a program on this computer) materialised by the provider set.</summary>
+    public Task<JsonNode?> TestSourceAsync(ISpeechSource source, string skill, bool visitorInitiated, CancellationToken ct = default)
+    {
+        if (skill != Vocabulary.Transcribe) return Task.FromResult<JsonNode?>(TestFailure(skill, "a draft speech source can only serve audio.transcribe"));
+        return TestSpeechSourceAsync(source, visitorInitiated, ct);
+    }
+
     /// <summary>Tests a not-yet-saved text source materialised by the provider set.</summary>
     public Task<JsonNode?> TestSourceAsync(ITextSource source, string skill, bool visitorInitiated, CancellationToken ct = default)
     {
@@ -280,12 +287,14 @@ public sealed class WalletEngine
         {
             var clip = new WavClip(TestSample(), Wav.TargetRate, 1, 32);
             var chain = TestChain(Vocabulary.Transcribe, source.Id);
-            return await RouteAsync(new ActivityEntry
+            var entry = new ActivityEntry
             {
                 Origin = TestOrigin, Kind = "test", Via = "wallet", Skill = Vocabulary.Transcribe,
                 Note = "wallet-owned source test",
-            }, session, site, Vocabulary.Transcribe, clip, clip.Seconds, "ru", limits.SitePerDay, limits.WalletPerDay, hold,
+            };
+            var result = await RouteAsync(entry, session, site, Vocabulary.Transcribe, clip, clip.Seconds, source.Languages?.FirstOrDefault() ?? "ru", limits.SitePerDay, limits.WalletPerDay, hold,
                 Stopwatch.GetTimestamp(), ct, chain, [source]).ConfigureAwait(false);
+            return WithReason(result, entry);
         }
         finally
         {
@@ -307,19 +316,29 @@ public sealed class WalletEngine
         if (!HoldCall(hold, limits.CallsPerDay)) return TestFailure(Vocabulary.Generate, "the wallet's daily call limit refused the test");
         try
         {
-            return await RouteTextAsync(new ActivityEntry
+            var entry = new ActivityEntry
             {
                 Origin = TestOrigin, Kind = "test", Via = "wallet", Skill = Vocabulary.Generate,
                 Note = "wallet-owned source test",
-            }, session, site,
+            };
+            var result = await RouteTextAsync(entry, session, site,
                 [new ChatMessage("user", "Reply with exactly: wallet test ok")], 34, 256, 0, null, null,
                 limits.CallsPerDay, limits.SitePerDay, limits.WalletPerDay, hold, Stopwatch.GetTimestamp(), ct,
                 TestChain(Vocabulary.Generate, source.Id), [source]).ConfigureAwait(false);
+            return WithReason(result, entry);
         }
         finally
         {
             ReleaseDaily(hold);
         }
+    }
+
+    /// <summary>A failed test says why, in the source's own short words ("Llama answered HTTP 400: audio input is not supported").</summary>
+    static JsonNode? WithReason(JsonNode? result, ActivityEntry entry)
+    {
+        if (result is JsonObject failed && failed["ok"]?.GetValue<bool>() != true && failed["error"] is null && !string.IsNullOrWhiteSpace(entry.Fallback))
+            failed["error"] = entry.Fallback;
+        return result;
     }
 
     static JsonObject TestManifest(string skill, int? maxClipSeconds = null, int? maxTextChars = null)
@@ -775,25 +794,18 @@ public sealed class WalletEngine
         return new ConsentRow(skill.Id, name, skill.Required, isNew, canServe, routes, skill.Languages, string.Join(" ", whys.Distinct()));
     }
 
-    public static string Where(ISpeechSource s) => s.Runs == Runs.ThisDevice ? "this PC" : "API key";
+    public static string Where(ISpeechSource s) => s.ProviderKind switch
+    {
+        "local-model" => "this PC",
+        "home-server" => s.Runs,
+        _ => "API key",
+    };
 
     internal static string? SpeechRouteDetail(ISpeechSource source, string? language)
     {
-        var details = new List<string>();
-        if (source is IDownloadableSource downloadable
-            && source.State is SourceState.NeedsDownload or SourceState.Downloading
-            && downloadable.DownloadSize is { } bytes and > 0)
-        {
-            details.Add(((int)Math.Ceiling(bytes / 1_000_000d)).ToString(CultureInfo.InvariantCulture) + " MB download");
-        }
-
-        details.Add(source.HasMeasuredSeconds
-            ? (source.Id == Router.CpuWhisperId && language is not "ru"
-                ? "on this computer, about " + source.ApproxSeconds.ToString("0.0", CultureInfo.InvariantCulture) + " s per phrase"
-                : "about " + source.ApproxSeconds.ToString("0.0", CultureInfo.InvariantCulture) + " s a clip")
-            : "speed not measured yet");
-
-        return details.Count == 0 ? null : string.Join("; ", details);
+        return source.HasMeasuredSeconds
+            ? "about " + source.ApproxSeconds.ToString("0.0", CultureInfo.InvariantCulture) + " s a clip"
+            : "speed not measured yet";
     }
 
     public static string Where(ITextSource s) => s.ProviderKind switch
@@ -823,37 +835,25 @@ public sealed class WalletEngine
     /// </summary>
     async Task<double?> WarmBeforeResolveAsync(GrantSession session, string host, bool showPreparing, CancellationToken ct)
     {
-        var (warming, names, downloads) = WarmCore(SkillLanguagesOf(session), startDownloads: true);
+        var (warming, names) = WarmCore(SkillLanguagesOf(session));
         if (warming.IsCompleted) return null;
         var watch = Stopwatch.StartNew();
         if (await Task.WhenAny(warming, Task.Delay(150, ct)).ConfigureAwait(false) != warming && !ct.IsCancellationRequested)
         {
-            using var preparing = showPreparing ? _ui.ShowPreparing(new PreparingModel(session.Origin, host, names, DownloadProgress(downloads))) : null;
-            void Progress() => _ui.UpdatePreparing(new PreparingModel(session.Origin, host, names, DownloadProgress(downloads)));
-            if (showPreparing)
-                foreach (var download in downloads) download.ProgressChanged += Progress;
+            using var preparing = showPreparing ? _ui.ShowPreparing(new PreparingModel(session.Origin, host, names)) : null;
+            using var preparation = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            if (PreparationTimeout > TimeSpan.Zero) preparation.CancelAfter(PreparationTimeout);
             try
             {
-                if (showPreparing) Progress();
-                using var preparation = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                if (PreparationTimeout > TimeSpan.Zero) preparation.CancelAfter(PreparationTimeout);
-                try
-                {
-                    await warming.WaitAsync(preparation.Token).ConfigureAwait(false);
-                }
-                catch (OperationCanceledException) when (!ct.IsCancellationRequested)
-                {
-                    // Do not keep this request (or another site) hostage to a model that is still loading. The
-                    // background preparation continues; the eventual call will route to a ready fallback or say
-                    // "AI unavailable" rather than waiting again without a bound.
-                    _ui.ShowInfo(new InfoModel("Preparing your model", "It is taking longer than 30 seconds. The wallet will use a ready fallback or say AI unavailable."));
-                    ObservePreparation(warming);
-                }
+                await warming.WaitAsync(preparation.Token).ConfigureAwait(false);
             }
-            finally
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
-                if (showPreparing)
-                    foreach (var download in downloads) download.ProgressChanged -= Progress;
+                // Do not keep this request (or another site) hostage to a model that is still loading. The
+                // background preparation continues; the eventual call will route to a ready fallback or say
+                // "AI unavailable" rather than waiting again without a bound.
+                _ui.ShowInfo(new InfoModel("Preparing your model", "It is taking longer than 30 seconds. The wallet will use a ready fallback or say AI unavailable."));
+                ObservePreparation(warming);
             }
         }
 
@@ -869,15 +869,13 @@ public sealed class WalletEngine
     /// Loads the first local source of each language's route in the background, so that a page's first call is fast.
     /// Called when a grant is given, and at start for the sites already allowed.
     /// </summary>
-    public Task Warm(IEnumerable<string?> languages) => WarmCore(languages.Select(language => (Vocabulary.Transcribe, language)), startDownloads: false).Task;
+    public Task Warm(IEnumerable<string?> languages) => WarmCore(languages.Select(language => (Vocabulary.Transcribe, language))).Task;
 
-    (Task Task, IReadOnlyList<string> Names, IReadOnlyList<IDownloadableSource> Downloads) WarmCore(
-        IEnumerable<(string Skill, string? Language)> skills, bool startDownloads)
+    (Task Task, IReadOnlyList<string> Names) WarmCore(IEnumerable<(string Skill, string? Language)> skills)
     {
         var settings = _store.Snapshot();
         var tasks = new List<Task>();
         var names = new List<string>();
-        var downloads = new List<IDownloadableSource>();
         foreach (var (skill, language) in skills.Distinct())
         {
             if (skill == Vocabulary.Generate)
@@ -893,29 +891,17 @@ public sealed class WalletEngine
             var steps = Router.Plan(ChainFor(settings, skill, language), _sources, id => IsEnabled(settings, id), language).Steps
                 .Where(s => !s.Source.Paid).ToList();
             if (steps.FirstOrDefault() is { } first) names.Add(first.Source.Name);
-            foreach (var source in steps.Select(s => s.Source).OfType<IDownloadableSource>())
-                if (source is ISpeechSource speech && speech.State is (SourceState.NeedsDownload or SourceState.Downloading)
-                    && !downloads.Contains(source)) downloads.Add(source);
 
             // Each language gets its own route task. A failed or unavailable stop falls through to the next local one.
-            tasks.Add(PrepareRouteAsync(steps, language, startDownloads));
+            tasks.Add(PrepareRouteAsync(steps, language));
         }
 
-        return (Task.WhenAll(tasks), names.Distinct(StringComparer.Ordinal).ToList(), downloads);
+        return (Task.WhenAll(tasks), names.Distinct(StringComparer.Ordinal).ToList());
 
-        async Task PrepareRouteAsync(IReadOnlyList<RouteStep> steps, string? language, bool download)
+        async Task PrepareRouteAsync(IReadOnlyList<RouteStep> steps, string? language)
         {
             foreach (var step in steps)
             {
-                if (step.Source is IDownloadableSource downloadable && step.Source.State is (SourceState.NeedsDownload or SourceState.Downloading))
-                {
-                    if (!download) continue;
-                    _ui.DownloadStarted(step.Source);
-                    try { await downloadable.EnsureDownloadedAsync(CancellationToken.None).ConfigureAwait(false); }
-                    catch (Exception e) when (e is not OutOfMemoryException) { }
-                    if (step.Source.State != SourceState.Ready) continue;
-                }
-
                 if (step.Source.State != SourceState.Ready) continue;
                 if (step.Source is not IWarmable warmable) return;
                 try
@@ -947,14 +933,6 @@ public sealed class WalletEngine
                 }
             }
         }
-    }
-
-    static double? DownloadProgress(IReadOnlyList<IDownloadableSource> downloads)
-    {
-        if (downloads.Count == 0) return null;
-        var values = downloads.Select(d => d is ISpeechSource source && source.State == SourceState.Ready
-            ? 1 : d.DownloadProgress ?? 0).ToArray();
-        return values.Average();
     }
 
     /// <summary>At start: warm the models the already allowed sites will need.</summary>
@@ -1117,20 +1095,6 @@ public sealed class WalletEngine
         foreach (var step in plan.Steps)
         {
             var source = step.Source;
-            if (source is IDownloadableSource download && source.State is SourceState.NeedsDownload or SourceState.Downloading)
-            {
-                if (source.State == SourceState.NeedsDownload)
-                {
-                    _ui.DownloadStarted(source);
-                    // A route must not leave a faulted download task for TaskScheduler.UnobservedTaskException.
-                    // The call already moved on to its fallback; the source and its download toast expose the state.
-                    _ = ObserveDownloadAsync(download);
-                }
-
-                route.Add(Index(source), source.Name + ": downloading");
-                continue;
-            }
-
             var estimate = source.EstimateCost(clip.Seconds);
             if (estimate > 0 && !HoldMoney(hold, estimate, sitePerDay, walletPerDay))
             {
@@ -1264,19 +1228,6 @@ public sealed class WalletEngine
         return stopReason is not null
             ? Failed(entry, "limit", stopReason, route.All())
             : Failed(entry, "failed", plan.Steps.Count == 0 ? "no source for this language" : "no source answered", route.All());
-    }
-
-    static async Task ObserveDownloadAsync(IDownloadableSource source)
-    {
-        try
-        {
-            await source.EnsureDownloadedAsync(CancellationToken.None).ConfigureAwait(false);
-        }
-        catch (Exception)
-        {
-            // The route has already selected its next stop. The source records the failure and the next call retries;
-            // most importantly, a transient download error cannot become an unobserved tray-process crash.
-        }
     }
 
     // ------------------------------------------------------------------------------------------------

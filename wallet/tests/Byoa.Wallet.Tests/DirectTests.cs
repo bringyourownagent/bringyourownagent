@@ -426,8 +426,8 @@ public class DirectTransportTests : IDisposable
 {
     readonly ManualTime _time = new();
     readonly ScriptedUi _ui = new();
-    readonly FakeSource _giga = new("gigaam-v3", languages: ["ru"]) { Answer = "francia-giga" };
-    readonly FakeSource _whisper = new("whisper") { Answer = "francia-whisper" };
+    readonly FakeSource _russian = new("local-ru", languages: ["ru"]) { Answer = "francia-russian" };
+    readonly FakeSource _general = new("local-any") { Answer = "francia-general" };
     readonly FakeSource _paid = new("openrouter-scribe", Runs.ApiKey, pricePerSecond: 0.00004m) { Answer = "francia-paid" };
     readonly SettingsStore _store = new(null);
     readonly ActivityLog _log;
@@ -439,7 +439,7 @@ public class DirectTransportTests : IDisposable
     public DirectTransportTests()
     {
         _log = new ActivityLog(null, _time.Now);
-        _engine = new WalletEngine(_store, [_giga, _whisper, _paid], _log, _ui, _time);
+        _engine = SpeechRoutes.Engine(_store, [_russian, _general, _paid], _log, _ui, _time);
     }
 
     DirectTransport Transport(WalletEngine? engine = null, int maxFrame = 4 * 1024 * 1024, double pingSeconds = 30,
@@ -525,9 +525,9 @@ public class DirectTransportTests : IDisposable
 
         await TestSite.SendAsync(socket, Call(7, "ru"));
         var result = await TestSite.ReceiveAsync(socket);
-        Assert.Equal("{\"type\":\"result\",\"id\":7,\"ok\":true,\"output\":{\"text\":\"francia-giga\"},\"receipt\":{\"cost\":\"0.000 USD\",\"provider\":\"local\"}}", result.ToJsonString());
+        Assert.Equal("{\"type\":\"result\",\"id\":7,\"ok\":true,\"output\":{\"text\":\"francia-russian\"},\"receipt\":{\"cost\":\"0.000 USD\",\"provider\":\"local\"}}", result.ToJsonString());
         await TestSite.SendAsync(socket, Call(8, "sk"));
-        Assert.Equal("francia-whisper", (await TestSite.ReceiveAsync(socket))["output"]!["text"]!.GetValue<string>());
+        Assert.Equal("francia-general", (await TestSite.ReceiveAsync(socket))["output"]!["text"]!.GetValue<string>());
 
         var request = _log.Recent().First(e => e.Kind == "request");
         Assert.Equal(("allowed", "link"), (request.Outcome, request.Via));
@@ -590,7 +590,7 @@ public class DirectTransportTests : IDisposable
         Assert.Equal(SiteStatus.None, _engine.FindSite(_site.Origin)!.Status);   // the answer to the link was never stored
         Assert.DoesNotContain(_log.Recent(), e => e.Outcome == "revoked");
         Assert.Null(_pairings.Get(_site.Origin));
-        Assert.Equal(0, _giga.Calls);
+        Assert.Equal(0, _russian.Calls);
     }
 
     [Fact]
@@ -843,7 +843,7 @@ public class DirectTransportTests : IDisposable
         Assert.Null(site.Summary);                                                // nothing of the hostile link is stored
         Assert.DoesNotContain(_log.Recent(), e => e.Outcome == "revoked");
         Assert.Null(_pairings.Get(_site.Origin));
-        Assert.Equal(0, _giga.Calls);
+        Assert.Equal(0, _russian.Calls);
     }
 
     [Fact]
@@ -974,7 +974,7 @@ public class DirectTransportTests : IDisposable
     [Fact]
     public async Task AWarmUpThatFailsLeavesNoAnswerAndNoGrantHeld()
     {
-        var engine = new WalletEngine(new SettingsStore(null), [new WarmingSource("gigaam-v3", languages: ["ru"]) { WarmTime = TimeSpan.FromSeconds(1.5) }, _whisper], _log, _ui, _time);
+        var engine = SpeechRoutes.Engine(new SettingsStore(null), [new WarmingSource("local-ru", languages: ["ru"]) { WarmTime = TimeSpan.FromSeconds(1.5) }, _general], _log, _ui, _time);
         _ui.Consent = new ConsentAnswer(true, 0.05m, AutoDecide: false, []);
         _ui.FailPreparing = true;                                                 // the window that shows "Preparing your model…" fails
         Assert.Null(await Transport(engine).HandleLinkAsync(_site.Link()));
@@ -985,7 +985,7 @@ public class DirectTransportTests : IDisposable
     [Fact]
     public async Task AnAnswerWaitingForTheModelWhenTheWalletClosesGoesNowhere()
     {
-        var engine = new WalletEngine(new SettingsStore(null), [new WarmingSource("gigaam-v3", languages: ["ru"]) { WarmTime = TimeSpan.FromSeconds(1.5) }, _whisper], _log, _ui, _time);
+        var engine = SpeechRoutes.Engine(new SettingsStore(null), [new WarmingSource("local-ru", languages: ["ru"]) { WarmTime = TimeSpan.FromSeconds(1.5) }, _general], _log, _ui, _time);
         _ui.Consent = new ConsentAnswer(true, 0.05m, AutoDecide: false, []);
         var transport = Transport(engine);
         var link = transport.HandleLinkAsync(_site.Link());
@@ -1016,7 +1016,7 @@ public class DirectTransportTests : IDisposable
     [InlineData(false)]
     public async Task AVisitorsDecisionWhileTheModelLoadsLeavesTheLinkNoConnectionAndNoGrant(bool switchDecideOnMyOwn)
     {
-        var engine = new WalletEngine(new SettingsStore(null), [new WarmingSource("gigaam-v3", languages: ["ru"]) { WarmTime = TimeSpan.FromSeconds(1.5) }, _whisper], _log, _ui, _time);
+        var engine = SpeechRoutes.Engine(new SettingsStore(null), [new WarmingSource("local-ru", languages: ["ru"]) { WarmTime = TimeSpan.FromSeconds(1.5) }, _general], _log, _ui, _time);
         _ui.Consent = new ConsentAnswer(true, 0.05m, AutoDecide: false, []);
         var link = Transport(engine).HandleLinkAsync(_site.Link());
         await WaitUntil(() => _ui.Preparing.Count == 1);                          // "Preparing your model…": the grant waits for the model
@@ -1077,7 +1077,7 @@ public class DirectTransportTests : IDisposable
         for (var round = 0; round < 150; round++)
         {
             var kind = round % 3;                                                 // 0: block, 1: revoke, 2: "decide on my own" off
-            var engine = new WalletEngine(new SettingsStore(null), [_giga, _whisper], _log, _ui, _time);
+            var engine = SpeechRoutes.Engine(new SettingsStore(null), [_russian, _general], _log, _ui, _time);
             if (kind == 2)
             {
                 _ui.Consent = new ConsentAnswer(true, 0.05m, AutoDecide: true, []);
@@ -1126,8 +1126,8 @@ public class DirectTransportTests : IDisposable
         Assert.Equal("{\"type\":\"result\",\"id\":1,\"ok\":false}", (await TestSite.ReceiveAsync(socket)).ToJsonString());
         Assert.Equal(("limit", "link"), (_log.Recent()[0].Outcome, _log.Recent()[0].Via));
 
-        _giga.Fail = true;
-        _whisper.Fail = true;
+        _russian.Fail = true;
+        _general.Fail = true;
         _ui.Paid = PaidAnswer.No;
         await TestSite.SendAsync(socket, Call(2, "ru"));
         Assert.Equal("{\"type\":\"result\",\"id\":2,\"ok\":false}", (await TestSite.ReceiveAsync(socket)).ToJsonString());
@@ -1139,11 +1139,11 @@ public class DirectTransportTests : IDisposable
     public async Task AtMostFourCallsRunAtOnceOnAConnection()
     {
         var (_, _, socket, _) = await PairAsync(auto: false);
-        _giga.Hold = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _russian.Hold = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         for (var i = 1; i <= 5; i++) await TestSite.SendAsync(socket, Call(i));
         var refused = await TestSite.ReceiveAsync(socket);                          // the fifth, at once
         Assert.Equal("{\"type\":\"result\",\"id\":5,\"ok\":false}", refused.ToJsonString());
-        _giga.Hold.SetResult();
+        _russian.Hold.SetResult();
         var ids = new List<int>();
         for (var i = 0; i < 4; i++)
         {
@@ -1288,7 +1288,7 @@ public class DirectTransportTests : IDisposable
         var notices = _ui.Notices;
 
         // A new wallet process: a new engine (no grants in memory), the same settings, activity and pairings.
-        var engine = new WalletEngine(_store, [_giga, _whisper, _paid], _log, _ui, _time);
+        var engine = SpeechRoutes.Engine(_store, [_russian, _general, _paid], _log, _ui, _time);
         var transport = Transport(engine);
         transport.ResumePairings();
         var again = await _site.NextSocketAsync();
@@ -1449,7 +1449,7 @@ public class DirectTransportTests : IDisposable
         await TestSite.SendAsync(socket, Call(1));
         Assert.Equal("(close)", (await TestSite.ReceiveAsync(socket))["type"]!.GetValue<string>());
         Assert.False(await connection!.Welcomed.WaitAsync(TimeSpan.FromSeconds(10)));
-        Assert.Equal(0, _giga.Calls);
+        Assert.Equal(0, _russian.Calls);
     }
 
     [Fact]

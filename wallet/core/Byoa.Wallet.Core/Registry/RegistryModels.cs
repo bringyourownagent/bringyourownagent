@@ -50,20 +50,6 @@ public sealed record RegistryRuntimeInfo(
     long? LatencyMs = null,
     int? HttpStatus = null);
 
-/// <summary>One model the wallet knows how to fetch into its own models folder.</summary>
-public sealed record DownloadableModelInfo(
-    string Id,
-    string Name,
-    string Skill,
-    long? SizeBytes,
-    IReadOnlyList<string> Languages,
-    string Hardware,
-    bool Downloaded,
-    string? OwnedPath,
-    bool CanDownload = true);
-
-public sealed record ModelDownloadProgress(string ModelId, double? Fraction, long? DoneBytes, long? TotalBytes);
-
 public sealed record RegistryOperationResult(bool Ok, string Message, string? Id = null)
 {
     public static RegistryOperationResult Success(string message, string? id = null) => new(true, message, id);
@@ -223,23 +209,4 @@ public interface IVisitorInitiatedSourceTester
 {
     Task<RegistryTestResult> TestSourceAsync(string sourceId, bool visitorInitiated, CancellationToken ct);
     Task<RegistryTestResult> TestDraftAsync(SourceSetting draft, bool visitorInitiated, CancellationToken ct);
-}
-
-/// <summary>Downloads and inspects only models owned by the active wallet.</summary>
-public interface IWalletModelManager
-{
-    IReadOnlyList<DownloadableModelInfo> Models { get; }
-    Task<RegistryOperationResult> DownloadAsync(string modelId, IProgress<ModelDownloadProgress>? progress, CancellationToken ct);
-
-    /// <summary>The manager must refuse paths outside the active wallet models directory.</summary>
-    Task<RegistryOperationResult> RemoveAsync(DownloadableModelInfo model, CancellationToken ct);
-}
-
-public sealed class EmptyModelManager : IWalletModelManager
-{
-    public IReadOnlyList<DownloadableModelInfo> Models { get; } = [];
-    public Task<RegistryOperationResult> DownloadAsync(string modelId, IProgress<ModelDownloadProgress>? progress, CancellationToken ct) =>
-        Task.FromResult(RegistryOperationResult.Failure("This wallet has no downloadable model catalog."));
-    public Task<RegistryOperationResult> RemoveAsync(DownloadableModelInfo model, CancellationToken ct) =>
-        Task.FromResult(RegistryOperationResult.Failure("The wallet will not remove model files automatically."));
 }

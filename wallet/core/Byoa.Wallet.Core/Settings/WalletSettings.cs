@@ -26,15 +26,6 @@ public sealed class WalletSettings
     /// <summary>Random per-wallet key used to make redacted site labels opaque to agents.</summary>
     public string? SiteActivityLabelKey { get; set; }
 
-    /// <summary>Folders searched for local models (GigaAM folders, ggml Whisper files).</summary>
-    public List<string> ModelFolders { get; set; } = [];
-
-    /// <summary>The ggml Whisper model the wallet downloads and uses.</summary>
-    public string WhisperModel { get; set; } = "ggml-large-v3-q5_0.bin";
-
-    /// <summary>Model files downloaded by this wallet, not files merely found on the computer.</summary>
-    public List<string> DownloadedModelFiles { get; set; } = [];
-
     public SiteRecord? Site(string origin) => Sites.FirstOrDefault(s => s.Origin == origin);
 
     public SourceSetting Source(string id)
@@ -120,9 +111,10 @@ public sealed class SiteRecord
 }
 
 /// <summary>
-/// The visitor's switch for one source. Built-in sources (GigaAM, Whisper, OpenRouter speech) describe themselves in
-/// code and keep only <see cref="Id"/> and <see cref="Enabled"/> here; sources the visitor (or his agent) adds also
-/// carry what they are: <see cref="Kind"/>, <see cref="Model"/> and the rest.
+/// The visitor's switch for one source. The paid OpenRouter speech source describes itself in code and keeps only
+/// <see cref="Id"/> and <see cref="Enabled"/> here; sources the visitor (or his agent) adds also carry what they are:
+/// <see cref="Kind"/>, <see cref="Model"/> and the rest. The wallet holds no model of its own: every added source is
+/// a program on this computer, or a server, that runs one.
 /// </summary>
 public sealed class SourceSetting
 {
@@ -141,7 +133,7 @@ public sealed class SourceSetting
     /// <summary>The runtime's or the API's model id.</summary>
     public string? Model { get; set; }
 
-    /// <summary>The skills it serves, e.g. ["text.generate"].</summary>
+    /// <summary>The skills it serves: ["text.generate"] or ["audio.transcribe"] (one added source serves one skill).</summary>
     public List<string> Skills { get; set; } = [];
 
     /// <summary>Primary language tags it is used for; empty means any.</summary>

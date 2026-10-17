@@ -42,7 +42,7 @@ public sealed class ActivityEntry
     /// <summary>True when at least one provider was actually called, even if none produced an answer.</summary>
     public bool ProviderCalled { get; set; }
 
-    /// <summary>The fallback route, when the first choice did not answer: "GigaAM v3: turned off → Whisper".</summary>
+    /// <summary>The fallback route, when the first choice did not answer: "Llama · Qwen3-ASR: turned off → Scribe v2".</summary>
     public string? Fallback { get; set; }
 
     /// <summary>Spec money, "0 USD" for a local source.</summary>

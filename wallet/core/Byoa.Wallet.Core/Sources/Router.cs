@@ -40,40 +40,41 @@ public interface ILiveness
 /// </summary>
 public static class Router
 {
-    /// <summary>The legacy/GPU default chain: GigaAM (Russian), Whisper, the CPU safety net, then the paid fallback.</summary>
-    public static readonly string[] DefaultTranscribeChain = ["gigaam-v3", WhisperId, CpuWhisperId, "openrouter-scribe"];
+    /// <summary>The paid speech source every wallet has: an OpenRouter model behind the visitor's own key (it asks first).</summary>
+    public const string PaidSpeechId = "openrouter-scribe";
 
-    /// <summary>The default chain when startup found no usable Vulkan device.</summary>
-    public static readonly string[] DefaultCpuTranscribeChain = ["gigaam-v3", CpuWhisperId, "openrouter-scribe"];
+    /// <summary>The speech route of a new wallet: only the paid fallback. The speech models the visitor adds come before it.</summary>
+    public static readonly string[] DefaultTranscribeChain = [PaidSpeechId];
 
-    /// <summary>The sources of the built-in speech chain, by their ids in the settings.</summary>
-    public const string GigaAmId = "gigaam-v3";
-    public const string WhisperId = "whisper";
-    public const string CpuWhisperId = "whisper-cpu";
-
-    /// <summary>Adds the legacy/GPU defaults to settings that miss them.</summary>
-    public static void EnsureDefaults(WalletSettings settings) => EnsureDefaultsForHardware(settings, preferGpu: true);
+    /// <summary>Ids of the speech engines that earlier versions had built into the wallet. The wallet holds no model any more.</summary>
+    public static readonly string[] RetiredSpeechIds = ["gigaam-v3", "whisper", "whisper-cpu"];
 
     /// <summary>
-    /// Adds defaults without replacing a route the visitor has edited. An untouched old default is also adjusted for
-    /// a machine without a usable GPU, so a clean CPU wallet never starts the 1.1 GB model by default.
+    /// Makes the settings fit this version: the paid fallback is in the speech route, and the engines that earlier versions
+    /// had inside the wallet are gone from the sources and from every route (a route the visitor edited keeps its order).
     /// </summary>
-    public static void EnsureDefaultsForHardware(WalletSettings settings, bool preferGpu)
+    public static void EnsureDefaults(WalletSettings settings)
+    {
+        settings.Sources.RemoveAll(s => s.Kind is null && RetiredSpeechIds.Contains(s.Id, StringComparer.Ordinal));
+        foreach (var route in settings.Chains)
+            route.Stops.RemoveAll(stop => RetiredSpeechIds.Contains(stop.SourceId, StringComparer.Ordinal));
+        var chain = settings.Chain(Vocabulary.Transcribe);
+        if (chain.Stops.All(s => s.SourceId != PaidSpeechId)) chain.Stops.Add(new ChainStop { SourceId = PaidSpeechId });
+    }
+
+    /// <summary>
+    /// Adds a stop to the speech route for every added source that serves it and has none yet, before the paid fallback
+    /// (the models on this computer answer first).
+    /// </summary>
+    public static void EnsureSpeechChainFromSettings(WalletSettings settings)
     {
         var chain = settings.Chain(Vocabulary.Transcribe);
-        var oldDefault = chain.Stops.Select(s => s.SourceId).SequenceEqual(DefaultTranscribeChain, StringComparer.Ordinal);
-        var desired = preferGpu ? DefaultTranscribeChain : DefaultCpuTranscribeChain;
-        if (chain.Stops.Count == 0 || oldDefault)
+        foreach (var source in settings.Sources.Where(s => s.Kind is not null && s.Skills.Contains(Vocabulary.Transcribe)))
         {
-            chain.Stops = desired.Select(id => new ChainStop { SourceId = id }).ToList();
+            if (chain.Stops.Any(stop => stop.SourceId == source.Id)) continue;
+            var paid = chain.Stops.FindIndex(stop => stop.SourceId == PaidSpeechId);
+            chain.Stops.Insert(paid < 0 ? chain.Stops.Count : paid, new ChainStop { SourceId = source.Id });
         }
-        else
-        {
-            foreach (var id in DefaultTranscribeChain)
-                if (chain.Stops.All(s => s.SourceId != id)) chain.Stops.Add(new ChainStop { SourceId = id });
-        }
-
-        foreach (var id in DefaultTranscribeChain) settings.Source(id);
     }
 
     /// <summary>
@@ -129,14 +130,11 @@ public static class Router
             string? why = null;
             if (!stop.Enabled || !enabled(source.Id)) why = "turned off";
             else if (!Knows(source, language)) why = language is null ? "needs to know the language" : "does not know " + Vocabulary.LanguageName(language);
+            else if (source is ILiveness { Up: false }) why = "not running";
             else if (source.State is SourceState.Missing) why = "model not found";
             else if (source.State is SourceState.NoKey) why = "no API key";
             else if (source.State is SourceState.Unavailable) why = source.StateText;
             else if (source.State is SourceState.Broken) why = "failed to load";
-            else if (stop.SourceId == CpuWhisperId && byId.TryGetValue(WhisperId, out var gpu) && gpu.State is SourceState.Ready)
-            {
-                why = "the big Whisper already works on this PC";
-            }
 
             if (why is null) steps.Add(new RouteStep(source, source.Paid && stop.AskBeforePaid));
             else skipped.Add(new SkippedSource(source, why));
@@ -161,7 +159,6 @@ public static class Router
             if (!stop.Enabled || !enabled(source.Id)) why = "turned off";
             else if (!KnowsText(source, language)) why = language is null ? "needs to know the language" : "does not know " + Vocabulary.LanguageName(language);
             else if (source is ILiveness { Up: false }) why = "not running";
-            else if (source.State is SourceState.NeedsDownload or SourceState.Downloading) why = "model is still preparing";
             else if (source.State is SourceState.Missing) why = "model not found";
             else if (source.State is SourceState.NoKey) why = "no API key";
             else if (source.State is SourceState.Unavailable) why = source.StateText;
@@ -200,7 +197,9 @@ public static class Router
                 because.Add(specialised.Source.Name + " knows only " + string.Join(", ", specialised.Source.Languages!.Select(Vocabulary.LanguageName)));
             }
 
-            because.Add("it knows " + s.LanguageCount.ToString(CultureInfo.InvariantCulture) + " languages");
+            because.Add(s.LanguageCount > 0
+                ? "it is set up for " + s.LanguageCount.ToString(CultureInfo.InvariantCulture) + " languages"
+                : "it takes any language");
         }
 
         because.Add(s.Paid

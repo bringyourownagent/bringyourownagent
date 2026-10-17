@@ -29,14 +29,12 @@ public sealed class WalletRegistry
     readonly IReadOnlyList<ISpeechSource> _speech;
     readonly IReadOnlyList<ITextSource> _text;
     readonly IRuntimeScanner? _runtimes;
-    readonly IWalletModelManager _models;
     readonly IRegistrySourceTester? _tester;
     readonly WalletEngine? _engine;
     readonly Func<SourceSetting, ITextSource?>? _textFactory;
     readonly Func<SourceSetting, string?, ITextSource?>? _draftTextFactory;
-    readonly string _modelsRoot;
+    readonly Func<SourceSetting, ISpeechSource?>? _speechFactory;
     readonly object _gate = new();
-    readonly SemaphoreSlim _downloadGate = new(1, 1);
 
     public WalletRegistry(
         SettingsStore store,
@@ -45,12 +43,11 @@ public sealed class WalletRegistry
         IEnumerable<ISpeechSource>? speechSources = null,
         IEnumerable<ITextSource>? textSources = null,
         IRuntimeScanner? runtimeScanner = null,
-        IWalletModelManager? modelManager = null,
         IRegistrySourceTester? sourceTester = null,
-        string? modelsRoot = null,
         WalletEngine? engine = null,
         Func<SourceSetting, ITextSource?>? textFactory = null,
-        Func<SourceSetting, string?, ITextSource?>? draftTextFactory = null)
+        Func<SourceSetting, string?, ITextSource?>? draftTextFactory = null,
+        Func<SourceSetting, ISpeechSource?>? speechFactory = null)
     {
         _store = store;
         _secrets = secrets;
@@ -58,12 +55,11 @@ public sealed class WalletRegistry
         _speech = speechSources is IReadOnlyList<ISpeechSource> speechList ? speechList : speechSources?.ToArray() ?? [];
         _text = textSources is IReadOnlyList<ITextSource> textList ? textList : textSources?.ToArray() ?? [];
         _runtimes = runtimeScanner;
-        _models = modelManager ?? new EmptyModelManager();
         _tester = sourceTester;
         _engine = engine;
         _textFactory = textFactory;
         _draftTextFactory = draftTextFactory;
-        _modelsRoot = modelsRoot ?? WalletPaths.Models;
+        _speechFactory = speechFactory;
     }
 
     /// <summary>Raised after a successful management operation, after settings and Activity have been updated.</summary>
@@ -128,8 +124,6 @@ public sealed class WalletRegistry
         return chains;
     }
 
-    public IReadOnlyList<DownloadableModelInfo> ListDownloadableModels() => _models.Models;
-
     public async Task<IReadOnlyList<RegistryRuntimeInfo>> ListRuntimesAsync(CancellationToken ct = default)
     {
         if (_runtimes is null) return [];
@@ -186,7 +180,8 @@ public sealed class WalletRegistry
     RegistryOperationResult AddSourceCore(SourceDraft draft, string actor, bool endpointConfirmed, bool visitorEntered,
         EndpointAssessment? assessment = null)
     {
-        var id = MakeId(draft.Kind, draft.Model, draft.Endpoint);
+        var skill = SkillOf(draft.Skills);
+        var id = MakeId(draft.Kind, draft.Model, draft.Endpoint, skill);
         lock (_gate)
         {
             if (KnownSourceIds().Contains(id, StringComparer.Ordinal))
@@ -209,7 +204,7 @@ public sealed class WalletRegistry
                     Skills = CleanList(draft.Skills),
                     Languages = CleanList(draft.Languages),
                 });
-                AddTextStop(s, id, string.Equals(draft.Kind.Trim(), SourceKinds.OpenRouter, StringComparison.OrdinalIgnoreCase));
+                AddStop(s, id, skill, string.Equals(draft.Kind.Trim(), SourceKinds.OpenRouter, StringComparison.OrdinalIgnoreCase));
             });
         }
 
@@ -282,7 +277,11 @@ public sealed class WalletRegistry
         if (endpoint is null || !Uri.TryCreate(endpoint, UriKind.Absolute, out var endpointUri) || endpointUri.Scheme is not ("http" or "https"))
             return RegistryOperationResult.Failure("The endpoint must be a complete http or https URL, for example http://127.0.0.1:1234/v1.");
 
-        var newId = MakeId(kind, model, update.Endpoint ?? setting.Endpoint);
+        var oldSkill = SkillOf(setting.Skills);
+        var newSkill = SkillOf(update.Skills ?? setting.Skills);
+        if (newSkill == Vocabulary.Transcribe && kind == SourceKinds.OpenRouter)
+            return RegistryOperationResult.Failure(SpeechNeedsRuntime);
+        var newId = MakeId(kind, model, update.Endpoint ?? setting.Endpoint, newSkill);
         if (!string.Equals(newId, id, StringComparison.Ordinal) && KnownSourceIds().Any(x => x == newId))
             return RegistryOperationResult.Failure("A source with id '" + newId + "' already exists.");
 
@@ -316,7 +315,11 @@ public sealed class WalletRegistry
                 foreach (var chain in s.Chains)
                     foreach (var stop in chain.Stops.Where(stop => stop.SourceId == id)) stop.SourceId = newId;
             }
-            AddTextStop(s, newId, kind == SourceKinds.OpenRouter);
+            // A source that moved from text to speech (or back) leaves the old skill's route and joins the new one.
+            if (oldSkill != newSkill)
+                foreach (var chain in s.Chains.Where(c => c.Skill == (oldSkill)))
+                    chain.Stops.RemoveAll(stop => stop.SourceId == newId);
+            AddStop(s, newId, newSkill, kind == SourceKinds.OpenRouter);
         });
         Change("source-updated", newId, actor, "Updated source " + DisplayId(newId));
         return RegistryOperationResult.Success("Source updated: " + newId + ".", newId);
@@ -446,67 +449,6 @@ public sealed class WalletRegistry
         return RegistryOperationResult.Success("Paid approval preference saved.", sourceId);
     }
 
-    public async Task<RegistryOperationResult> DownloadModelAsync(string modelId, IProgress<ModelDownloadProgress>? progress = null,
-        string actor = "you in the window", CancellationToken ct = default)
-    {
-        var model = _models.Models.FirstOrDefault(m => m.Id == modelId);
-        if (model is null) return RegistryOperationResult.Failure("There is no downloadable model with id '" + modelId + "'.");
-        if (!model.CanDownload) return RegistryOperationResult.Failure("The wallet knows this model, but it cannot download it automatically.");
-        if (!_downloadGate.Wait(0)) return RegistryOperationResult.Failure("Another model download is already in progress. Wait for it to finish.");
-        try
-        {
-            if (model.SizeBytes is { } size)
-            {
-                try
-                {
-                    var root = Path.GetPathRoot(Path.GetFullPath(_modelsRoot));
-                    if (root is null)
-                        return RegistryOperationResult.Failure("The wallet could not determine free disk space for this download.");
-                    var available = new DriveInfo(root).AvailableFreeSpace;
-                    if (available < size || available - size < 5L * 1024 * 1024 * 1024)
-                        return RegistryOperationResult.Failure("There is not enough free disk space. Keep at least 5 GB free after this download.");
-                }
-                catch (Exception e) when (e is DriveNotFoundException or IOException or UnauthorizedAccessException or ArgumentException or InvalidOperationException)
-                {
-                    return RegistryOperationResult.Failure("The wallet could not determine free disk space for this download. Try again from the wallet.");
-                }
-            }
-
-            var startedBy = actor.StartsWith("agent: ", StringComparison.Ordinal) ? "agent " + actor[7..] : actor;
-            _activity.Add(new ActivityEntry
-            {
-                At = DateTimeOffset.UtcNow,
-                Origin = "wallet",
-                Kind = "change",
-                Outcome = "started",
-                Actor = actor,
-                Change = startedBy + " started downloading " + model.Name + " (" + DownloadSize(model.SizeBytes) + ")",
-                Note = "download started",
-            });
-            var result = await _models.DownloadAsync(modelId, progress, ct).ConfigureAwait(false);
-            if (result.Ok) Change("model-downloaded", modelId, actor, "Downloaded model " + model.Name);
-            return result;
-        }
-        finally { _downloadGate.Release(); }
-    }
-
-    /// <summary>
-    /// Validates confinement before calling the model manager. The model manager performs the second ownership
-    /// check immediately before deleting the file.
-    /// </summary>
-    public async Task<RegistryOperationResult> RemoveDownloadedModelAsync(string modelId, string actor = "you in the window", CancellationToken ct = default)
-    {
-        var model = _models.Models.FirstOrDefault(m => m.Id == modelId);
-        if (model is null) return RegistryOperationResult.Failure("There is no downloaded model with id '" + modelId + "'.");
-        if (!model.Downloaded || string.IsNullOrWhiteSpace(model.OwnedPath))
-            return RegistryOperationResult.Failure("That model is not a downloaded file owned by this wallet.");
-        if (!IsInsideModels(model.OwnedPath, _modelsRoot))
-            return RegistryOperationResult.Failure("The wallet refused that path because it is outside its own models folder.");
-        var result = await _models.RemoveAsync(model, ct).ConfigureAwait(false);
-        if (result.Ok) Change("model-removed", modelId, actor, "Removed downloaded model " + model.Name);
-        return result;
-    }
-
     public async Task<RegistryTestResult> TestSourceAsync(string sourceId, CancellationToken ct = default)
         => await TestSourceAsync(sourceId, visitorInitiated: false, ct).ConfigureAwait(false);
 
@@ -533,8 +475,15 @@ public sealed class WalletRegistry
             if (text is null)
             {
                 var setting = _store.Snapshot().Sources.FirstOrDefault(source => source.Id == sourceId);
-                if (setting is { Skills.Count: > 0 } && !setting.Skills.Contains(Vocabulary.Generate, StringComparer.Ordinal))
-                    return new RegistryTestResult(false, "Added model sources currently serve text.generate; choose Text generation.");
+                if (setting is not null && SkillOf(setting.Skills) == Vocabulary.Transcribe)
+                {
+                    // Saved a moment ago: the provider set has not rebuilt its speech list yet.
+                    var speech = _speechFactory?.Invoke(setting);
+                    return speech is null
+                        ? new RegistryTestResult(false, "There is no speech source with id '" + sourceId + "' in the running wallet.")
+                        : FromEngine(await _engine.TestSourceAsync(speech, Vocabulary.Transcribe, visitorInitiated, ct).ConfigureAwait(false));
+                }
+
                 text = setting is null ? null : _textFactory?.Invoke(setting);
             }
 
@@ -565,9 +514,8 @@ public sealed class WalletRegistry
     {
         var validation = ValidateDraft(draft, visitorEntered: visitorInitiated);
         if (validation is not null) return new RegistryTestResult(false, validation);
-        if (draft.Skills?.Contains(Vocabulary.Transcribe, StringComparer.Ordinal) == true)
-            return new RegistryTestResult(false, "Added model sources currently serve text.generate; choose Text generation.");
-        var id = MakeId(draft.Kind, draft.Model, draft.Endpoint);
+        var skill = SkillOf(draft.Skills);
+        var id = MakeId(draft.Kind, draft.Model, draft.Endpoint, skill);
         var setting = new SourceSetting
         {
             Id = id,
@@ -578,6 +526,14 @@ public sealed class WalletRegistry
             Skills = CleanList(draft.Skills),
             Languages = CleanList(draft.Languages),
         };
+
+        if (_engine is not null && skill == Vocabulary.Transcribe)
+        {
+            var speech = _speechFactory?.Invoke(setting);
+            return speech is null
+                ? new RegistryTestResult(false, "The wallet could not create that speech source. Check its endpoint and model id.")
+                : FromEngine(await _engine.TestSourceAsync(speech, Vocabulary.Transcribe, visitorInitiated, ct).ConfigureAwait(false));
+        }
 
         if (_engine is not null)
         {
@@ -645,20 +601,6 @@ public sealed class WalletRegistry
         }, ct).WaitAsync(ct).ConfigureAwait(false);
     }
 
-    public static bool IsInsideModels(string path, string modelsRoot)
-    {
-        try
-        {
-            var root = Path.GetFullPath(modelsRoot).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
-            var candidate = Path.GetFullPath(path);
-            return candidate.StartsWith(root, StringComparison.OrdinalIgnoreCase);
-        }
-        catch (Exception e) when (e is ArgumentException or IOException or NotSupportedException)
-        {
-            return false;
-        }
-    }
-
     string[] KnownSourceIds() => _speech.Select(s => s.Id).Concat(_text.Select(s => s.Id)).Concat(_store.Snapshot().Sources.Select(s => s.Id)).Distinct(StringComparer.Ordinal).ToArray();
 
     static bool Matches(string? skill, IReadOnlyList<string> skills) => skill is null || skills.Contains(skill, StringComparer.Ordinal);
@@ -666,7 +608,9 @@ public sealed class WalletRegistry
     RegistrySourceInfo FromSpeech(ISpeechSource source, IReadOnlyList<string> skills, WalletSettings settings)
     {
         var setting = settings.Sources.FirstOrDefault(s => s.Id == source.Id);
-        return new RegistrySourceInfo(source.Id, source.Name, null, null, null, skills, source.Languages ?? [], source.Runs,
+        var added = setting?.Kind is not null;
+        return new RegistrySourceInfo(source.Id, added ? DisplayName(setting!) : source.Name, setting?.Kind, setting?.Model, setting?.Endpoint, skills,
+            source.Languages ?? setting?.Languages ?? [], source.Runs,
             source.ProviderKind, source.Paid, setting?.Enabled ?? true, true, HasKey(source.Id, setting), source.State.ToString().ToLowerInvariant(), source.StateText);
     }
 
@@ -737,30 +681,37 @@ public sealed class WalletRegistry
         var endpointCheck = EndpointPolicy.Check(endpoint, agentSupplied: !visitorEntered);
         if (!endpointCheck.Allowed) return endpointCheck.Message;
         if (draft.Skills is { Count: > 0 } && draft.Skills.Any(string.IsNullOrWhiteSpace)) return "Every skill name must be non-empty.";
-        if (draft.Skills is { Count: > 0 } && draft.Skills.Any(skill => !string.Equals(skill, Vocabulary.Generate, StringComparison.Ordinal)))
-            return "Added model sources currently serve text.generate; choose Text generation.";
+        if (draft.Skills is { Count: > 0 } && draft.Skills.Any(skill => skill.Trim() is not (Vocabulary.Generate or Vocabulary.Transcribe)))
+            return "Added model sources serve text.generate (text) or audio.transcribe (speech to text).";
+        if (draft.Skills is { Count: > 0 } && draft.Skills.Select(skill => skill.Trim()).Distinct(StringComparer.Ordinal).Count() > 1)
+            return "Add one source per skill: the same model can be added twice, once for text and once for speech.";
+        if (SkillOf(draft.Skills) == Vocabulary.Transcribe && kind == SourceKinds.OpenRouter) return SpeechNeedsRuntime;
         return null;
     }
 
-    static string MakeId(string kind, string? model, string? endpoint)
+    /// <summary>Why a paid API cannot be added as a speech source: the wallet already has its own paid speech source.</summary>
+    const string SpeechNeedsRuntime =
+        "A speech source is a model in a program on this computer (the Llama app, LM Studio, Ollama) or on a home server. For a paid speech model add your OpenRouter key to Scribe v2.";
+
+    /// <summary>The one skill an added source serves: speech when it says so, text otherwise.</summary>
+    static string SkillOf(IReadOnlyList<string>? skills) =>
+        skills?.Any(skill => skill.Trim() == Vocabulary.Transcribe) == true ? Vocabulary.Transcribe : Vocabulary.Generate;
+
+    static string MakeId(string kind, string? model, string? endpoint, string skill)
     {
         var normalizedKind = kind.Trim().ToLowerInvariant();
         var normalizedModel = model!.Trim();
         if (normalizedKind == SourceKinds.OpenRouter) return normalizedKind + ":" + normalizedModel;
-        return SourceIds.OpenAiCompatible(normalizedKind, normalizedModel, Endpoint(normalizedKind, endpoint));
+        return SourceIds.OpenAiCompatible(normalizedKind, normalizedModel, Endpoint(normalizedKind, endpoint), skill);
     }
 
     static string? AddedSourceId(SourceSetting setting) => setting.Kind is null || string.IsNullOrWhiteSpace(setting.Model)
         ? null
         : setting.Kind.ToLowerInvariant() == SourceKinds.OpenRouter
             ? SourceKinds.OpenRouter + ":" + setting.Model.Trim()
-            : MakeId(setting.Kind, setting.Model, setting.Endpoint);
+            : MakeId(setting.Kind, setting.Model, setting.Endpoint, SkillOf(setting.Skills));
     static string DisplayId(string id) => id.Length > 80 ? id[..77] + "..." : id;
     static string? Clean(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
-
-    static string DownloadSize(long? bytes) => bytes is null ? "size unknown" :
-        bytes.Value >= 1_000_000_000 ? (bytes.Value / 1_000_000_000d).ToString("0.0", System.Globalization.CultureInfo.InvariantCulture) + " GB" :
-        Math.Ceiling(bytes.Value / 1_000_000d).ToString(System.Globalization.CultureInfo.InvariantCulture) + " MB";
 
     static string? CleanLabel(string? value)
         => SourceLabels.Clean(value);
@@ -860,6 +811,22 @@ public sealed class WalletRegistry
     }
     static List<string> CleanList(IReadOnlyList<string>? values) => values?.Where(v => !string.IsNullOrWhiteSpace(v)).Select(v => v.Trim().ToLowerInvariant()).Distinct(StringComparer.Ordinal).ToList() ?? [];
     static string? Primary(string? language) => Vocabulary.PrimaryLanguage(language);
+
+    /// <summary>Adds an added source to the default route of its skill in the same settings write as the source.</summary>
+    static void AddStop(WalletSettings settings, string sourceId, string skill, bool paid)
+    {
+        if (skill == Vocabulary.Transcribe) AddSpeechStop(settings, sourceId);
+        else AddTextStop(settings, sourceId, paid);
+    }
+
+    /// <summary>A speech model on this computer answers before the paid fallback.</summary>
+    static void AddSpeechStop(WalletSettings settings, string sourceId)
+    {
+        var chain = settings.Chain(Vocabulary.Transcribe);
+        if (chain.Stops.Any(stop => stop.SourceId == sourceId)) return;
+        var paid = chain.Stops.FindIndex(stop => stop.SourceId == Router.PaidSpeechId);
+        chain.Stops.Insert(paid < 0 ? chain.Stops.Count : paid, new ChainStop { SourceId = sourceId });
+    }
 
     /// <summary>Adds an added model to the default text route in the same settings write as the source.</summary>
     static void AddTextStop(WalletSettings settings, string sourceId, bool paid)

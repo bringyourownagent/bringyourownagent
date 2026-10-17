@@ -3,7 +3,12 @@ namespace Byoa.Wallet.Sources;
 /// <summary>One canonical id function shared by the registry and OpenAI-compatible providers.</summary>
 public static class SourceIds
 {
-    public static string OpenAiCompatible(string kind, string model, string? endpoint)
+    /// <summary>Ends the id of an added source that serves speech. A text source keeps the id it always had.</summary>
+    public const string SpeechSuffix = "#transcribe";
+
+    public static bool IsSpeech(string sourceId) => sourceId.EndsWith(SpeechSuffix, StringComparison.Ordinal);
+
+    public static string OpenAiCompatible(string kind, string model, string? endpoint, string skill = Vocabulary.Generate)
     {
         var normalizedKind = kind.Trim().ToLowerInvariant();
         var address = endpoint?.Trim().TrimEnd('/') ?? normalizedKind switch
@@ -14,6 +19,7 @@ public static class SourceIds
         };
         if (normalizedKind == SourceKinds.Ollama && !address.EndsWith("/v1", StringComparison.OrdinalIgnoreCase))
             address += "/v1";
-        return normalizedKind + ":" + model.Trim() + "@" + address.ToLowerInvariant();
+        var id = normalizedKind + ":" + model.Trim() + "@" + address.ToLowerInvariant();
+        return skill == Vocabulary.Transcribe ? id + SpeechSuffix : id;
     }
 }

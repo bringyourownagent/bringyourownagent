@@ -88,11 +88,11 @@ public class SettingsStoreTests
         {
             Byoa.Wallet.Sources.Router.EnsureDefaults(s);
             s.Sites.Add(new SiteRecord { Origin = "https://a.example", Status = SiteStatus.Blocked });
-            s.Source("gigaam-v3").Enabled = false;
+            s.Source("local-ru").Enabled = false;
         });
         var again = new SettingsStore(file);
         Assert.Equal(SiteStatus.Blocked, again.Read(s => s.Site("https://a.example")!.Status));
-        Assert.False(again.Read(s => s.Source("gigaam-v3").Enabled));
+        Assert.False(again.Read(s => s.Source("local-ru").Enabled));
         Assert.Contains("\"status\": \"Blocked\"", File.ReadAllText(file));
     }
 }

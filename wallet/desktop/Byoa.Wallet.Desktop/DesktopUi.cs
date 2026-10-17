@@ -23,7 +23,6 @@ sealed class DesktopUi : IWalletUi, IAgentConsentUi, IEndpointConfirmationUi, IS
     WindowIcon? _badgeIcon;
     SettingsWindow? _settings;
     HelpWindow? _help;
-    ToastWindow? _download;
     PreparingHandle? _preparing;
     readonly SemaphoreSlim _agentPromptQueue = new(1, 1);
     readonly SemaphoreSlim _visitorPromptQueue = new(1, 1);
@@ -142,21 +141,11 @@ sealed class DesktopUi : IWalletUi, IAgentConsentUi, IEndpointConfirmationUi, IS
         return handle;
     }
 
-    public void UpdatePreparing(PreparingModel model) => PostSafe(() =>
-    {
-        if (_preparing is not null) _preparing.Update(model);
-    });
-
     /// <summary>Closes the "Preparing your model…" toast, also when it is disposed before it was shown.</summary>
     sealed class PreparingHandle : IDisposable
     {
         public volatile bool Done;
         public ToastWindow? Toast;
-
-        public void Update(PreparingModel model)
-        {
-            if (!Done) Toast?.SetPreparingProgress(model.Progress);
-        }
 
         public void Dispose()
         {
@@ -254,16 +243,6 @@ sealed class DesktopUi : IWalletUi, IAgentConsentUi, IEndpointConfirmationUi, IS
             return await window.Result;
         }, false);
 
-    public Task<bool> ConfirmModelDeleteAsync(DownloadableModelInfo model, string? note, CancellationToken ct, bool agentInitiated = false) =>
-        PromptAsync(ct, agentInitiated, async () =>
-        {
-            var window = new ModelDeleteWindow(model.Name, model.SizeBytes, note,
-                agentInitiated ? () => Volatile.Read(ref _waitingAgentPrompts) : null);
-            window.Show();
-            using var registration = ct.Register(() => PostSafe(window.Close));
-            return await window.Result;
-        }, false);
-
     public Task<bool> ConfirmSecretDeletionAsync(SecretDeletionRequest request, CancellationToken ct) =>
         PromptAsync(ct, agentInitiated: true, async () =>
         {
@@ -272,13 +251,6 @@ sealed class DesktopUi : IWalletUi, IAgentConsentUi, IEndpointConfirmationUi, IS
             using var registration = ct.Register(() => PostSafe(window.Close));
             return await window.Result;
         }, false);
-
-    public void DownloadStarted(ISpeechSource source) => PostSafe(() =>
-    {
-        if (source is not IDownloadableSource download || _download is { IsVisible: true }) return;
-        _download = ToastWindow.Download(source, download);
-        _download.Show();
-    });
 
     public void OpenSettings(string? page = null) => PostSafe(() =>
     {

@@ -6,20 +6,17 @@ namespace Byoa.Wallet.Tests;
 public sealed class ConsentRouteTests
 {
     [Fact]
-    public void PreparingSpeechRouteExplainsGigaAmDownloadAndCpuLatency()
+    public void TheSpeechRouteDetailSaysSpeedIsNotMeasuredBeforeARealClip()
     {
-        var giga = new SlowDownloadSource(Router.GigaAmId, ["ru"]);
-        var cpu = new SlowDownloadSource(Router.CpuWhisperId);
+        var source = new FakeSource("local-ru", languages: ["ru"]);
 
-        Assert.Equal("1 MB download; speed not measured yet", WalletEngine.SpeechRouteDetail(giga, "ru"));
-        Assert.Equal("1 MB download; speed not measured yet",
-            WalletEngine.SpeechRouteDetail(cpu, "sk"));
+        Assert.Equal("speed not measured yet", WalletEngine.SpeechRouteDetail(source, "ru"));
     }
 
     [Fact]
     public void ManagerDoesNotPromiseTheDefaultSpeedBeforeARealClip()
     {
-        var source = new SlowDownloadSource(Router.GigaAmId, ["ru"]);
+        var source = new FakeSource("local-ru", languages: ["ru"]);
         var text = Router.Explain(new RoutePlan([new RouteStep(source, false)], []), "ru");
 
         Assert.Contains("speed not measured yet", text, StringComparison.Ordinal);
@@ -29,8 +26,9 @@ public sealed class ConsentRouteTests
     [Fact]
     public void AMeasuredSourceMayShowItsObservedSpeed()
     {
-        var source = new FakeSource(Router.GigaAmId, languages: ["ru"]) { HasMeasuredSeconds = true };
+        var source = new FakeSource("local-ru", languages: ["ru"]) { HasMeasuredSeconds = true };
 
         Assert.Contains("about 0.1 s a clip", Router.Explain(new RoutePlan([new RouteStep(source, false)], []), "ru"), StringComparison.Ordinal);
+        Assert.Equal("about 0.1 s a clip", WalletEngine.SpeechRouteDetail(source, "ru"));
     }
 }

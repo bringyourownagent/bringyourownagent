@@ -18,8 +18,8 @@ public class EngineTests
 
     readonly ManualTime _time = new();
     readonly ScriptedUi _ui = new();
-    readonly FakeSource _giga = new("gigaam-v3", languages: ["ru"]) { Answer = "francia-giga" };
-    readonly FakeSource _whisper = new("whisper") { Answer = "francia-whisper" };
+    readonly FakeSource _russian = new("local-ru", languages: ["ru"]) { Answer = "francia-russian" };
+    readonly FakeSource _general = new("local-any") { Answer = "francia-general" };
     readonly FakeSource _paid = new("openrouter-scribe", Runs.ApiKey, pricePerSecond: 0.00004m) { Answer = "francia-paid" };
     readonly SettingsStore _store = new(null);
     readonly ActivityLog _log;
@@ -28,7 +28,7 @@ public class EngineTests
     public EngineTests()
     {
         _log = new ActivityLog(null, _time.Now);
-        _engine = new WalletEngine(_store, [_giga, _whisper, _paid], _log, _ui, _time);
+        _engine = SpeechRoutes.Engine(_store, [_russian, _general, _paid], _log, _ui, _time);
     }
 
     async Task<string> GrantAsync(string origin = Site, string manifest = Clips.GeoManifest)
@@ -59,7 +59,7 @@ public class EngineTests
         Assert.Equal(0.05m, consent.Budget);                       // the site's expected cost is proposed
         var row = Assert.Single(consent.Rows);
         Assert.Equal(["ru", "sk"], row.Routes.Select(r => r.Language));
-        Assert.Equal(["Fake gigaam-v3", "Fake whisper"], row.Routes.Select(r => r.SourceName));
+        Assert.Equal(["Fake local-ru", "Fake local-any"], row.Routes.Select(r => r.SourceName));
         Assert.Contains("Manager suggests", row.Why);
         Assert.Equal(SiteStatus.Allowed, _store.Read(s => s.Site(Site)!.Status));
     }
@@ -234,14 +234,14 @@ public class EngineTests
     // ------------------------------------------------------------------ calls
 
     [Fact]
-    public async Task RussianIsAnsweredByGigaAmSlovakByWhisper()
+    public async Task RussianIsAnsweredByTheRussianSourceSlovakByTheGeneralOne()
     {
         var grant = await GrantAsync();
         var ru = Assert.IsType<JsonObject>(await _engine.HandleAsync(Clips.Call(Site, grant, language: "ru")));
-        Assert.Equal("{\"ok\":true,\"output\":{\"text\":\"francia-giga\"},\"receipt\":{\"cost\":\"0.000 USD\",\"provider\":\"local\"}}", ru.ToJsonString());
+        Assert.Equal("{\"ok\":true,\"output\":{\"text\":\"francia-russian\"},\"receipt\":{\"cost\":\"0.000 USD\",\"provider\":\"local\"}}", ru.ToJsonString());
         var sk = await _engine.HandleAsync(Clips.Call(Site, grant, language: "sk-SK"));
-        Assert.Equal("francia-whisper", sk!["output"]!["text"]!.GetValue<string>());
-        Assert.Equal("sk", _whisper.LastLanguage);
+        Assert.Equal("francia-general", sk!["output"]!["text"]!.GetValue<string>());
+        Assert.Equal("sk", _general.LastLanguage);
         var entry = _log.Recent()[0];
         Assert.Equal("call", entry.Kind);
         Assert.Equal("ok", entry.Outcome);
@@ -265,7 +265,7 @@ public class EngineTests
         Assert.True(Ok(await _engine.HandleAsync(Clips.Call(Site, grant, seconds: 15))));
         Assert.False(Ok(await _engine.HandleAsync(Clips.Call(Site, grant, seconds: 15.5))));
         Assert.Equal("clip-too-long", _log.Recent()[0].Note);
-        Assert.Equal(1, _giga.Calls);                             // the source never ran for the long clip
+        Assert.Equal(1, _russian.Calls);                             // the source never ran for the long clip
     }
 
     [Fact]
@@ -309,7 +309,7 @@ public class EngineTests
         Assert.False(Ok(await _engine.HandleAsync(call)));
         call.Payload.Remove("input");
         Assert.False(Ok(await _engine.HandleAsync(call)));
-        Assert.Equal(0, _giga.Calls);
+        Assert.Equal(0, _russian.Calls);
     }
 
     [Fact]
@@ -327,28 +327,28 @@ public class EngineTests
     [Fact]
     public async Task AFailingSourceFallsBackToTheNextAndTheRouteIsLogged()
     {
-        _giga.Fail = true;
+        _russian.Fail = true;
         var grant = await GrantAsync();
         var result = await _engine.HandleAsync(Clips.Call(Site, grant));
-        Assert.Equal("francia-whisper", result!["output"]!["text"]!.GetValue<string>());
-        Assert.Equal("Fake gigaam-v3: fake failure → Fake whisper", _log.Recent()[0].Fallback);
+        Assert.Equal("francia-general", result!["output"]!["text"]!.GetValue<string>());
+        Assert.Equal("Fake local-ru: fake failure → Fake local-any", _log.Recent()[0].Fallback);
     }
 
     [Fact]
     public async Task ATurnedOffSourceFallsBackToTheNext()
     {
-        _store.Update(s => s.Source("gigaam-v3").Enabled = false);
+        _store.Update(s => s.Source("local-ru").Enabled = false);
         var grant = await GrantAsync();
         var result = await _engine.HandleAsync(Clips.Call(Site, grant));
-        Assert.Equal("francia-whisper", result!["output"]!["text"]!.GetValue<string>());
-        Assert.Equal("Fake gigaam-v3: turned off → Fake whisper", _log.Recent()[0].Fallback);
+        Assert.Equal("francia-general", result!["output"]!["text"]!.GetValue<string>());
+        Assert.Equal("Fake local-ru: turned off → Fake local-any", _log.Recent()[0].Fallback);
     }
 
     [Fact]
     public async Task APaidFallbackAsksFirstAndNoMeansOkFalse()
     {
-        _giga.Fail = true;
-        _whisper.Fail = true;
+        _russian.Fail = true;
+        _general.Fail = true;
         var grant = await GrantAsync();
         _ui.Paid = PaidAnswer.No;
         Assert.False(Ok(await _engine.HandleAsync(Clips.Call(Site, grant))));
@@ -372,8 +372,8 @@ public class EngineTests
     [Fact]
     public async Task OverTheBudgetPerSessionNothingIsPaid()
     {
-        _giga.Fail = true;
-        _whisper.Fail = true;
+        _russian.Fail = true;
+        _general.Fail = true;
         _ui.Paid = PaidAnswer.Once;
         var grant = await GrantAsync(manifest: Manifest(cost: "0.0001 USD"));
         Assert.True(Ok(await _engine.HandleAsync(Clips.Call(Site, grant))));    // 0.00008 of 0.0001
@@ -385,8 +385,8 @@ public class EngineTests
     [Fact]
     public async Task TheDailyMoneyLimitStopsPaidCalls()
     {
-        _giga.Fail = true;
-        _whisper.Fail = true;
+        _russian.Fail = true;
+        _general.Fail = true;
         _ui.Paid = PaidAnswer.Always;
         _store.Update(s => s.Limits.SitePerDay = "0.0001 USD");
         var grant = await GrantAsync();
@@ -419,7 +419,7 @@ public class EngineTests
     {
         var grant = await GrantAsync(manifest: Clips.GeoManifest.Replace("[\"ru\", \"sk\"]", "[\"ru\"]"));
         var result = await _engine.HandleAsync(Clips.Call(Site, grant, language: null));
-        Assert.Equal("francia-giga", result!["output"]!["text"]!.GetValue<string>());
+        Assert.Equal("francia-russian", result!["output"]!["text"]!.GetValue<string>());
     }
 
     [Fact]

@@ -24,8 +24,8 @@ public class ReviewFixTests
 
     readonly ManualTime _time = new();
     readonly ScriptedUi _ui = new();
-    readonly FakeSource _giga = new("gigaam-v3", languages: ["ru"]) { Answer = "francia-giga" };
-    readonly FakeSource _whisper = new("whisper") { Answer = "francia-whisper" };
+    readonly FakeSource _russian = new("local-ru", languages: ["ru"]) { Answer = "francia-russian" };
+    readonly FakeSource _general = new("local-any") { Answer = "francia-general" };
     readonly FakeSource _paid = new("openrouter-scribe", Runs.ApiKey, pricePerSecond: 0.00004m) { Answer = "francia-paid" };
     readonly SettingsStore _store = new(null);
     readonly ActivityLog _log;
@@ -34,7 +34,7 @@ public class ReviewFixTests
     public ReviewFixTests()
     {
         _log = new ActivityLog(null, _time.Now);
-        _engine = new WalletEngine(_store, [_giga, _whisper, _paid], _log, _ui, _time);
+        _engine = SpeechRoutes.Engine(_store, [_russian, _general, _paid], _log, _ui, _time);
     }
 
     static string Manifest(string cost = "0.05 USD", string extraSkill = "") =>
@@ -72,7 +72,7 @@ public class ReviewFixTests
     {
         _store.Update(s => s.Limits.SiteCallsPerDay = 2);
         var grant = await GrantAsync();
-        _giga.Hold = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _russian.Hold = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
         // Five calls at once while none has finished: two run, three are refused at once (not five that run).
         var calls = Enumerable.Range(0, 5).Select(_ => _engine.HandleAsync(Clips.Call(Site, grant))).ToList();
@@ -80,18 +80,18 @@ public class ReviewFixTests
         Assert.All(calls.Where(c => c.IsCompleted), c => Assert.False(Ok(c.Result)));
         Assert.Equal("limit", _log.Recent()[0].Outcome);
 
-        _giga.Hold.SetResult();
+        _russian.Hold.SetResult();
         var results = await Task.WhenAll(calls).WaitAsync(TimeSpan.FromSeconds(10));
         Assert.Equal(2, results.Count(Ok));
-        Assert.Equal(2, _giga.Calls);
+        Assert.Equal(2, _russian.Calls);
         Assert.False(Ok(await _engine.HandleAsync(Clips.Call(Site, grant))));     // and still 2 a day after they finished
     }
 
     [Fact]
     public async Task R3_PaidCallsInFlightCountAgainstTheDailyMoneyLimit()
     {
-        _giga.Fail = true;
-        _whisper.Fail = true;
+        _russian.Fail = true;
+        _general.Fail = true;
         _ui.Paid = PaidAnswer.Always;
         _store.Update(s => s.Limits.SitePerDay = "0.0001 USD");                   // one 2-second paid clip (0.00008), not two
         var grant = await GrantAsync();
@@ -168,7 +168,7 @@ public class ReviewFixTests
         var entry = _log.Recent()[0];
         Assert.Equal("invalid", entry.Outcome);
         Assert.StartsWith("not a WAV clip: the JUNK chunk", entry.Note);
-        Assert.Equal(0, _giga.Calls);
+        Assert.Equal(0, _russian.Calls);
     }
 
     // ------------------------------------------------------------------ #7 a shared question outlives the first tab
@@ -249,33 +249,6 @@ public class ReviewFixTests
         Assert.Equal(0.60m, diff.Budget);
     }
 
-    // ------------------------------------------------------------------ #9 a GigaAM model that does not load
-
-    [Fact]
-    public async Task R9_AGigaAmModelThatFailsToLoadIsBrokenAndCallsFallBack()
-    {
-        var folder = TestFolder.New();                                            // a folder without the model files
-        using var giga = new GigaAmSource(() => folder);
-        Assert.Equal(SourceState.Ready, giga.State);                              // not loaded yet: it looks usable
-        await Assert.ThrowsAsync<InvalidOperationException>(() => giga.TranscribeAsync(new float[1600], "ru", default));
-        Assert.Equal(SourceState.Broken, giga.State);                             // was Ready forever before the fix
-        Assert.StartsWith("failed to load", giga.StateText);
-
-        // In the engine: a fresh broken model is skipped, Russian falls back to the next source.
-        using var cold = new GigaAmSource(() => folder);
-        var whisper = new FakeSource("whisper") { Answer = "francia-whisper" };
-        var engine = new WalletEngine(_store, [cold, whisper], _log, _ui, _time);
-        var grant = await GrantAsync(engine);
-        for (var i = 0; i < 2; i++)
-        {
-            var result = await engine.HandleAsync(Clips.Call(Site, grant, language: "ru"));
-            Assert.Equal("francia-whisper", result!["output"]!["text"]!.GetValue<string>());
-        }
-
-        Assert.Equal(SourceState.Broken, cold.State);
-        Assert.Equal(2, whisper.Calls);
-    }
-
     // ------------------------------------------------------------------ #10 the uninstall header
 
     [Fact]
@@ -315,17 +288,17 @@ public class ReviewFixTests
     [Fact]
     public async Task R2_AllowResolvesOnlyWhenTheRoutedModelsAreLoaded()
     {
-        var giga = new WarmingSource("gigaam-v3", ["ru"]) { WarmTime = TimeSpan.FromMilliseconds(400), Answer = "francia-giga" };
-        var whisper = new WarmingSource("whisper") { WarmTime = TimeSpan.FromMilliseconds(900) };
-        var engine = new WalletEngine(_store, [giga, whisper, _paid], _log, _ui, _time);
+        var russian = new WarmingSource("local-ru", ["ru"]) { WarmTime = TimeSpan.FromMilliseconds(400), Answer = "francia-russian" };
+        var general = new WarmingSource("local-any") { WarmTime = TimeSpan.FromMilliseconds(900) };
+        var engine = SpeechRoutes.Engine(_store, [russian, general, _paid], _log, _ui, _time);
 
         var watch = Stopwatch.StartNew();
         await GrantAsync(engine);
         Assert.True(watch.Elapsed >= TimeSpan.FromMilliseconds(850), watch.Elapsed.ToString());
-        Assert.Equal(["ru"], giga.Warmed);                                          // GigaAM for Russian, Whisper for Slovak
-        Assert.Equal(["sk"], whisper.Warmed);
+        Assert.Equal(["ru"], russian.Warmed);                                          // the Russian-only source for Russian, the general one for Slovak
+        Assert.Equal(["sk"], general.Warmed);
         var preparing = Assert.Single(_ui.Preparing);                             // "Preparing your model…" meanwhile
-        Assert.Equal(["Fake gigaam-v3", "Fake whisper"], preparing.Sources);
+        Assert.Equal(["Fake local-ru", "Fake local-any"], preparing.Sources);
         Assert.Equal(1, _ui.PreparingClosed);
         Assert.Matches(@"models ready after \d\.\d s", _log.Recent()[0].Note);
 
@@ -337,23 +310,21 @@ public class ReviewFixTests
     }
 
     [Fact]
-    public async Task R2_A_SlowDownloadKeepsAllowWaitingAndReportsProgress()
+    public async Task R2_A_SlowModelLoadKeepsAllowWaiting()
     {
-        var slow = new SlowDownloadSource("slow-whisper", ["ru"], TimeSpan.FromMilliseconds(180));
+        var slow = new WarmingSource("slow-model", ["ru"]) { WarmTime = TimeSpan.FromMilliseconds(400) };
         var store = new SettingsStore(null);
         var ui = new ScriptedUi();
         var log = new ActivityLog(null, _time.Now);
-        var engine = new WalletEngine(store, [slow], log, ui, _time);
-        store.Update(s => s.Chain(Vocabulary.Transcribe).Stops.Insert(0, new ChainStop { SourceId = slow.Id }));
+        var engine = SpeechRoutes.Engine(store, [slow], log, ui, _time);
 
         var watch = Stopwatch.StartNew();
         var result = await engine.HandleAsync(Clips.Request(Site, click: true, Only("ru")));
 
         Assert.NotNull(result);
         Assert.True(watch.Elapsed >= TimeSpan.FromMilliseconds(300), watch.Elapsed.ToString());
-        Assert.Equal(SourceState.Ready, slow.State);
-        Assert.Contains(ui.PreparingUpdates, update => update.Progress is >= 0.40 and <= 0.42);
-        Assert.Contains(ui.Preparing, update => update.Progress is not null);
+        Assert.Equal(["ru"], slow.Warmed);
+        Assert.Single(ui.Preparing);
         Assert.Equal(1, ui.PreparingClosed);
     }
 
@@ -364,8 +335,8 @@ public class ReviewFixTests
         WalletEngine.WarmWait = TimeSpan.FromSeconds(1);
         try
         {
-            var giga = new WarmingSource("gigaam-v3", ["ru"]) { WarmTime = TimeSpan.FromMilliseconds(1400) };
-            var engine = new WalletEngine(_store, [giga, _whisper], _log, _ui, _time);
+            var russian = new WarmingSource("local-ru", ["ru"]) { WarmTime = TimeSpan.FromMilliseconds(1400) };
+            var engine = SpeechRoutes.Engine(_store, [russian, _general], _log, _ui, _time);
             var watch = Stopwatch.StartNew();
             await GrantAsync(engine, Only("ru")).WaitAsync(TimeSpan.FromSeconds(10));
             Assert.InRange(watch.Elapsed.TotalSeconds, 1.2, 5);
@@ -382,16 +353,16 @@ public class ReviewFixTests
     public async Task R2_ASilentGrantIsAlsoLoadedFirstWithoutAToast()
     {
         _ui.Consent = new ConsentAnswer(true, 0.05m, AutoDecide: true, []);
-        await GrantAsync(new WalletEngine(_store, [new WarmingSource("gigaam-v3", ["ru"]), _whisper], _log, _ui, _time), Only("ru"));
+        await GrantAsync(SpeechRoutes.Engine(_store, [new WarmingSource("local-ru", ["ru"]), _general], _log, _ui, _time), Only("ru"));
         var shown = _ui.Preparing.Count;
 
         // The wallet restarted: the model is cold again. The silent grant waits for it, and shows nothing.
-        var giga = new WarmingSource("gigaam-v3", ["ru"]) { WarmTime = TimeSpan.FromMilliseconds(500) };
-        var engine = new WalletEngine(_store, [giga, _whisper], _log, _ui, _time);
+        var russian = new WarmingSource("local-ru", ["ru"]) { WarmTime = TimeSpan.FromMilliseconds(500) };
+        var engine = SpeechRoutes.Engine(_store, [russian, _general], _log, _ui, _time);
         var watch = Stopwatch.StartNew();
         Assert.NotNull(await engine.HandleAsync(Clips.Request(Site, click: false, Only("ru"))));
         Assert.True(watch.Elapsed >= TimeSpan.FromMilliseconds(450), watch.Elapsed.ToString());
-        Assert.Equal(["ru"], giga.Warmed);
+        Assert.Equal(["ru"], russian.Warmed);
         Assert.Equal(shown, _ui.Preparing.Count);
         Assert.Equal("auto", _log.Recent()[0].Outcome);
         Assert.Contains("models ready after", _log.Recent()[0].Note);

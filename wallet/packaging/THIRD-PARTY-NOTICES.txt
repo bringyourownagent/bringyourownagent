@@ -22,12 +22,6 @@ HarfBuzzSharp, with HarfBuzz                 MIT; HarfBuzz       Copyright (c) 2
 MicroCom.Runtime                             MIT                 Copyright (c) 2021 Nikita Tsukanov
 Tmds.DBus.Protocol                           MIT                 Copyright 2006 Alp Toker; 2010 Other Contributors;
                                                                  2016 Tom Deseyn
-Whisper.net and its runtime packages         MIT                 Copyright (c) 2024 sandrohanea
-  Whisper.Net.Runtime, .NoAvx and .Vulkan: the native runtimes, under the same license
-  whisper.cpp and ggml (inside the native runtimes)  MIT         The ggml authors
-sherpa-onnx (org.k2fsa.sherpa.onnx)          Apache-2.0          Copyright 2019-2023 Xiaomi Corporation
-  ONNX Runtime (onnxruntime.dll, version 1.28.2)  MIT           Copyright (c) Microsoft Corporation
-  its license and its own third-party notices are in licenses\onnxruntime-1.28.2\ (LICENSE and ThirdPartyNotices.txt)
 BringYourOwnAgent (the BYOA rules library)   Apache-2.0          the BYOA project
 Barlow fonts (inside Byoa.Wallet.dll)        SIL OFL 1.1         Copyright 2017 The Barlow Project Authors
 
@@ -41,26 +35,11 @@ Where the license text of a component is not in the package, it is published her
   Tmds.DBus      https://github.com/tmds/Tmds.DBus/blob/8cb04f66c330b64244e996ff68f685f27f7381a0/COPYING
   Microsoft.Extensions.AI
                  https://github.com/dotnet/extensions/blob/7c82ecb60925d76e53b65e290a33bef46f285cae/LICENSE
-  Whisper.net    https://github.com/sandrohanea/whisper.net
-  whisper.cpp    https://github.com/ggml-org/whisper.cpp/blob/master/LICENSE
-  sherpa-onnx    https://github.com/k2-fsa/sherpa-onnx/blob/dc5583f49917e4c95f6e7d862bb378e4ed5e9076/LICENSE
-                 (its Apache-2.0 text is the same as LICENSE of this package)
-  ONNX Runtime   https://github.com/microsoft/onnxruntime/blob/v1.28.2/ThirdPartyNotices.txt
-                 (its full third-party notices; the same file is in this package, in licenses\onnxruntime-1.28.2\ThirdPartyNotices.txt)
   Barlow         https://github.com/jpt/barlow
 
-Models the wallet downloads on request (not in this package; no model weights are included here):
-
-  GigaAM v3 (Russian speech, CPU)    MIT    Copyright (c) 2024 GigaChat Team
-    Source: https://github.com/salute-developers/GigaAM (license: https://github.com/salute-developers/GigaAM/blob/main/LICENSE)
-    Files: Hugging Face csukuangfj/sherpa-onnx-nemo-transducer-giga-am-v3-russian-2025-12-16, a sherpa-onnx conversion
-    of the GigaAM v3 model. The wallet downloads the pinned files, each with its size and SHA-256, into its own models
-    folder when no GigaAM folder of the visitor is found. The model folder also gets the model's LICENSE file, the
-    same MIT license, whose SHA-256 is f00de6715714c7a63d08639cdbfaa40224eefc407302614bd19f1a8b98c875aa.
-  Whisper models                     MIT    Copyright (c) 2022 OpenAI (the models are OpenAI's Whisper models)
-    Files: Hugging Face ggerganov/whisper.cpp (license: mit), https://huggingface.co/ggerganov/whisper.cpp
-    Source: https://github.com/openai/whisper (license: https://github.com/openai/whisper/blob/main/LICENSE)
-
+The wallet holds no model and downloads none. Speech and text models run in programs the visitor installs
+separately (the Llama app, LM Studio, Ollama, or any OpenAI-compatible server), each under its own license; the
+wallet only passes requests to them over a local address.
 
 The MIT License (the text the MIT-licensed components above share; each has its own copyright line)
 ---------------------------------------------------------------------------------------------------
@@ -79,5 +58,5 @@ COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER I
 OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 
-The Apache License 2.0 is in LICENSE (it also covers sherpa-onnx and BringYourOwnAgent, as noted above). The SIL Open
+The Apache License 2.0 is in LICENSE (it also covers BringYourOwnAgent, as noted above). The SIL Open
 Font License 1.1 of the Barlow fonts is in licenses\Barlow-fonts\OFL.txt.

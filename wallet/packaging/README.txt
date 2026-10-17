@@ -1,12 +1,15 @@
 BYOA agent wallet {VERSION} for Windows (x64)
 ==========================================
 
-The agent wallet lets web pages and your own AI agent use YOUR OWN AI, within limits you set: speech recognition on your own computer
-(GigaAM v3 for Russian on the CPU, 230 MB; Whisper large-v3 on a GPU with Vulkan, 1.1 GB, or a smaller Whisper model
-on the CPU, 190 MB, for other languages; each model downloads once, the first time a site needs it, and the wallet
-shows the progress), or your own OpenRouter key as a paid fallback that asks you first. A site asks only after
-your click; you see a short notice above the tray, then a consent window, and you allow or decline. A site that
-you decline or block hears only "AI unavailable", exactly as if you had no wallet.
+The agent wallet lets web pages and your own AI agent use YOUR OWN AI, within limits you set. The wallet holds no
+model itself: it is a go-between. It passes a site's request to a program on your computer that runs a model (the
+Llama app, LM Studio, Ollama, or any OpenAI-compatible server) for speech to text and for text generation, or to
+your own OpenRouter key as a paid fallback that asks you first. A site asks only after your click; you see a
+short notice above the tray, then a consent window, and you allow or decline. A site that you decline or block
+hears only "AI unavailable", exactly as if you had no wallet.
+
+For speech to text, run a speech model in that program (Qwen3-ASR in the Llama app works well), then add it in the
+wallet: Sources > Add a model > Speech to text.
 
 More: https://bringyourownagent.org/wallet
 Source code: https://github.com/bringyourownagent/bringyourownagent/tree/main/wallet
@@ -28,7 +31,8 @@ Install
    To start the wallet with Windows as well, run in this folder:  Install.cmd -StartWithWindows
 3. Optional, for sites that use the extension: open chrome://extensions, turn on "Developer mode", press
    "Load unpacked" and choose the folder the installer prints (%LOCALAPPDATA%\BYOA\wallet-app\extension).
-4. Optional: add an OpenRouter key for the paid fallback in the wallet's Sources page.
+4. Add a model: install the Llama app (https://llama.app), let it load a model, then in the wallet open Sources
+   and press Add a model. Optional: add an OpenRouter key for the paid fallback in the Sources page.
 
 The wallet starts by itself when a site asks for it. Its icon lives in the tray; a click opens the settings
 (Sites, Sources, Skills & fallbacks, Limits, Activity, Agents, and Connect your AI agent). The package also carries
@@ -51,7 +55,6 @@ What it keeps, and where
   Settings:     %LOCALAPPDATA%\BYOA\wallet\settings.json (sites, sources, routes, limits; no secrets)
   API keys:     %LOCALAPPDATA%\BYOA\wallet\secrets.dat (Windows DPAPI, your account only; never shown again)
   Activity:     %LOCALAPPDATA%\BYOA\wallet\activity-*.jsonl (time, site, skill, source, cost; no audio, no text)
-  Models:       in %LOCALAPPDATA%\BYOA\wallet\models, or in %LOCALAPPDATA%\BYOA\models where an older version put them (downloaded models owned by this wallet)
 
 The wallet never stores the audio or the recognised text, and a site never sees your keys.
 

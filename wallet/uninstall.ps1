@@ -12,7 +12,7 @@
     Nothing else.
 
     Apart from that one shortcut it deletes no files: it prints the folders the wallet used (the app, its data with
-    your settings and DPAPI-protected keys, downloaded models), so that you can remove them yourself if you want to.
+    your settings and DPAPI-protected keys), so that you can remove them yourself if you want to.
     Remove the unpacked extension in chrome://extensions.
 
 .EXAMPLE
@@ -78,5 +78,5 @@ if ($WhatIfPreference) {
 }
 Write-Host "  App and host:   $InstallDir"
 Write-Host "  Data:           $(Join-Path $env:LOCALAPPDATA 'BYOA\wallet')"
-Write-Host "  Models:         $(Join-Path $env:LOCALAPPDATA 'BYOA\wallet\models') (and $(Join-Path $env:LOCALAPPDATA 'BYOA\models') if an older version of the wallet downloaded them there)"
+Write-Host "  Old models:     $(Join-Path $env:LOCALAPPDATA 'BYOA\wallet\models') and $(Join-Path $env:LOCALAPPDATA 'BYOA\models'), only if an earlier version of the wallet downloaded models there"
 Write-Host 'Quit the wallet from its tray icon, and remove the unpacked extension in chrome://extensions.'

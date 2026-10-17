@@ -64,7 +64,7 @@ public sealed class SourceSetTests
             var endpointB = "http://192.0.2.10:5311/v1";
             var idA = OpenAiCompatibleSource.MakeId(SourceKinds.OpenAiCompatible, "same-model", endpointA);
             var idB = OpenAiCompatibleSource.MakeId(SourceKinds.OpenAiCompatible, "same-model", endpointB);
-            var store = new SettingsStore(null, settings => settings.ModelFolders.Add(Path.Combine(home, "models")));
+            var store = new SettingsStore(null);
             store.Update(settings => settings.Sources.Add(new SourceSetting
             {
                 Id = idA,

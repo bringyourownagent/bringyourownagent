@@ -19,8 +19,6 @@ sealed class ToastWindow : CornerWindow
 {
     readonly TaskCompletionSource<string?> _answer = new(TaskCreationOptions.RunContinuationsAsynchronously);
     readonly StackPanel _body = new() { Spacing = 10 };
-    ProgressBar? _preparingBar;
-    TextBlock? _preparingProgress;
     CancellationTokenRegistration _timeout;
     bool _closed;
 
@@ -142,74 +140,15 @@ sealed class ToastWindow : CornerWindow
         var title = Ui.Runs(("Preparing your model…", true));
         AutomationProperties.SetAutomationId(title, "NoticePreparing");
         AutomationProperties.SetName(title, "Preparing your model");
-        var progress = Ui.Text("", "strong", "small");
-        AutomationProperties.SetAutomationId(progress, "PreparingProgress");
         var lines = Ui.Column(4,
             title,
             Ui.Wrap("Loading " + string.Join(" and ", model.Sources) + " for " + model.Host + ", so its first answer is quick.", "muted"),
             bar,
-            progress,
             Ui.Text("Agent wallet", "muted", "small"));
         t._body.Children.Add(t.Header(Ui.Tile(Ui.Screen, 24), lines));
-        t._preparingBar = bar;
-        t._preparingProgress = progress;
-        t.SetPreparingProgress(model.Progress);
         return t;
-    }
-
-    public void SetPreparingProgress(double? value)
-    {
-        if (_preparingBar is null || _preparingProgress is null) return;
-        if (value is { } fraction)
-        {
-            var percent = Math.Clamp((int)Math.Round(fraction * 100), 0, 100);
-            _preparingBar.IsIndeterminate = false;
-            _preparingBar.Value = percent;
-            _preparingBar.Maximum = 100;
-            _preparingProgress.Text = "Preparing your model… " + percent + " %";
-        }
-        else
-        {
-            _preparingBar.IsIndeterminate = true;
-            _preparingProgress.Text = "Preparing your model…";
-        }
     }
 
     /// <summary>Closes the toast from code (no answer).</summary>
     public void Dismiss() => Answer(null);
-
-    /// <summary>A model downloading on first use, with its progress.</summary>
-    public static ToastWindow Download(ISpeechSource source, IDownloadableSource download)
-    {
-        var t = new ToastWindow("Agent wallet download");
-        var bar = new ProgressBar
-        {
-            Minimum = 0,
-            Maximum = 1,
-            Value = download.DownloadProgress ?? (source.State == SourceState.Ready ? 1 : 0),
-        };
-        bar.Classes.Add("meter");
-        var line = Ui.Text("starting…", "muted");
-        var lines = Ui.Column(4,
-            Ui.Runs(("Downloading ", false), (source.Name, true)),
-            Ui.Wrap("Used for languages your other sources do not know, and as a fallback. It is saved in your models folder, once.", "muted"),
-            bar,
-            line);
-        t._body.Children.Add(t.Header(Ui.Tile(Ui.Screen, 24), lines));
-        void Update()
-        {
-            bar.Value = download.DownloadProgress ?? (source.State == SourceState.Ready ? 1 : 0);
-            line.Text = source.StateText;
-            if (source.State is SourceState.Ready or SourceState.Broken)
-            {
-                DispatcherTimer.RunOnce(() => t.Answer(null), TimeSpan.FromSeconds(source.State == SourceState.Ready ? 4 : 15));
-            }
-        }
-
-        void OnProgress() => DesktopUi.PostSafe(Update);
-        download.ProgressChanged += OnProgress;
-        t.Closed += (_, _) => download.ProgressChanged -= OnProgress;
-        Update();
-        return t;
-    }
 }

@@ -9,7 +9,7 @@ public sealed class SettingsSiteTests
     [Fact]
     public void AllowedSiteShowsTheSkillThatNoSourceCanServe()
     {
-        var source = new FakeSource("whisper", languages: ["ru"]) { State = SourceState.Unavailable };
+        var source = new FakeSource("local-any", languages: ["ru"]) { State = SourceState.Unavailable };
         var settings = new WalletSettings
         {
             Chains =

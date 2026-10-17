@@ -25,11 +25,10 @@ sealed class WalletServices : IDisposable
         Http.DefaultRequestHeaders.UserAgent.ParseAdd("BYOA-agent-wallet/" + WalletPaths.Version);
         Sources = new SourceSet(Store, Secrets, Http);
         Ui = new DesktopUi(this);
-        Engine = new WalletEngine(Store, Sources.All, Activity, Ui, textSources: Sources.Text, preferGpu: WhisperSource.ProcessUsesGpu);
-        var modelManager = new WalletModelManager(Store, Sources.Whisper, Sources.WhisperCpu, Sources.GigaAm);
+        Engine = new WalletEngine(Store, Sources.All, Activity, Ui, textSources: Sources.Text);
         Registry = new WalletRegistry(Store, Secrets, Activity, Sources.All, Sources.Text,
-            Sources.Scanner, modelManager, engine: Engine, textFactory: Sources.CreateTextSource,
-            draftTextFactory: Sources.CreateTextSource);
+            Sources.Scanner, engine: Engine, textFactory: Sources.CreateTextSource,
+            draftTextFactory: Sources.CreateTextSource, speechFactory: Sources.CreateSpeechSource);
         Registry.ApiKeyEntryRequested += Ui.RequestApiKeyEntryAsync;
         Registry.EndpointConfirmationRequested += Ui.ConfirmEndpointAsync;
         Registry.SecretDeletionRequested += Ui.ConfirmSecretDeletionAsync;

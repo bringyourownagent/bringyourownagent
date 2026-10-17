@@ -133,6 +133,7 @@ sealed class AddModelWindow : Window
         _body.Children.Add(_skill);
         _body.Children.Add(Ui.Text("Languages", "label"));
         _body.Children.Add(_languages);
+        UpdateSuggestion();
         _body.Children.Add(_suggestion);
         _body.Children.Add(Ui.Rule(4, 0));
         _body.Children.Add(_result);
@@ -151,7 +152,7 @@ sealed class AddModelWindow : Window
         if (_runtime.Items.Count > 0 && _runtime.SelectedIndex < 0)
             _runtime.SelectedIndex = Math.Max(0, _runtimes.FindIndex(r => r.Running));
         if (_scanned && !_scanning && !_runtimes.Any(r => r.Running)) _body.Children.Add(NoRuntimeCard());
-        _body.Children.Add(Ui.Wrap("The wallet only uses a local server after it answers here. A stopped runtime is shown so you know what to start.", "muted", "small"));
+        _body.Children.Add(Ui.Wrap("The wallet holds no model: pick one that runs in a program on this PC. It only uses that program after it answers here. A stopped program is shown so you know what to start.", "muted", "small"));
         _body.Children.Add(Ui.Text("Runtime", "label"));
         _body.Children.Add(_runtime);
         _body.Children.Add(Ui.Text("Model", "label"));
@@ -162,7 +163,7 @@ sealed class AddModelWindow : Window
         _body.Children.Add(_label);
         if (_runtimes.Count > 8) _body.Children.Add(_search);
         var stopped = _runtimes.Where(r => !r.Running).ToList();
-        if (_runtimes.Count == 0 && !_scanning) _body.Children.Add(Ui.Wrap("No runtimes answered. Start LM Studio, Ollama or Llama, then scan again.", "muted"));
+        if (_runtimes.Count == 0 && !_scanning) _body.Children.Add(Ui.Wrap("No programs answered. Start Llama, LM Studio or Ollama, then scan again.", "muted"));
         if (stopped.Count > 0) _body.Children.Add(Ui.Wrap("Not running — start it or download it. A stopped runtime cannot be tested.", "muted", "small"));
         _body.Children.Add(Ui.Button(_scanning ? "Scanning…" : "Scan again", "deny", "RuntimeScan", StartScan, "small"));
     }
@@ -256,7 +257,10 @@ sealed class AddModelWindow : Window
         _runtimeModel.Items.Clear();
         if (selected is null) return;
         var query = _search.Text?.Trim() ?? "";
-        foreach (var model in selected.Models.Where(m => query.Length == 0 || (m.Name ?? m.Id).Contains(query, StringComparison.OrdinalIgnoreCase)))
+        // For speech to text, the models that sound like speech models come first.
+        var speech = SelectedSkill() == Vocabulary.Transcribe;
+        foreach (var model in selected.Models.Where(m => query.Length == 0 || (m.Name ?? m.Id).Contains(query, StringComparison.OrdinalIgnoreCase))
+                     .OrderByDescending(m => speech && LooksLikeSpeechModel(m.Id)))
             _runtimeModel.Items.Add(new ComboBoxItem { Content = model.Name is null ? model.Id : model.Name + "  ·  " + model.Id, Tag = model });
         if (_runtimeModel.Items.Count > 0) _runtimeModel.SelectedIndex = 0;
     }
@@ -274,16 +278,41 @@ sealed class AddModelWindow : Window
         if (_runtimeModel.SelectedItem is ComboBoxItem { Tag: RuntimeModel model })
         {
             _model.Text = model.Id;
-            if (_languages.Text?.Length == 0 && model.Id.Contains("qwen", StringComparison.OrdinalIgnoreCase)) _suggestion.Text = "Suggested because it is local and free. For Russian, a Qwen model is a good first try.";
         }
+
+        UpdateSuggestion();
         UpdateButtons();
+    }
+
+    string SelectedSkill() => (_skill.SelectedItem as ComboBoxItem)?.Tag as string ?? Vocabulary.Generate;
+
+    static bool LooksLikeSpeechModel(string id) =>
+        new[] { "asr", "whisper", "speech", "voxtral", "parakeet", "canary", "audio" }
+            .Any(word => id.Contains(word, StringComparison.OrdinalIgnoreCase));
+
+    void UpdateSuggestion()
+    {
+        if (SelectedSkill() == Vocabulary.Transcribe)
+        {
+            _suggestion.Text = _local
+                ? "Pick a speech model that the program has loaded, for example Qwen3-ASR in Llama. The test sends it a short sound. Leave Languages empty to take any language."
+                : "A paid speech model needs no setup here: add your OpenRouter key on the Sources page, under Paid speech.";
+        }
+        else if (_languages.Text?.Length == 0 && _model.Text?.Contains("qwen", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            _suggestion.Text = "Suggested because it is local and free. For Russian, a Qwen model is a good first try.";
+        }
+        else
+        {
+            _suggestion.Text = "";
+        }
     }
 
     SourceDraft Draft() => new(
         _local ? GuessKind() : SourceKinds.OpenRouter,
         _model.Text?.Trim(),
         _local ? _endpoint.Text?.Trim() : "https://openrouter.ai/api/v1",
-        [(_skill.SelectedItem as ComboBoxItem)?.Tag as string ?? Vocabulary.Generate],
+        [SelectedSkill()],
         ParseLanguages(),
         _label.Text?.Trim());
 

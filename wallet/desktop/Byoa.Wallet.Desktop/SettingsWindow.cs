@@ -361,32 +361,19 @@ sealed class SettingsWindow : Window
 
     void SourcesPage(StackPanel page)
     {
-        Head(page, "Sources", "Your models and keys. The site never learns which one answered, and a key goes only to its own provider.");
+        Head(page, "Sources", "The programs that run your models, and your keys. The site never learns which one answered, and a key goes only to its own provider.");
         var settings = _w.Store.Snapshot();
 
-        page.Children.Add(Ui.Columns("*,Auto", Ui.Wrap("Add a local model or a provider model with your own key. The short wizard tests it before it changes your route.", "muted"),
+        page.Children.Add(Ui.Columns("*,Auto", Ui.Wrap("Add a model that runs on this PC (or on a home server), or a provider model with your own key. The short wizard tests it before it changes your route.", "muted"),
             Ui.Button("Add a model", "allow", "AddModel", () => _w.Ui.OpenAddModel(), "small")));
 
         page.Children.Add(Section("On this PC"));
-        page.Children.Add(SourceCard(_w.Sources.GigaAm, settings,
-            Ui.Column(2,
-                Ui.Wrap("GigaAM v3 transducer (sherpa-onnx).", "muted"),
-                _w.Sources.GigaAm.Folder is { } gigaFolder
-                    ? Ui.Wrap(gigaFolder, "mono", "small")
-                    : Ui.Column(1,
-                        Ui.Wrap("Not found in your model folders; the wallet can download 230 MB into its own models folder:", "muted", "small"),
-                        Ui.Wrap(Byoa.Wallet.Protocol.WalletPaths.Models, "mono", "small"))), null));
-        page.Children.Add(SourceCard(_w.Sources.Whisper, settings,
-            Ui.Column(2,
-                Ui.Wrap("whisper.cpp model", "muted"),
-                Ui.Wrap(settings.WhisperModel, "mono", "small"),
-                _w.Sources.Whisper.ModelPath is { } whisperPath
-                    ? Ui.Wrap(whisperPath, "mono", "small")
-                    : Ui.Column(1,
-                        Ui.Wrap("It downloads into this wallet folder on first use:", "muted", "small"),
-                        Ui.Wrap(Byoa.Wallet.Protocol.WalletPaths.Models, "mono", "small"))), WhisperExtras(settings)));
+        page.Children.Add(Ui.Box("card", Ui.Column(4,
+            Ui.Wrap("The wallet holds no model of its own. A model runs in a program on this PC, and the wallet only hands it the request: the Llama app (the easiest start), LM Studio, Ollama, or any OpenAI-compatible server.", "muted"),
+            Ui.Wrap("For speech to text, run a speech model in that program (Qwen3-ASR in Llama works well) and add it with Add a model, skill Speech to text.", "muted", "small"),
+            Ui.Button("Get Llama", "deny", "SettingsGetLlama", OpenLlamaPage, "small"))));
 
-        page.Children.Add(Section("API keys"));
+        page.Children.Add(Section("Paid speech (your own key)"));
         page.Children.Add(SourceCard(_w.Sources.OpenRouter, settings,
             Ui.Wrap("ElevenLabs Scribe v2 through OpenRouter, with your own key. Stored with Windows DPAPI for your account only; never shown, never logged.", "muted"), KeyExtras()));
 
@@ -394,56 +381,12 @@ sealed class SettingsWindow : Window
         var added = settings.Sources.Where(s => s.Kind is not null).ToList();
         if (added.Count == 0)
         {
-            page.Children.Add(Ui.Box("card", Ui.Wrap("No added models yet. Use Add a model to find one on this PC or behind your own API key.", "muted")));
+            page.Children.Add(Ui.Box("card", Ui.Wrap("No added models yet. Use Add a model to pick one in a program that runs on this PC, or one behind your own API key.", "muted")));
         }
         else
         {
             foreach (var source in added) page.Children.Add(AddedSourceCard(source));
         }
-
-        page.Children.Add(Section("Wallet downloads"));
-        page.Children.Add(DownloadableModelsCard());
-
-        page.Children.Add(Section("Local models found",
-            Ui.Button("Rescan", "deny", "ModelsRescan", () => { _w.Sources.Catalog.Rescan(); Render(); }, "small")));
-        var found = _w.Sources.Catalog.Found;
-        var list = new StackPanel { Spacing = 6 };
-        if (found.Count == 0) list.Children.Add(Ui.Wrap("None yet.", "muted"));
-        foreach (var m in found)
-        {
-            list.Children.Add(Ui.Columns("Auto,*,Auto",
-                Ui.Chip(m.Kind == "gigaam" ? "GigaAM" : "ggml"),
-                Ui.Column(1, Ui.Wrap(m.Name, "muted"), Ui.Wrap(m.Path, "mono", "small")),
-                Ui.Text((m.Bytes / 1_000_000).ToString(CultureInfo.InvariantCulture) + " MB", "muted")));
-        }
-
-        page.Children.Add(Ui.Box("card", list));
-
-        page.Children.Add(Section("Model folders"));
-        var folders = new StackPanel { Spacing = 6 };
-        foreach (var f in settings.ModelFolders)
-        {
-            var remove = Ui.Link("remove", "FolderRemove", () =>
-            {
-                _w.Store.Update(s => s.ModelFolders.Remove(f));
-                _w.Sources.Catalog.Rescan();
-                Render();
-            });
-            folders.Children.Add(Ui.Columns("*,Auto", Ui.Wrap(f, "mono", "small"), remove));
-        }
-
-        folders.Children.Add(Ui.Button("Add a folder…", "deny", "FolderAdd", async () =>
-        {
-            var picked = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions { Title = "A folder with speech models", AllowMultiple = false });
-            if (picked.Count > 0 && picked[0].TryGetLocalPath() is { } path)
-            {
-                _w.Store.Update(s => { if (!s.ModelFolders.Contains(path)) s.ModelFolders.Add(path); });
-                _w.Sources.Catalog.Rescan();
-                Render();
-            }
-        }, "small"));
-        folders.Children.Add(Ui.Wrap("The wallet only reads these folders; it never changes them.", "muted", "small"));
-        page.Children.Add(Ui.Box("card", folders));
     }
 
     Control AddedSourceCard(SourceSetting source)
@@ -522,55 +465,18 @@ sealed class SettingsWindow : Window
 
     static string SafeId(string value) => new string(value.Select(c => char.IsLetterOrDigit(c) ? c : '-').ToArray());
 
-    Control DownloadableModelsCard()
-    {
-        var list = new StackPanel { Spacing = 7 };
-        foreach (var model in _w.Registry.ListDownloadableModels())
-        {
-            var size = model.SizeBytes is { } bytes ? ((long)Math.Ceiling(bytes / 1_000_000d)).ToString(CultureInfo.InvariantCulture) + " MB" : "size unknown";
-            var state = model.Downloaded ? "downloaded in this wallet" : model.CanDownload ? "not downloaded" : "put its folder in Model folders";
-            var row = Ui.Columns("*,Auto", Ui.Column(2, Ui.Text(model.Name, "strong"), Ui.Wrap(size + " · " + state + " · " + model.Hardware, "muted", "small")),
-                model.CanDownload && !model.Downloaded
-                    ? Ui.Button("Download", "deny", "DownloadModel-" + model.Id, () =>
-                    {
-                        _ = Task.Run(async () =>
-                        {
-                            try
-                            {
-                                if (model.Id == "gigaam:gigaam-v3") _w.Ui.DownloadStarted(_w.Sources.GigaAm);
-                                else if (model.Id == "whisper:" + WhisperCpuSource.ModelFile) _w.Ui.DownloadStarted(_w.Sources.WhisperCpu);
-                                else if (model.Id.StartsWith("whisper:", StringComparison.Ordinal)) _w.Ui.DownloadStarted(_w.Sources.Whisper);
-                                var result = await _w.Registry.DownloadModelAsync(model.Id);
-                                DesktopUi.PostSafe(() => { _w.Ui.ShowInfo(new InfoModel(result.Ok ? "Model downloaded" : "Model download", result.Message)); Render(); });
-                            }
-                            catch (Exception e) when (e is not OutOfMemoryException)
-                            {
-                                DesktopUi.PostSafe(() => _w.Ui.ShowInfo(new InfoModel("Model download", "The wallet could not download that model: " + e.Message)));
-                            }
-                        });
-                    }, "small")
-                    : model.Downloaded
-                    ? Ui.Button("Delete", "deny", "DeleteModel-" + model.Id, () => _ = DeleteModelAsync(model), "small")
-                    : Ui.Text(model.Downloaded ? "Ready" : "Not available automatically", "muted", "small"));
-            list.Children.Add(row);
-        }
-        if (list.Children.Count == 0) list.Children.Add(Ui.Wrap("No model downloads are available.", "muted"));
-        return Ui.Box("card", list);
-    }
+    static string LanguageCountText(ISpeechSource source) =>
+        source.LanguageCount > 0 ? source.LanguageCount.ToString(CultureInfo.InvariantCulture) + " languages" : "any language";
 
-    async Task DeleteModelAsync(DownloadableModelInfo model)
+    void OpenLlamaPage()
     {
         try
         {
-            if (!await _w.Ui.ConfirmModelDeleteAsync(model, null, CancellationToken.None).ConfigureAwait(true)) return;
-            var result = await _w.Registry.RemoveDownloadedModelAsync(model.Id).ConfigureAwait(true);
-            _w.Ui.ShowInfo(new InfoModel(result.Ok ? "Model removed" : "Model removal", result.Message));
-            Render();
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(LocalRuntimes.LlamaPage) { UseShellExecute = true })?.Dispose();
         }
-        catch (Exception e) when (e is not OutOfMemoryException)
+        catch (Exception e) when (e is System.ComponentModel.Win32Exception or InvalidOperationException)
         {
-            ErrorLog.Write(WalletPaths.Home, e);
-            _w.Ui.ShowInfo(new InfoModel("Model removal", "The wallet could not remove that model."));
+            _w.Ui.ShowInfo(new InfoModel("Llama", "Could not open the browser. Go to " + LocalRuntimes.LlamaPage + " yourself."));
         }
     }
 
@@ -581,7 +487,7 @@ sealed class SettingsWindow : Window
         AutomationProperties.SetName(enabled, "Use " + source.Name);
         enabled.IsCheckedChanged += (_, _) => _w.Registry.EnableSource(source.Id, enabled.IsChecked == true);
 
-        var langs = source.Languages is null ? source.LanguageCount.ToString(CultureInfo.InvariantCulture) + " languages" : string.Join(", ", source.Languages.Select(Vocabulary.LanguageName));
+        var langs = source.Languages is null ? LanguageCountText(source) : string.Join(", ", source.Languages.Select(Vocabulary.LanguageName));
         var props = new WrapPanel();
         foreach (var (k, v) in new[]
                  {
@@ -604,8 +510,6 @@ sealed class SettingsWindow : Window
         var stateChip = source.State switch
         {
             SourceState.Ready => Ui.Chip("Ready"),
-            SourceState.Downloading => Ui.Chip("Downloading", "orange"),
-            SourceState.NeedsDownload => Ui.Chip("Not downloaded", "outline"),
             SourceState.NoKey => Ui.Chip("No key", "outline"),
             SourceState.Unavailable => Ui.Chip("Unavailable", "outline"),
             _ => Ui.Chip(source.State == SourceState.Missing ? "Not found" : "Failed", "ink"),
@@ -619,81 +523,6 @@ sealed class SettingsWindow : Window
         if (extras is not null) panel.Children.Add(extras);
         return Ui.Box("card", panel);
     }
-
-    Control WhisperExtras(WalletSettings settings)
-    {
-        var whisper = _w.Sources.Whisper;
-        var panel = new StackPanel { Spacing = 6 };
-        var models = new ComboBox { MinWidth = 280 };
-        AutomationProperties.SetAutomationId(models, "WhisperModel");
-        foreach (var (file, note) in WhisperChoices)
-        {
-            var item = new ComboBoxItem { Content = WhisperSource.ModelLabel(file) + "  —  " + note, Tag = file };
-            item.Classes.Add("mono");
-            models.Items.Add(item);
-        }
-
-        models.SelectedIndex = Math.Max(0, Array.FindIndex(WhisperChoices, c => c.File == settings.WhisperModel));
-        models.SelectionChanged += (_, _) =>
-        {
-            if (models.SelectedItem is ComboBoxItem { Tag: string file } && file != _w.Store.Read(s => s.WhisperModel))
-            {
-                _w.Store.Update(s => s.WhisperModel = file);
-                Render();
-            }
-        };
-        panel.Children.Add(Ui.Row(8, Ui.Text("Model", "label"), models));
-        if (whisper.State is SourceState.NeedsDownload or SourceState.Broken)
-        {
-            panel.Children.Add(Ui.Button("Download now", "allow", "WhisperDownload", () =>
-            {
-                _ = StartWhisperDownloadAsync(whisper);
-                _w.Ui.DownloadStarted(whisper);
-                Render();
-            }, "small"));
-        }
-
-        if (whisper.State == SourceState.Downloading)
-        {
-            var bar = new ProgressBar
-            {
-                Minimum = 0,
-                Maximum = 1,
-                Value = whisper.DownloadProgress ?? (whisper.State == SourceState.Ready ? 1 : 0),
-            };
-            bar.Classes.Add("meter");
-            panel.Children.Add(bar);
-        }
-
-        return panel;
-    }
-
-    async Task StartWhisperDownloadAsync(WhisperSource whisper)
-    {
-        try
-        {
-            await whisper.EnsureDownloadedAsync(CancellationToken.None).ConfigureAwait(true);
-        }
-        catch (Exception e)
-        {
-            // This task is started by a button event. Keep its failure on the wallet's side of the UI instead of
-            // allowing an unobserved task exception to reach the process-level handler.
-            _w.Ui.ShowInfo(new InfoModel("Model download", "The wallet could not download Whisper: " + e.Message));
-        }
-        finally
-        {
-            Render();
-        }
-    }
-
-    static readonly (string File, string Note)[] WhisperChoices =
-    [
-        ("ggml-large-v3-q5_0.bin", "best for Slovak and other languages, 1.1 GB, GPU recommended"),
-        ("ggml-large-v3-turbo-q8_0.bin", "faster, weaker on Slovak, 0.9 GB"),
-        ("ggml-medium-q8_0.bin", "smaller, 0.8 GB"),
-        ("ggml-small-q8_0.bin", "for computers without a GPU, 0.3 GB"),
-        (WhisperCpuSource.ModelFile, "CPU fallback, 0.2 GB"),
-    ];
 
     Control KeyExtras()
     {
@@ -779,7 +608,7 @@ sealed class SettingsWindow : Window
         var name = Ui.Row(8, Ui.Text(source.Name, "strong"),
             Ui.Glyph(source.Runs == Runs.ApiKey ? Ui.Key : Ui.Screen, Ui.Brush("Ink2"), 13, 2),
             Ui.Text(EngineWhere(source), "muted"));
-        var langs = source.Languages is null ? source.LanguageCount.ToString(CultureInfo.InvariantCulture) + " languages" : "only " + string.Join(", ", source.Languages.Select(Vocabulary.LanguageName));
+        var langs = source.Languages is null ? LanguageCountText(source) : "only " + string.Join(", ", source.Languages.Select(Vocabulary.LanguageName));
         var info = Ui.Wrap((index == 0 ? "First choice · " : "") + langs + " · " + (source.Paid ? "paid" : "no cloud bill") + " · " + source.StateText, "muted");
 
         var on = new CheckBox { Content = "On", IsChecked = stop.Enabled };

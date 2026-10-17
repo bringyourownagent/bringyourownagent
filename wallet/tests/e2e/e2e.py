@@ -4,13 +4,15 @@ real speech clips, and the wallet's windows driven through UI Automation (and on
     python e2e.py --samples <dir from make_samples.py> --shots <screenshot dir> --work <empty work dir>
                   [--key-file %USERPROFILE%\\.openrouter-key] [--app %LOCALAPPDATA%\\BYOA\\wallet-app]
 
-Before: run install.ps1 (it registers the host for Chrome and Chromium). The test uses its own wallet data folder
+Before: run install.ps1 (it registers the host for Chrome and Chromium), and start the Llama app with a speech model
+(Qwen3-ASR) on 127.0.0.1:9931 (--llama / --model name another program or model). The wallet holds no model: the test
+seeds its own data folder with that program as the speech source. The test uses its own wallet data folder
 (BYOA_WALLET_HOME=<work>\\home), so the visitor's real wallet settings are not touched. Several local ports act as
 different sites (each origin is a different site to the wallet).
 
 Checks: window.byoa in the page; toast -> consent -> Allow (real clicks), the grant's shape; Allow resolves only
 when the models are loaded ("Preparing your model..." meanwhile), measured from the click to the page's grant;
-transcripts in Russian and Slovak with latency per source; the first call after a grant; a fallback when the first source is turned off;
+transcripts in Russian and Slovak with latency per source; the first call after a grant; a source that is turned off is skipped;
 the paid fallback asks first (Allow once / No), with real money kept to a few hundredths of a cent; a no-click
 request gives null and a quiet badge; decline (and Esc) gives null; block gives null and no notice next time;
 "decide on my own" gives a silent grant without a click; the rate limit, an over-long clip and a tiny budget give
@@ -48,6 +50,8 @@ ap.add_argument("--key-file", default=os.path.join(os.path.expanduser("~"), ".op
 ap.add_argument("--app", default=os.path.join(os.environ["LOCALAPPDATA"], "BYOA", "wallet-app"))
 ap.add_argument("--headed", action="store_true")
 ap.add_argument("--no-paid", action="store_true")
+ap.add_argument("--llama", default="http://127.0.0.1:9931/v1", help="the OpenAI-compatible program that runs the speech model")
+ap.add_argument("--model", default="Renesas/Qwen3-ASR-1.7B-GGUF:FP16", help="the speech model's id in that program")
 a = ap.parse_args()
 
 os.makedirs(a.shots, exist_ok=True)
@@ -115,6 +119,27 @@ with wave.open(os.path.join(GEN, "long.wav"), "wb") as w1:
     w1.setparams(params)
     while w1.getnframes() < 16.5 * params.framerate:
         w1.writeframes(frames)
+
+# The wallet holds no model: its settings name the program that runs one, as the Add a model window would write them.
+SPEECH_ID = "openai-compatible:" + a.model + "@" + a.llama.rstrip("/").lower() + "#transcribe"
+
+
+def llama_offers_the_model():
+    import urllib.request
+    try:
+        with urllib.request.urlopen(a.llama.rstrip("/") + "/models", timeout=5) as r:
+            return a.model in [m.get("id") for m in json.load(r).get("data", [])]
+    except Exception:
+        return False
+
+
+if not llama_offers_the_model():
+    sys.exit("start the Llama app with the speech model first: " + a.llama + " " + a.model)
+os.makedirs(HOME, exist_ok=True)
+with open(os.path.join(HOME, "settings.json"), "w", encoding="utf-8") as f:
+    json.dump({"version": 1, "sources": [{"id": SPEECH_ID, "enabled": True, "kind": "openai-compatible", "label": "Qwen3-ASR",
+                                          "endpoint": a.llama, "model": a.model, "skills": ["audio.transcribe"],
+                                          "endpointConfirmed": True}]}, f)
 
 # The test wallet gets the OpenRouter key from a file (stored with DPAPI; never printed).
 env = dict(os.environ, BYOA_WALLET_HOME=HOME)
@@ -280,7 +305,7 @@ with sync_playwright() as p:
         check("ru sentences transcribed", all(c["got"] for c in sent), f"mean WER {mean_wer:.2f} over {len(sent)}")
     ru_sources = {c["source"] for c in results["calls"] if c["lang"] == "ru"}
     sk_sources = {c["source"] for c in results["calls"] if c["lang"] == "sk"}
-    check("Russian is answered by GigaAM, Slovak by Whisper", all(s and s.startswith("GigaAM") for s in ru_sources) and all(s and s.startswith("Whisper") for s in sk_sources), f"{ru_sources} / {sk_sources}")
+    check("Russian and Slovak are answered by the speech model in the program", all(s and s.startswith("Qwen3-ASR") for s in ru_sources | sk_sources), f"{ru_sources} / {sk_sources}")
     check("receipts say local and cost 0.000 USD", all(c["receipt"] == {"cost": "0.000 USD", "provider": "local"} for c in results["calls"]))
     pp, text = popup_status()
     check("popup says the wallet is connected", "Wallet connected" in text)
@@ -293,15 +318,22 @@ with sync_playwright() as p:
     pp.close()
     ui.select(settings, "Tab-sources")
     time.sleep(1)
-    ui.toggle(settings, "SourceEnabled-gigaam-v3", False)
+    check("the speech model is listed among the added models, with its Use switch", settings.CheckBoxControl(AutomationId="AddedSourceEnabled-" + SPEECH_ID, searchDepth=60).Exists(3, 0.2))
+    ui.shot(settings, os.path.join(a.shots, "10-sources.png"))
+    ui.toggle(settings, "AddedSourceEnabled-" + SPEECH_ID, False)
     time.sleep(1)
-    fb = run_clip(main, words["ru"][0])
-    check("with GigaAM turned off, Russian falls back to Whisper", fb["got"] is not None and (fb["source"] or "").startswith("Whisper") and "turned off" in (fb["fallback"] or ""), f"{fb['fallback']} -> {fb['got']}")
+    off = run_clip(main, words["ru"][0])
+    check("with the speech model turned off, the call is not answered by it (no paid fallback in this run)",
+          off["got"] is None or not (off["source"] or "").startswith("Qwen3-ASR"), f"{off['fallback']} -> {off['got']}")
+    ui.toggle(settings, "AddedSourceEnabled-" + SPEECH_ID, True)
+    time.sleep(1)
+    again = run_clip(main, words["ru"][0])
+    check("turned on again, the speech model answers again", again["got"] is not None and (again["source"] or "").startswith("Qwen3-ASR"), f"{again['source']} -> {again['got']}")
+    ui.toggle(settings, "AddedSourceEnabled-" + SPEECH_ID, False)
+    time.sleep(1)
 
     # ------------------------------------------------------------------ the paid fallback asks first
     if key_ok:
-        ui.toggle(settings, "SourceEnabled-whisper", False)
-        time.sleep(1)
         box = {}
         start_clip(main, words["ru"][1]["file"], "ru")
         paid = ui.find_window("Agent wallet paid fallback", 20)
@@ -349,8 +381,7 @@ with sync_playwright() as p:
         if info:
             ui.shot(info, os.path.join(a.shots, "05-limit-toast.png"))
             ui.invoke(info, "NoticeClose")
-        ui.toggle(settings, "SourceEnabled-whisper", True)
-    ui.toggle(settings, "SourceEnabled-gigaam-v3", True)
+    ui.toggle(settings, "AddedSourceEnabled-" + SPEECH_ID, True)
     time.sleep(1)
 
     # ------------------------------------------------------------------ no click: null, no notice, a quiet badge
