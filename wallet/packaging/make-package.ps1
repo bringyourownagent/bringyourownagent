@@ -193,7 +193,6 @@ $noLicenseFile = @(
     'Avalonia.Win32/11.3.22'                            # MIT: AvaloniaUI/Avalonia licence.md at commit 627ae9e
     'Avalonia.X11/11.3.22'                              # MIT: AvaloniaUI/Avalonia licence.md at commit 627ae9e
     'MicroCom.Runtime/0.11.0'                           # MIT: kekekeks/MicroCom LICENSE on its master branch
-    'Microsoft.Extensions.AI.Abstractions/10.2.0'       # MIT: dotnet/extensions LICENSE at commit 7c82ecb
     'Tmds.DBus.Protocol/0.21.3'                         # MIT: tmds/Tmds.DBus COPYING at commit 8cb04f6
 )
 $licenseFiles = Copy-PackageLicenses $app $artifacts $packages $licenses $noLicenseFile

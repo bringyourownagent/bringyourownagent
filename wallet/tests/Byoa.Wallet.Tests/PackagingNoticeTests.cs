@@ -18,7 +18,8 @@ public sealed class PackagingNoticeTests
     {
         var notices = File.ReadAllText(Path.Combine(RepoRoot(), "wallet", "packaging", "THIRD-PARTY-NOTICES.txt"));
 
-        foreach (var gone in new[] { "Whisper", "whisper", "sherpa", "ONNX", "onnxruntime", "GigaAM" })
+        // Whisper.net was the only reason for Microsoft.Extensions.AI.Abstractions to be in the package.
+        foreach (var gone in new[] { "Whisper", "whisper", "sherpa", "ONNX", "onnxruntime", "GigaAM", "Microsoft.Extensions.AI" })
             Assert.DoesNotContain(gone, notices, StringComparison.Ordinal);
         Assert.Contains("holds no model", notices, StringComparison.Ordinal);
     }

@@ -10,7 +10,6 @@ Component                                    License             Copyright / aut
 .NET runtime 10 (Microsoft.NETCore.App)      MIT                 Copyright (c) .NET Foundation and Contributors
   with its own third-party notices (licenses\Microsoft.NETCore.App.Runtime.win-x64-*\THIRD-PARTY-NOTICES.TXT)
 System.Security.Cryptography.ProtectedData   MIT                 Copyright (c) .NET Foundation and Contributors
-Microsoft.Extensions.AI.Abstractions         MIT                 Copyright (c) .NET Foundation. All rights reserved.
 Avalonia 11 (Avalonia.*)                     MIT                 Copyright (c) AvaloniaUI OU
 Avalonia.Angle.Windows.Natives (ANGLE)       BSD-3-Clause        Copyright 2018 The ANGLE Project Authors
 SkiaSharp, with Skia and its dependencies    MIT; Skia BSD-3     Copyright (c) 2015-2016 Xamarin, Inc.;
@@ -33,8 +32,6 @@ Where the license text of a component is not in the package, it is published her
   HarfBuzz       https://github.com/harfbuzz/harfbuzz
   MicroCom       https://github.com/kekekeks/MicroCom/blob/master/LICENSE
   Tmds.DBus      https://github.com/tmds/Tmds.DBus/blob/8cb04f66c330b64244e996ff68f685f27f7381a0/COPYING
-  Microsoft.Extensions.AI
-                 https://github.com/dotnet/extensions/blob/7c82ecb60925d76e53b65e290a33bef46f285cae/LICENSE
   Barlow         https://github.com/jpt/barlow
 
 The wallet holds no model and downloads none. Speech and text models run in programs the visitor installs
