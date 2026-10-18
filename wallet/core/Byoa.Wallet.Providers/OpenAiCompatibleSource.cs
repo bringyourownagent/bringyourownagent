@@ -117,15 +117,20 @@ public sealed class OpenAiCompatibleSource : ITextSource, ILiveness, ITextSource
 
     public decimal EstimateCost(TextRequest request) => 0;
 
-    /// <summary>Asks a local runtime to load this model before a site receives its grant.</summary>
+    /// <summary>
+    /// Makes a local model do its simplest job for real before a site receives its grant: write one short answer. That loads it in
+    /// LM Studio, Ollama, Llama and other OpenAI-compatible servers, and shows that it can answer at all.
+    /// </summary>
     public async Task WarmAsync(string? language, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(Model)) throw new InvalidOperationException("no model chosen in the settings");
         if (!_loopback) return;
-        var request = new TextRequest([new ChatMessage("user", "Reply with OK when ready.")], 1, 0, language, null);
-        // The response is deliberately discarded. This is a local load/warm-up request, not a site call and not a
-        // paid source. It is enough for LM Studio, Ollama and other OpenAI-compatible servers to load the model.
-        await ChatAsync(request, useSchema: false, tokenFactor: 1, ct).ConfigureAwait(false);
+        var request = new TextRequest([new ChatMessage("user", "Reply with one short word: ready.")], 24, 0, language, null);
+        // The answer itself is not kept: this is a local warm-up request, not a site call and not a paid source. A model that
+        // used its whole budget on hidden reasoning (finish "length") still counts as loaded; one that stopped and wrote nothing does not.
+        var (json, _, finish) = await ChatAsync(request, useSchema: false, tokenFactor: 1, ct).ConfigureAwait(false);
+        if (AnswerOf(request, json?["choices"]?[0]?["message"]).Length == 0 && finish != "length")
+            throw new InvalidOperationException(RuntimeName + " answered nothing to the warm-up request");
     }
 
     public async Task<TextAnswer> GenerateAsync(TextRequest request, CancellationToken ct)

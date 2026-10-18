@@ -36,8 +36,20 @@ public sealed class WalletEngine
     /// <summary>The complete text route must finish before the page's 90 second call deadline.</summary>
     public static TimeSpan TextRouteTimeout { get; set; } = TimeSpan.FromSeconds(74);
 
-    /// <summary>Allowing a site never waits indefinitely for a cold disk load or download.</summary>
-    public static TimeSpan PreparationTimeout { get; set; } = TimeSpan.FromSeconds(30);
+    /// <summary>
+    /// Allowing a site waits for the models to do their warm-up job (see <see cref="WalletSettings.WarmUpOnConnect"/>), but never
+    /// indefinitely: a cold disk load of a big model can take a couple of minutes, a program that never answers must not hold a site.
+    /// </summary>
+    public static TimeSpan PreparationTimeout { get; set; } = TimeSpan.FromSeconds(180);
+
+    /// <summary>
+    /// A link's one-time code lives 120 seconds (CONTRACT-DIRECT.md): the wait for the models after the link's Allow ends this long
+    /// after the link came, so that the wallet still connects with a valid code. The wait is never shorter than
+    /// <see cref="MinPreparationWait"/>.
+    /// </summary>
+    public static TimeSpan LinkPreparationBudget { get; set; } = TimeSpan.FromSeconds(100);
+
+    public static TimeSpan MinPreparationWait { get; set; } = TimeSpan.FromSeconds(5);
 
     /// <summary>How long a text call waits for a busy source before it tries the next one.</summary>
     public static TimeSpan BusyWait { get; set; } = TimeSpan.FromSeconds(10);
@@ -462,7 +474,7 @@ public sealed class WalletEngine
             var auto = Grant(origin, manifest, site.Skills, Money.Parse(site.Budget, 0.20m));
             if (auto is null) return Done(entry, "invalid", "nothing to grant");
             // Silent, but not cold: the routed models load before the page gets its grant.
-            var waited = await WarmBeforeResolveAsync(auto, host, showPreparing: false, ct).ConfigureAwait(false);
+            var waited = await WarmBeforeResolveAsync(auto, host, showPreparing: false, connectBy: null, ct).ConfigureAwait(false);
             entry.Note = (userActivation ? "after a click" : "without a click") + "; decided on its own" + Ready(waited);
             return Done(entry, "auto", null, auto.ToResult());
         }
@@ -571,6 +583,7 @@ public sealed class WalletEngine
     async Task<JsonNode?> AskVisitorAsync(string origin, string host, bool secure, RequestedManifest manifest, string? via, CancellationToken ct)
     {
         await Task.Yield();
+        var began = Now;
         var entry = new ActivityEntry { Origin = origin, Kind = Wire.Request, Via = via, Note = "after a click" };
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeout.CancelAfter(RequestTimeout);
@@ -609,6 +622,7 @@ public sealed class WalletEngine
             var site = _store.Read(s => s.Site(origin) is { } r ? Copy(r) : null) ?? new SiteRecord { Origin = origin };
             if (site.Status == SiteStatus.Blocked) return Done(entry, "blocked", "blocked while asking");
             var model = BuildConsent(origin, host, secure, manifest, site, via);
+            WarmWhileAsking(manifest);              // the models start while the visitor reads: less to wait for after Allow
             var answer = await _ui.ShowConsentAsync(model, timeout.Token).ConfigureAwait(false);
             if (!answer.Allow || model.MissingRequired)
             {
@@ -673,7 +687,7 @@ public sealed class WalletEngine
             try
             {
                 // The page gets its grant once the routed models are loaded, with "Preparing your model…" meanwhile.
-                var waited = await WarmBeforeResolveAsync(session, host, showPreparing: true, ct).ConfigureAwait(false);
+                var waited = await WarmBeforeResolveAsync(session, host, showPreparing: true, via == ViaLink ? began + LinkPreparationBudget : null, ct).ConfigureAwait(false);
                 // The visitor may have decided about the site while the models loaded: then the link gets no grant.
                 if (via == ViaLink && !_linkDecisions.ContainsKey(session.Id)) return Done(entry, "declined", "the visitor decided about the site while the models loaded");
                 entry.Note = "after a click" + (model.PausedNote is not null ? "; resumed" : "") + (model.IsDifference ? "; only the difference was shown" : "")
@@ -837,20 +851,32 @@ public sealed class WalletEngine
             .SelectMany(k => (k.Languages.Count > 0 ? k.Languages.Cast<string?>() : [null])
                 .Select(language => (k.Id, language)));
 
+    /// <summary>Whether the connection makes each model do its simplest job first (the setting is on by default).</summary>
+    bool WarmUpEnabled => _store.Read(s => s.WarmUpOnConnect);
+
     /// <summary>
-    /// Loads the first local source of each of the grant's skills and waits for it, showing "Preparing your model…"
-    /// when it takes more than a moment. Returns the seconds waited, or null when everything was already loaded.
+    /// Makes the first local source of each of the grant's skills do its simplest job once for real and waits for it, showing
+    /// "Preparing your model…" when it takes more than a moment. Returns the seconds waited, or null when nothing had to be waited
+    /// for (or the option is off). <paramref name="connectBy"/> is the moment a link's code still allows the connection.
     /// </summary>
-    async Task<double?> WarmBeforeResolveAsync(GrantSession session, string host, bool showPreparing, CancellationToken ct)
+    async Task<double?> WarmBeforeResolveAsync(GrantSession session, string host, bool showPreparing, DateTimeOffset? connectBy, CancellationToken ct)
     {
+        if (!WarmUpEnabled) return null;
         var (warming, names) = WarmCore(SkillLanguagesOf(session));
         if (warming.IsCompleted) return null;
         var watch = Stopwatch.StartNew();
         if (await Task.WhenAny(warming, Task.Delay(150, ct)).ConfigureAwait(false) != warming && !ct.IsCancellationRequested)
         {
+            var limit = PreparationTimeout;
+            if (connectBy is { } by)
+            {
+                var left = by - Now;
+                limit = Min(limit, left < MinPreparationWait ? MinPreparationWait : left);
+            }
+
             using var preparing = showPreparing ? _ui.ShowPreparing(new PreparingModel(session.Origin, host, names)) : null;
             using var preparation = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            if (PreparationTimeout > TimeSpan.Zero) preparation.CancelAfter(PreparationTimeout);
+            if (limit > TimeSpan.Zero) preparation.CancelAfter(limit);
             try
             {
                 await warming.WaitAsync(preparation.Token).ConfigureAwait(false);
@@ -860,12 +886,44 @@ public sealed class WalletEngine
                 // Do not keep this request (or another site) hostage to a model that is still loading. The
                 // background preparation continues; the eventual call will route to a ready fallback or say
                 // "AI unavailable" rather than waiting again without a bound.
-                _ui.ShowInfo(new InfoModel("Preparing your model", "It is taking longer than 30 seconds. The wallet will use a ready fallback or say AI unavailable."));
+                _ui.ShowInfo(new InfoModel("Preparing your model", "It is taking longer than " + Math.Round(limit.TotalSeconds).ToString(CultureInfo.InvariantCulture)
+                    + " seconds. The wallet will use a ready fallback or say AI unavailable."));
                 ObservePreparation(warming);
             }
         }
 
         return watch.Elapsed.TotalSeconds;
+    }
+
+    /// <summary>The models of a manifest's skills start their warm-up while the visitor still reads the consent.</summary>
+    void WarmWhileAsking(RequestedManifest manifest)
+    {
+        if (!WarmUpEnabled) return;
+        var pairs = manifest.Skills.Where(k => Vocabulary.Served.Contains(k.Id))
+            .SelectMany(k => (k.Languages.Count > 0 ? k.Languages.Cast<string?>() : [null]).Select(language => (k.Id, language)));
+        ObservePreparation(WarmCore(pairs).Task);
+    }
+
+    readonly object _warmGate = new();
+    readonly Dictionary<string, Task> _warming = new(StringComparer.Ordinal);
+
+    /// <summary>One warm-up job per source at a time: a second caller (another language, the grant after the consent) shares the running one.</summary>
+    Task WarmOnce(string sourceId, Func<Task> warm)
+    {
+        lock (_warmGate)
+        {
+            if (_warming.TryGetValue(sourceId, out var running)) return running;
+            var task = Task.Run(warm);
+            _warming[sourceId] = task;
+            _ = task.ContinueWith(_ =>
+            {
+                lock (_warmGate)
+                {
+                    if (_warming.TryGetValue(sourceId, out var current) && ReferenceEquals(current, task)) _warming.Remove(sourceId);
+                }
+            }, TaskScheduler.Default);
+            return task;
+        }
     }
 
     static void ObservePreparation(Task warming)
@@ -914,7 +972,7 @@ public sealed class WalletEngine
                 if (step.Source is not IWarmable warmable) return;
                 try
                 {
-                    await warmable.WarmAsync(language).ConfigureAwait(false);
+                    await WarmOnce(step.Source.Id, () => warmable.WarmAsync(language)).ConfigureAwait(false);
                     if (step.Source.State == SourceState.Ready) return;
                 }
                 catch (Exception e) when (e is not OutOfMemoryException)
@@ -932,7 +990,7 @@ public sealed class WalletEngine
                 if (step.Source is not ITextSourceWarmable warmable) return;
                 try
                 {
-                    await warmable.WarmAsync(language, CancellationToken.None).ConfigureAwait(false);
+                    await WarmOnce(step.Source.Id, () => warmable.WarmAsync(language, CancellationToken.None)).ConfigureAwait(false);
                     if (step.Source.State == SourceState.Ready) return;
                 }
                 catch (Exception e) when (e is not OutOfMemoryException)
@@ -946,6 +1004,7 @@ public sealed class WalletEngine
     /// <summary>At start: warm the models the already allowed sites will need.</summary>
     public void WarmAllowedSites()
     {
+        if (!WarmUpEnabled) return;
         var languages = _store.Read(s => s.Sites.Where(x => x.Status == SiteStatus.Allowed)
             .SelectMany(x => x.Languages.Count > 0 ? x.Languages.Cast<string?>() : [null]).Distinct().ToList());
         if (languages.Count > 0)

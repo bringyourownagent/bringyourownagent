@@ -23,6 +23,13 @@ public sealed class WalletSettings
     public List<AgentRecord> Agents { get; set; } = [];
     public LimitSettings Limits { get; set; } = new();
 
+    /// <summary>
+    /// When a site connects, each model it will use is made to do its simplest job once for real (speech: transcribe 3 seconds of
+    /// audio; text: write one short answer), and the connection waits for that, so the site's first real request does not meet a
+    /// model that is still starting. On by default; an older settings file without the field gets it on too.
+    /// </summary>
+    public bool WarmUpOnConnect { get; set; } = true;
+
     /// <summary>Random per-wallet key used to make redacted site labels opaque to agents.</summary>
     public string? SiteActivityLabelKey { get; set; }
 

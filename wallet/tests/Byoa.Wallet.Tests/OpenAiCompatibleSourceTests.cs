@@ -22,6 +22,33 @@ public class OpenAiCompatibleSourceTests
         new([new ChatMessage("user", "Is Paris the capital of France?")], 512, 0.7, null, ["yes", "no"]);
 
     [Fact]
+    public async Task WarmingMakesTheModelWriteOneShortAnswer()
+    {
+        using var server = new FakeHttp(Port);
+        server.Respond(200, """{"choices":[{"message":{"role":"assistant","content":"Ready."},"finish_reason":"stop"}]}""");
+        await Source(server).WarmAsync(null, default);
+        var body = JsonNode.Parse(Assert.Single(server.Requests).Body)!.AsObject();
+        Assert.Equal(24, body["max_tokens"]!.GetValue<int>());               // room for a word, not a bare token
+        Assert.Contains("ready", body["messages"]![0]!["content"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task AModelThatStopsAndWritesNothingIsNotReady()
+    {
+        using var server = new FakeHttp(Port);
+        server.Respond(200, """{"choices":[{"message":{"role":"assistant","content":""},"finish_reason":"stop"}]}""");
+        await Assert.ThrowsAsync<InvalidOperationException>(() => Source(server).WarmAsync(null, default));
+    }
+
+    [Fact]
+    public async Task AModelThatSpentItsBudgetThinkingIsStillLoaded()
+    {
+        using var server = new FakeHttp(Port);
+        server.Respond(200, """{"choices":[{"message":{"role":"assistant","content":"","reasoning_content":"hmm"},"finish_reason":"length"}]}""");
+        await Source(server).WarmAsync(null, default);                         // no error: the model answered, only slowly
+    }
+
+    [Fact]
     public async Task APlainCallSendsTheModelAndReadsTheAnswer()
     {
         using var server = new FakeHttp(Port);

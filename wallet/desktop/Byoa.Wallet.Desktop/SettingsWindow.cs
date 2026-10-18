@@ -367,6 +367,15 @@ sealed class SettingsWindow : Window
         page.Children.Add(Ui.Columns("*,Auto", Ui.Wrap("Add a model that runs on this PC (or on a home server), or a provider model with your own key. The short wizard tests it before it changes your route.", "muted"),
             Ui.Button("Add a model", "allow", "AddModel", () => _w.Ui.OpenAddModel(), "small")));
 
+        // On by default: when a site connects, each model does its simplest job once for real and the connection waits for it.
+        var warmUp = new CheckBox { Content = "Check the models when a site connects", IsChecked = settings.WarmUpOnConnect };
+        AutomationProperties.SetAutomationId(warmUp, "WarmUpOnConnect");
+        warmUp.IsCheckedChanged += (_, _) => _w.Store.Update(s => s.WarmUpOnConnect = warmUp.IsChecked == true);
+        page.Children.Add(Ui.Box("card", Ui.Column(4, warmUp,
+            Ui.Wrap("When a site connects, each model it will use does its simplest job once: speech to text transcribes 3 seconds of audio, text writes one short answer. " +
+                    "The connection waits for that (a link up to about 100 seconds), so the site's first real request does not meet a model that is still starting. " +
+                    "Turn it off to skip this: the first request may then be slow.", "muted", "small"))));
+
         page.Children.Add(Section("On this PC"));
         // A model that needs no key runs in a program on this PC (or on a home server): once one is added, the wallet does not
         // offer to get such a program; it only says what is still missing (a speech model).

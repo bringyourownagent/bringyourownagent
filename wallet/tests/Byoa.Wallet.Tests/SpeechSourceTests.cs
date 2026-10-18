@@ -164,7 +164,7 @@ public class OpenAiCompatibleSpeechSourceTests
     }
 
     [Fact]
-    public async Task WarmingSendsOneShortSilentClipAndKeepsNothing()
+    public async Task WarmingTranscribesOneClipOfThreeSecondsOfSilenceAndKeepsNothing()
     {
         using var server = new FakeHttp(Port);
         server.Respond(200, """{"choices":[{"message":{"content":"language None<asr_text>"}}]}""");
@@ -174,7 +174,7 @@ public class OpenAiCompatibleSpeechSourceTests
 
         var call = Assert.Single(server.Requests);
         var clip = Wav.Parse(Convert.FromBase64String(JsonNode.Parse(call.Body)!["messages"]![0]!["content"]![0]!["input_audio"]!["data"]!.GetValue<string>()));
-        Assert.True(clip.Seconds <= 1);
+        Assert.InRange(clip.Seconds, 2.9, 3.1);                    // the simplest real job: a clip of 3 seconds
         Assert.All(clip.Samples, s => Assert.Equal(0, s));
         Assert.False(source.HasMeasuredSeconds);                   // a warm-up is not a measured phrase
     }

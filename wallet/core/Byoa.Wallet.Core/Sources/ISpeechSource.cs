@@ -78,9 +78,13 @@ public interface ISpeechSource
     Task<Transcript> TranscribeAsync(float[] samples, string? language, CancellationToken ct);
 }
 
-/// <summary>A source that can have its runtime load the model ahead of the first call, so that the first phrase is as fast as the others.</summary>
+/// <summary>
+/// A source that can be made to do its simplest job once for real when a site connects, so that the first real request is as fast as
+/// the others. For speech that job is transcribing a clip of 3 seconds (silence: nothing is kept from the answer). A source of another
+/// skill does its own simplest job: text writes one short answer; an image model would draw the smallest image it can.
+/// </summary>
 public interface IWarmable
 {
-    /// <summary>Asks the runtime to load the model by running one short silent clip through it, for <paramref name="language"/> when that matters.</summary>
+    /// <summary>Runs the simplest real job through the model: a 3 second clip, for <paramref name="language"/> when that matters.</summary>
     Task WarmAsync(string? language);
 }

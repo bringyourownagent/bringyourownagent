@@ -103,8 +103,9 @@ public sealed class OpenAiCompatibleSpeechSource : ISpeechSource, ILiveness, IWa
     public decimal EstimateCost(double clipSeconds) => 0;
 
     /// <summary>
-    /// Has the runtime load the speech model by sending it a short silent clip, so the first real phrase is as quick as
-    /// the others. Nothing is kept from the answer.
+    /// Makes the model do its simplest job for real: transcribe a clip of 3 seconds (silence), so the runtime has loaded it and the
+    /// first real phrase is as quick as the others. Nothing is kept from the answer, and this first (slow) run is not counted in the
+    /// speed the wallet measures.
     /// </summary>
     public async Task WarmAsync(string? language)
     {
@@ -114,7 +115,7 @@ public sealed class OpenAiCompatibleSpeechSource : ISpeechSource, ILiveness, IWa
         try
         {
             using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(3));
-            await ChatAsync(new float[Wav.TargetRate / 2], language, cts.Token).ConfigureAwait(false);
+            await ChatAsync(new float[Wav.TargetRate * 3], language, cts.Token).ConfigureAwait(false);
         }
         finally
         {
