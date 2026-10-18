@@ -93,6 +93,7 @@ Rules for calls and the connection:
   - The click asks the server for a pairing code bound to this browser page, then navigates to the `bringyourownagent://` link inside the same click handler.
   - The page shows a waiting state with a cancel button, and after 90 seconds a plain "the wallet did not connect" (no other detail).
   - When the wallet's `hello` arrives, the server binds that wallet connection to the page and tells the page it is connected.
+- **The indicator.** The page shows whether the wallet is connected in its header and lets the visitor disconnect it at any moment, with one click: the page tells its server, the server says `bye` to the wallet, closes the connection and forgets the pairing (the same as the wallet's own Revoke). See CONTRACT.md §5.
 - **Reload.** The page stores the pairing token that the server sends it on `welcome` (for example in `localStorage`). On reload it tells the server; if the wallet connection with that pairing is live, the server binds it again.
 - **Calls.** The server sends calls straight to the bound wallet connection. It SHOULD use timeouts, a longer first call to allow for model warm-up (a timeout during warm-up is not a failure), and give up on the wallet after repeated failures (three in a row is a sensible limit): there is no other AI, so the site continues on its own path.
 - **Trust.** The wallet's answer is user input. A site validates the shape it expects, caps the size of what it accepts, and never renders it as markup.

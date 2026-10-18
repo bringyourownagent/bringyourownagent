@@ -86,3 +86,19 @@ The wallet measures the clip's length from the WAV itself and never trusts the p
   - The isolated-world content script checks `navigator.userActivation.isActive` itself. It never trusts a flag sent by the page.
 - **Native host.** `byoa-host.exe` is a small console program speaking the stdio protocol of native messaging: a 4-byte little-endian length, then UTF-8 JSON. It relays to the running wallet over a per-user named pipe and starts the wallet if it is not running.
 - **Install.** The reference wallet's `install.ps1` registers the host for the current user (HKCU `Software\Google\Chrome\NativeMessagingHosts\...`, and the same for Chromium); `uninstall.ps1` removes exactly those keys.
+
+## 5. The connection indicator on the site (recommended for every site)
+
+A site that uses a wallet shows, in its header or toolbar on every screen, whether the wallet is connected, and lets the visitor disconnect it there, at any moment. This is a SHOULD, not a protocol rule: it is the good manners of a site that borrows someone's AI.
+
+- **Where.** In the header (or the toolbar of the game), always visible, not inside a menu or a settings panel. On a narrow screen the name may collapse, the state and the button do not.
+- **What it says.** The product's name, **Agent wallet**, in English on every language of the site, and the state in the site's language:
+  - *connected* (the wallet answers now);
+  - *waiting* or *reconnecting* (a link was opened and the wallet has not come yet, or it dropped and comes back by itself);
+  - *not connected*.
+  The state is a status region (`role="status"`), and the colour is never the only sign of it (the word is there).
+- **Disconnect.** While connected or reconnecting, the same place offers **Disconnect**: one click, no question. It lets the wallet go at once: with the extension the site calls `window.byoa.release(grantId)`; with a link the site's server says `bye` to the wallet, closes the connection and forgets the pairing, and the page forgets its token. The site does not call the wallet again, falls back to what it does without one (or says so), and the indicator turns to *not connected*. Disconnecting never needs the wallet's answer; a wallet that is gone is let go all the same.
+- **Connect.** While not connected, the same place offers **Connect**: one click; the connection starts from the visitor's own click (a browser does not launch the wallet's link without one). While waiting, it offers nothing: the wallet's own window asks the visitor.
+- **No surprises.** The indicator never connects by itself, and a disconnect by the visitor is final until the visitor connects again (a stored pairing is forgotten, so a reload does not bring the wallet back).
+
+Reference implementations: the two showcase sites, `geo.appshub.net` and `twenty-questions.appshub.net`.
