@@ -132,7 +132,7 @@ public sealed class OpenAiCompatibleSpeechSource : ISpeechSource, ILiveness, IWa
         {
             var watch = Stopwatch.StartNew();
             var json = await ChatAsync(samples, language, ct).ConfigureAwait(false);
-            var text = Clean(ChatCompletions.Str(json?["choices"]?[0]?["message"]?["content"]) ?? "");
+            var text = Clean(ChatCompletions.Str(ChatCompletions.First(json)?["message"]?["content"]) ?? "");
             _lastError = null;
             var took = watch.Elapsed.TotalSeconds;
             _seconds = _hasMeasuredSeconds ? _seconds * 0.7 + took * 0.3 : took;

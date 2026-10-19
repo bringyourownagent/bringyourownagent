@@ -67,6 +67,9 @@ static class ChatCompletions
         }
     }
 
+    /// <summary>The first choice of a reply, or null: the last piece of a stream, which only reports the usage, has none.</summary>
+    public static JsonNode? First(JsonNode? reply) => reply?["choices"] is JsonArray { Count: > 0 } choices ? choices[0] : null;
+
     public static (int In, int Out) Tokens(JsonNode? usage) =>
         (Int(usage?["prompt_tokens"]), Int(usage?["completion_tokens"]));
 

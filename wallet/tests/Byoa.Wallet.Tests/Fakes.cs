@@ -104,7 +104,7 @@ sealed class WarmingSource(string id, IReadOnlyList<string>? languages = null) :
 }
 
 /// <summary>A text source with fixed answers (one per call, the last repeats) or failures.</summary>
-class FakeTextSource : ITextSource, ILiveness
+class FakeTextSource : ITextSource, IStreamingTextSource, ILiveness
 {
     public FakeTextSource(string id, string runs = Sources.Runs.ThisDevice, decimal costPerCall = 0)
     {
@@ -144,6 +144,14 @@ class FakeTextSource : ITextSource, ILiveness
         LastRequest = request;
         if (Hold is { } hold) return HeldAsync(hold, request, ct);
         return Task.FromResult(Answer(request));
+    }
+
+    /// <summary>Streams the answer a word at a time, as a model would.</summary>
+    public async Task<TextAnswer> GenerateStreamAsync(TextRequest request, Action<string> onText, CancellationToken ct)
+    {
+        var answer = await GenerateAsync(request, ct);
+        foreach (var piece in answer.Text.Split(' ').Select((w, i) => (i == 0 ? "" : " ") + w)) onText(piece);
+        return answer;
     }
 
     async Task<TextAnswer> HeldAsync(TaskCompletionSource hold, TextRequest request, CancellationToken ct)

@@ -3,13 +3,143 @@ using System.Text.Json.Nodes;
 namespace Byoa.Wallet.Engine;
 
 /// <summary>One skill a manifest asks for.</summary>
-public sealed record RequestedSkill(string Id, bool Required, IReadOnlyList<string> Languages);
+/// <param name="Models">What the skill asks about its models (several, named, recommended); null asks for the skill only.</param>
+public sealed record RequestedSkill(string Id, bool Required, IReadOnlyList<string> Languages, RequestedModels? Models = null);
+
+/// <summary>
+/// One thing the site requires of its models: any of these names, or masks ending in <c>*</c> (<c>openai/gpt-5*</c>). A single
+/// name is a list of one.
+/// </summary>
+public sealed record ModelWish(IReadOnlyList<string> AnyOf);
+
+/// <summary>
+/// The models a skill asks for (manifest: <c>skills.&lt;skill&gt;.models</c>): how many different ones, which are required and which
+/// only recommended, and why, in a line and at length. The wallet reads it itself; the draft rules do not check it.
+/// </summary>
+/// <param name="Min">The fewest models the site can work with.</param>
+/// <param name="Max">The most it will use.</param>
+/// <param name="Distinct"><c>vendor</c>: from different companies where possible; <c>model</c>: just different models.</param>
+/// <param name="Require">Models without which the site cannot work (each a wish; any one of its names will do).</param>
+/// <param name="Recommend">Models the site likes, in the site's order (names or masks).</param>
+/// <param name="Why">One line for the consent window.</param>
+/// <param name="WhyLong">The longer explanation behind the "More" button.</param>
+/// <param name="Names">The site asks to see the names of the models it gets (the visitor may hide them).</param>
+public sealed record RequestedModels(
+    int Min, int Max, string Distinct, IReadOnlyList<ModelWish> Require, IReadOnlyList<string> Recommend,
+    string? Why, string? WhyLong, bool Names)
+{
+    public const int MaxModels = 16;
+    public const int MaxRequire = 16;
+    public const int MaxRecommend = 64;
+    public const int MaxWhy = 160;
+    public const int MaxWhyLong = 2000;
+    const int MaxNameChars = 100;
+
+    public bool ByVendor => Distinct == "vendor";
+
+    public static RequestedModels? From(JsonNode? node)
+    {
+        if (node is not JsonObject block) return null;
+        var min = 1;
+        var max = 1;
+        switch (block["count"])
+        {
+            case JsonValue single when Whole(single) is { } n:
+                min = max = Math.Clamp(n, 1, MaxModels);
+                break;
+            case JsonObject range:
+                min = Math.Clamp(Whole(range["min"]) ?? 1, 1, MaxModels);
+                max = Math.Clamp(Whole(range["max"]) ?? Math.Max(min, 5), 1, MaxModels);
+                if (max < min) max = min;
+                break;
+            default:
+                return null;                    // a block without a count asks for nothing the wallet could plan
+        }
+
+        var distinct = Text(block["distinct"], 16)?.ToLowerInvariant() == "vendor" ? "vendor" : "model";
+        var require = new List<ModelWish>();
+        if (block["require"] is JsonArray required)
+        {
+            foreach (var item in required)
+            {
+                if (require.Count >= MaxRequire) break;
+                var names = new List<string>();
+                if (item is JsonArray any) names.AddRange(any.Select(x => Name(x)).OfType<string>());
+                else if (Name(item) is { } one) names.Add(one);
+                if (names.Count > 0) require.Add(new ModelWish(names.Distinct(StringComparer.Ordinal).Take(MaxRequire).ToList()));
+            }
+        }
+
+        var recommend = new List<string>();
+        if (block["recommend"] is JsonArray recommended)
+        {
+            foreach (var item in recommended)
+            {
+                if (recommend.Count >= MaxRecommend) break;
+                if (Name(item) is { } name && !recommend.Contains(name)) recommend.Add(name);
+            }
+        }
+
+        var names2 = block["names"] is JsonValue flag && flag.TryGetValue<bool>(out var wants) && wants;
+        // A site that requires more models than it will use is asking for something it cannot use: the wishes win.
+        if (require.Count > max) max = Math.Min(require.Count, MaxModels);
+        return new RequestedModels(min, max, distinct, require, recommend, Text(block["why"], MaxWhy), Text(block["whyLong"], MaxWhyLong), names2);
+    }
+
+    /// <summary>A model name or mask as the matcher wants it: trimmed, lower case, printable, at most 100 characters.</summary>
+    static string? Name(JsonNode? node)
+    {
+        var text = Text(node, MaxNameChars)?.ToLowerInvariant();
+        return string.IsNullOrWhiteSpace(text) || text.Any(char.IsWhiteSpace) ? null : text;
+    }
+
+    static string? Text(JsonNode? node, int max)
+    {
+        if (node is not JsonValue v || !v.TryGetValue<string>(out var s)) return null;
+        var clean = new string(s.Where(c => !char.IsControl(c) || c == '\n').ToArray()).Trim();
+        if (clean.Length == 0) return null;
+        return clean.Length > max ? clean[..max] : clean;
+    }
+
+    static int? Whole(JsonNode? node)
+    {
+        if (node is not JsonValue v) return null;
+        if (v.TryGetValue<int>(out var i)) return i;
+        return v.TryGetValue<double>(out var d) && double.IsFinite(d) && d == Math.Floor(d) && d is >= int.MinValue and <= int.MaxValue ? (int)d : null;
+    }
+}
+
+/// <summary>
+/// The limits a manifest declares for the text skill (<c>purpose.limits</c>): what the site says it needs. They hold the site
+/// back (the tightest limit wins) and they are what the consent window offers the visitor to accept when they are above his own.
+/// </summary>
+public sealed record RequestedLimits(int? InputChars, int? AnswerTokens, int? CallSeconds, int? ParallelCalls, int? CallsPerMinute)
+{
+    public bool Any => InputChars is not null || AnswerTokens is not null || CallSeconds is not null || ParallelCalls is not null || CallsPerMinute is not null;
+
+    public static RequestedLimits? From(JsonNode? node)
+    {
+        if (node is not JsonObject limits) return null;
+        var result = new RequestedLimits(
+            Count(limits["maxTextChars"]), Count(limits["maxAnswerTokens"]), Count(limits["maxCallSeconds"]),
+            Count(limits["maxParallelCalls"]), Count(limits["maxCallsPerMinute"]));
+        return result.Any ? result : null;
+    }
+
+    static int? Count(JsonNode? node)
+    {
+        if (node is not JsonValue v) return null;
+        if (v.TryGetValue<int>(out var i)) return i >= 1 ? i : null;
+        return v.TryGetValue<double>(out var d) && double.IsFinite(d) && d == Math.Floor(d) && d is >= 1 and <= int.MaxValue ? (int)d : null;
+    }
+}
 
 /// <summary>
 /// The parts of a manifest (already valid under spec/rules-0.1-draft.md) the wallet uses: the purpose, the skills
-/// with their languages, the privacy class and the expected cost per session.
+/// with their languages and models, the privacy class, the expected cost per session and the limits the site declared.
 /// </summary>
-public sealed record RequestedManifest(string Json, string Summary, IReadOnlyList<RequestedSkill> Skills, string Privacy, decimal? ExpectedPerSession)
+public sealed record RequestedManifest(string Json, string Summary, IReadOnlyList<RequestedSkill> Skills, string Privacy, decimal? ExpectedPerSession,
+    RequestedLimits? Limits = null)
 {
     public static RequestedManifest From(JsonObject manifest)
     {
@@ -32,13 +162,13 @@ public sealed record RequestedManifest(string Json, string Summary, IReadOnlyLis
                     }
                 }
 
-                skills.Add(new RequestedSkill(id, required, languages));
+                skills.Add(new RequestedSkill(id, required, languages, RequestedModels.From(value?["models"])));
             }
         }
 
         var privacy = manifest["privacy"] is JsonValue pv && pv.TryGetValue<string>(out var ps) ? ps : "";
         decimal? expected = manifest["expectedCost"]?["perSession"] is JsonValue ev && ev.TryGetValue<string>(out var es) && Money.TryParse(es, out var e) ? e : null;
-        return new RequestedManifest(manifest.ToJsonString(), summary, skills, privacy, expected);
+        return new RequestedManifest(manifest.ToJsonString(), summary, skills, privacy, expected, RequestedLimits.From(manifest["purpose"]?["limits"]));
     }
 
     public RequestedSkill? Skill(string id) => Skills.FirstOrDefault(s => s.Id == id);

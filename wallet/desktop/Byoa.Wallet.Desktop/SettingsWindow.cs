@@ -20,7 +20,7 @@ namespace Byoa.Wallet.Desktop;
 /// The wallet's detailed settings: Sites, Sources, Skills &amp; fallbacks, Limits and Activity. Opened from the tray
 /// or from "Detailed settings…" in the consent window.
 /// </summary>
-sealed class SettingsWindow : Window
+sealed partial class SettingsWindow : Window
 {
     static readonly (string Id, string Name, string Glyph)[] Pages =
     [
@@ -316,6 +316,7 @@ sealed class SettingsWindow : Window
                     + (_w.Pairings.Get(site.Origin) is not null ? " · paired: the wallet reconnects on its own while “decide on my own” is on" : ""), "muted"));
             }
 
+            if (SiteModelsBlock(site) is { } models) card.Children.Add(models);
             var auto = new CheckBox { Content = "Next time, decide on my own within these limits", IsChecked = site.AutoDecide };
             AutomationProperties.SetAutomationId(auto, "SiteAuto-" + host);
             auto.IsCheckedChanged += (_, _) => _w.Engine.SetAutoDecide(site.Origin, auto.IsChecked == true);
@@ -452,11 +453,13 @@ sealed class SettingsWindow : Window
         detail += source.LabelFromAgent ? " · label supplied by agent" : "";
         var buttons = Ui.Row(8, enabled, edit, remove);
         var order = AddedSourceOrder(source);
-        return Ui.Box("card", Ui.Column(7,
+        var card = Ui.Column(7,
             Ui.Columns("*,Auto", Ui.Column(2, Ui.Wrap(info?.Name ?? source.Label ?? source.Model ?? source.Id, "h2"), Ui.Wrap(source.Id, "mono", "small")), buttons),
             Ui.Wrap(detail, "muted"),
-            Ui.Wrap((source.Endpoint is null ? "No endpoint" : source.Endpoint) + (source.Model is null ? "" : " · " + source.Model), "mono", "small"),
-            order));
+            Ui.Wrap((source.Endpoint is null ? "No endpoint" : source.Endpoint) + (source.Model is null ? "" : " · " + source.Model), "mono", "small"));
+        if (OfferRow(source) is { } offer) card.Children.Add(offer);
+        card.Children.Add(order);
+        return Ui.Box("card", card);
     }
 
     Control AddedSourceOrder(SourceSetting source)
@@ -750,6 +753,9 @@ sealed class SettingsWindow : Window
             MoneyLimit("Money per site per day", settings.Limits.SitePerDay, null, v => _w.Store.Update(s => s.Limits.SitePerDay = v), "LimitSiteDay"),
             CountLimit("Calls per site per day", settings.Limits.SiteCallsPerDay, null, v => _w.Store.Update(s => s.Limits.SiteCallsPerDay = v), "LimitSiteCalls"))));
 
+        page.Children.Add(Section("Text, every site: size, length, wait"));
+        page.Children.Add(TextLimitsCard(null));
+
         foreach (var site in settings.Sites.Where(s => s.Status == SiteStatus.Allowed))
         {
             Origins.TryParse(site.Origin, out var host, out _);
@@ -760,6 +766,8 @@ sealed class SettingsWindow : Window
                 MoneyLimit("Money per day", site.PerDay ?? settings.Limits.SitePerDay, spent, v => _w.Store.Update(s => s.Site(site.Origin)!.PerDay = v), "LimitDay-" + host),
                 CountLimit("Calls per day", site.CallsPerDay ?? settings.Limits.SiteCallsPerDay, calls, v => _w.Store.Update(s => s.Site(site.Origin)!.CallsPerDay = v), "LimitCalls-" + host),
                 Ui.Wrap("A new budget per session applies to the site's next session.", "muted", "small"))));
+            page.Children.Add(Section("Text for this site: " + host));
+            page.Children.Add(TextLimitsCard(site));
         }
     }
 

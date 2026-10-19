@@ -23,9 +23,13 @@ sealed class WalletServices : IDisposable
         Activity = new ActivityLog(home, DateTimeOffset.UtcNow);
         Http = new HttpClient { Timeout = TimeSpan.FromHours(2) };
         Http.DefaultRequestHeaders.UserAgent.ParseAdd("BYOA-agent-wallet/" + WalletPaths.Version);
-        Sources = new SourceSet(Store, Secrets, Http);
+        Sources = new SourceSet(Store, Secrets, Http, catalogPath: Path.Combine(home, "models-catalog.json"));
         Ui = new DesktopUi(this);
-        Engine = new WalletEngine(Store, Sources.All, Activity, Ui, textSources: Sources.Text);
+        Engine = new WalletEngine(Store, Sources.All, Activity, Ui, textSources: Sources.Text)
+        {
+            Catalog = Sources.Catalog,
+            HasOpenRouterKey = () => Secrets.Has(OpenRouterSource.SecretName),
+        };
         Registry = new WalletRegistry(Store, Secrets, Activity, Sources.All, Sources.Text,
             Sources.Scanner, engine: Engine, textFactory: Sources.CreateTextSource,
             draftTextFactory: Sources.CreateTextSource, speechFactory: Sources.CreateSpeechSource);

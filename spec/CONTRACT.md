@@ -14,13 +14,18 @@ window.byoa = {
   // Resolves with a grant, or with null meaning "AI unavailable".
   // null covers: declined, blocked, no fitting model, no answer within 120 s, wallet not running, and so on.
   // The page cannot tell these apart, and that is intended.
-  request(manifest) -> Promise<{ grantId: string, skills: string[], expiresAt: string } | null>,
+  // A site that works with text also gets its `limits` (section 3.4); a site that asked for several models
+  // gets the `models` it was given (section 3.3).
+  request(manifest) -> Promise<{ grantId: string, skills: string[], expiresAt: string,
+                                 limits?: { maxTextChars, maxAnswerTokens, maxCallSeconds, maxParallelCalls, maxCallsPerMinute },
+                                 models?: { "text.generate": [ { ref, name, id, runs } ] } } | null>,
 
   // One use of a granted skill.
   // ok:false means "unavailable for this call": blocked by a limit, no model answered, the grant was revoked,
   // or a paid fallback was refused. The page must then use its own path.
+  // A call may wait in the wallet for its own limit (`maxCallSeconds`, up to 600 s): a page times out no sooner than that.
   call(grantId, skill, input, params) -> Promise<
-      { ok: true, output: object, receipt: { cost: "0.000 USD", provider: "local" | "api-key" } }
+      { ok: true, output: object, receipt: { cost: "0.000 USD", provider: "local" | "api-key", model?: string } }
     | { ok: false } >,
 
   release(grantId) -> Promise<void>
@@ -73,9 +78,64 @@ The wallet measures the clip's length from the WAV itself and never trusts the p
   - `temperature`: 0 to 1.
   - `language`: a BCP 47 primary language tag, a hint for choosing a model.
   - `choices`: an array of strings. When given, `output.text` is **exactly one** of them. The wallet constrains the model, or normalises the model's answer (trimming, case-insensitive matching, stripping quotes and punctuation), and treats an answer that is still not one of the choices as a failed call (`ok:false`).
-- `output`: `{ "text": "..." }`: the answer only, never the model's hidden reasoning.
-- The wallet caps the number of messages and the total input size; a call over a cap is `ok:false`.
-- Which source answered (a model on this computer, or a model behind the visitor's own key) is never revealed to the page; the receipt says only `local` or `api-key` and the cost.
+  - `model`: a model of the grant's `models` list, by its `ref` (section 3.3). Without it the call goes to the models the site was given, in the visitor's order, or, for a site that asked for none, along the wallet's own route.
+  - `stream`: `true` asks for the answer in pieces as it is written. Over the direct link ([CONTRACT-DIRECT.md](CONTRACT-DIRECT.md) section 4) the pieces come in `chunk` frames before the result. The extension transport does not stream; the call there answers once. Pieces are a preview: the final `output.text` is the whole answer, without the model's hidden reasoning, and it replaces anything shown. A call with `choices` is not streamed.
+- `output`: `{ "text": "..." }`: the answer only, never the model's hidden reasoning, at most 128,000 characters.
+- The wallet caps the number of messages (128) and holds a call to the limits of section 3.4; a call over a limit is `ok:false`.
+- Which source answered is never revealed to a site that asked for no models; the receipt says only `local` or `api-key` and the cost. A site that asked for several models learns which of **its** models answered, by `ref` (`receipt.model`), and, when the visitor allows it, their names (section 3.3).
+
+### 3.3 Asking for several models (`models`)
+
+A site whose work needs several different models (a judge that wants the opinions of different AIs, a quiz that compares answers) says so inside the skill:
+
+```json
+"skills": {
+  "text.generate": {
+    "required": true,
+    "models": {
+      "count": { "min": 2, "max": 5 },
+      "distinct": "vendor",
+      "require": [],
+      "recommend": ["anthropic/claude-opus-4.6", "openai/gpt-5*", "x-ai/grok-4.1-fast"],
+      "why": "Different AIs from different companies judge each side: less bias.",
+      "whyLong": "Every model reads both versions of your question and scores both sides. ...",
+      "names": true
+    }
+  }
+}
+```
+
+- **`count`**: how many different models the site uses: a number, or `{ "min", "max" }` (1 to 16; `min` defaults to 1, `max` to 5).
+- **`distinct`**: `vendor` asks for models from different companies where possible; `model` (the default) only for different models.
+- **`require`**: models without which the site cannot work. Each element is a name, a mask ending in `*`, or an array of those meaning "any of these". A visitor who cannot give them is not offered Allow.
+- **`recommend`**: models the site likes, in its order (names and masks). A site that only recommends can always be allowed.
+- **Names** are in OpenRouter's style, `vendor/model`, without regard to case; dots, underscores, date suffixes and the variant after a colon (`:free`) do not matter, so `claude-opus-4.6`, `claude-opus-4-6` and `claude-opus-4-6-20260101` are one name. A mask (`openai/gpt-5*`) matches every model of that vendor whose name begins so. A name without a vendor is compared by its model part only. The wallet matches names against the models the visitor has, whichever road each comes by (a key at OpenRouter, a key at the vendor, a program on his PC); it never tells the site which road.
+- **`why`** (at most 160 characters) is what the consent window shows at once; **`whyLong`** (at most 2,000) is behind a "More" button. Both are the site's words, shown as such.
+- **`names`**: `true` asks to see the names of the models it is given. The visitor may hide them.
+
+**What the wallet does.** It proposes the models to tick: first those the site requires, then what the visitor gave this site last time, then the site's recommendations that he has, then his default set, but only as far as the site's `min`; models behind a key he has but has not added are offered, and ticked only when too few remain. The visitor changes the ticks, adds models from his own keys, and allows. A site never sees a model he did not tick.
+
+**What the site gets.** In the grant, `models`: per skill, a list of `{ "ref", "name", "id", "runs" }` in the visitor's order. `ref` (`m1`, `m2`...) is what a call names. `runs` is `local`, `home-server` or `api-key`. `name` and `id` (the model's name as in `require`/`recommend`) are the real ones only when the site asked for names and the visitor allows; otherwise `name` is `Model A`, `Model B`... and `id` is `null`. Two roads to one model are one entry; the wallet may use either, but it never substitutes another model: a call for a model that cannot answer is `ok:false`. A call for a `ref` the site was not given is `ok:false`.
+
+**Changes.** The visitor may add, remove and reorder a site's models, hide the names and change its limits at any time. Over the direct link the wallet sends a `grant` frame with the new `models` and `limits`; with the extension the page learns the models at its next `request`.
+
+**Older wallets** ignore the block: the grant has no `models`, and the site works with the one model the wallet routes to, or does without a wallet if it needs several.
+
+### 3.4 Limits of a text call
+
+The size of what a site may send, the length of an answer, the wait and the number of calls at once are limits with three layers: the visitor's defaults for every site (Limits page of the wallet), his own for one site, and what the site declares in `purpose.limits`. The tightest wins, and nothing goes above the wallet's ceilings.
+
+| manifest name | meaning | default | ceiling |
+|---|---|---|---|
+| `maxTextChars` | characters of messages in one call | 100,000 | 400,000 |
+| `maxAnswerTokens` | tokens in one answer | 20,000 | 32,000 |
+| `maxCallSeconds` | the longest wait for one answer (a queue in front of a busy model included) | 300 | 600 |
+| `maxParallelCalls` | calls of the site in flight at once | 8 | 32 |
+| `maxCallsPerMinute` | calls a minute | 300 | 600 |
+
+- A declared limit is the site's own: it holds the site back, as the rules of [rules-0.1-draft.md](rules-0.1-draft.md) say for `maxTextChars` and `maxCallsPerMinute`, and the wallet applies the other three the same way. It is also what the site asks for: when it is above the visitor's, the consent window says so and offers to accept it, once, with a tick (on by default). A site that asks for the same again is not asked about again; one that asks for more is.
+- The 0.0.2 libraries know only `maxClipSeconds`, `maxCallsPerMinute` and `maxTextChars`: they report the other three as `limit-unknown` warnings and ignore them. The wallet reads them itself.
+- The grant tells the site what it was held to (`limits`, in the same names). A site stays within them: a call over a limit is `ok:false`.
 
 ## 4. Extension, native host and wallet
 

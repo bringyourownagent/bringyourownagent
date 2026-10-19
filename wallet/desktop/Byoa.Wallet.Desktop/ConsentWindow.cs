@@ -16,10 +16,15 @@ namespace Byoa.Wallet.Desktop;
 /// detailed settings. When a site asks for more than it has, only the difference is shown.
 /// It takes the focus and works from the keyboard; Esc declines.
 /// </summary>
-sealed class ConsentWindow : CornerWindow
+sealed partial class ConsentWindow : CornerWindow
 {
     readonly ConsentModel _model;
     readonly Action<string?> _openSettings;
+    readonly Func<string?, IReadOnlyList<ModelChoice>>? _search;
+    readonly bool _canSearch;
+    readonly Dictionary<string, ModelPick> _picks = new(StringComparer.Ordinal);
+    CheckBox? _names;
+    CheckBox? _siteLimits;
     readonly TaskCompletionSource<ConsentAnswer> _answer = new(TaskCreationOptions.RunContinuationsAsynchronously);
     readonly HashSet<string> _leftOff = [];
     readonly CheckBox _auto;
@@ -30,10 +35,13 @@ sealed class ConsentWindow : CornerWindow
     TextBlock? _budgetText;
     Control? _stepper;
 
-    public ConsentWindow(ConsentModel model, Action<string?> openSettings) : base(400)
+    /// <param name="searchModels">Searches the public model list for the models behind the visitor's own OpenRouter key; null when there is none.</param>
+    public ConsentWindow(ConsentModel model, Action<string?> openSettings, Func<string?, IReadOnlyList<ModelChoice>>? searchModels = null, bool canSearch = false) : base(400)
     {
         _model = model;
         _openSettings = openSettings;
+        _search = searchModels;
+        _canSearch = canSearch;
         _budget = model.Budget;
         Title = "Agent wallet consent";
         ShowActivated = true;
@@ -48,7 +56,6 @@ sealed class ConsentWindow : CornerWindow
         AutomationProperties.SetName(_auto, "Next time, decide on my own within these limits");
 
         _allow = Ui.Button(model.PausedNote is null ? "Allow" : "Resume", "allow", "ConsentAllow", () => Answer(true));
-        _allow.IsEnabled = !model.MissingRequired;
         var decline = Ui.Button("Decline", "deny", "ConsentDecline", () => Answer(false));
 
         var card = new Border { Margin = new Thickness(ShadowMargin), ClipToBounds = true };
@@ -71,6 +78,7 @@ sealed class ConsentWindow : CornerWindow
         layout.Children.Add(scroll);
         card.Child = layout;
         Content = card;
+        UpdateAllow();
 
         KeyDown += (_, e) =>
         {
@@ -108,7 +116,9 @@ sealed class ConsentWindow : CornerWindow
     void Answer(bool allow)
     {
         _answer.TrySetResult(allow
-            ? new ConsentAnswer(true, _budget, _auto.IsChecked == true, _leftOff.ToList())
+            ? new ConsentAnswer(true, _budget, _auto.IsChecked == true, _leftOff.ToList(),
+                _picks.Count == 0 ? null : _picks.ToDictionary(p => p.Key, p => (IReadOnlyList<string>)p.Value.Order.ToList(), StringComparer.Ordinal),
+                _names?.IsChecked != false, _siteLimits?.IsChecked != false)
             : ConsentAnswer.Declined);
         if (!_closed) Close();
     }
@@ -185,11 +195,12 @@ sealed class ConsentWindow : CornerWindow
 
         body.Children.Add(Ui.Text(_model.IsDifference ? "Only what is new" : "Asks for", "label"));
         foreach (var row in _model.Rows) body.Children.Add(SkillRow(row));
-        if (_model.IsDifference && _model.Rows.Count == 0)
+        if (_model.IsDifference && _model.Rows.Count == 0 && _model.Limits is null)
         {
             body.Children.Add(Ui.Wrap("No new skill. The site now expects to spend more per session:", "muted"));
         }
 
+        if (_model.Limits is { } ask) body.Children.Add(LimitsBlock(ask));
         body.Children.Add(BudgetLine());
         body.Children.Add(_auto);
         return body;
@@ -208,6 +219,7 @@ sealed class ConsentWindow : CornerWindow
                 if (include.IsChecked == true) _leftOff.Remove(row.Skill);
                 else _leftOff.Add(row.Skill);
                 panel.Opacity = include.IsChecked == true ? 1 : 0.6;
+                UpdateAllow();
             };
             title.Children.Add(include);
         }
@@ -215,6 +227,7 @@ sealed class ConsentWindow : CornerWindow
         if (row.IsNew) title.Children.Add(Ui.Text("New:", "strong"));
         title.Children.Add(Ui.Text(row.SkillName, "strong"));
         if (!row.Required) title.Children.Add(Ui.Chip("Optional"));
+        if (row.Models is not null) return ModelRow(row, panel, title);
 
         var why = Ui.Link("why?", "ConsentWhy-" + row.Skill, () => { });
         why.HorizontalAlignment = HorizontalAlignment.Right;

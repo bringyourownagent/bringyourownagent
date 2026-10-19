@@ -37,8 +37,9 @@ public sealed class SourceSet : IDisposable
     Dictionary<string, ISpeechSource> _lastGoodSpeech = new(StringComparer.Ordinal);
     IReadOnlyList<InvalidTextSource> _invalid = [];
 
+    /// <param name="catalogPath">Where the last model list is kept on disk; null keeps none (tests).</param>
     public SourceSet(SettingsStore store, SecretStore secrets, HttpClient http,
-        Func<string, CancellationToken, Task<IPAddress[]>>? endpointResolver = null)
+        Func<string, CancellationToken, Task<IPAddress[]>>? endpointResolver = null, string? catalogPath = null)
     {
         _store = store;
         _secrets = secrets;
@@ -53,11 +54,14 @@ public sealed class SourceSet : IDisposable
         textHandler.ConnectCallback = ConnectTextAsync;
         TextHttp = new HttpClient(textHandler)
         {
-            Timeout = TimeSpan.FromSeconds(150),
+            // The engine ends a call by its own limit (up to ten minutes); a client timeout would cut a long answer short.
+            Timeout = Timeout.InfiniteTimeSpan,
             MaxResponseContentBufferSize = BoundedHttp.MaxJsonBytes,
         };
 
         OpenRouter = new OpenRouterSource(http, () => secrets.Get(OpenRouterSource.SecretName), () => secrets.Has(OpenRouterSource.SecretName));
+        Catalog = new OpenRouterCatalog(TextHttp, catalogPath);
+        _refreshCatalog = catalogPath is not null;                          // a wallet under test never reaches for the network
         Scanner = new RuntimeScanner(TextHttp, AddedEndpoints);
         // Older settings used an Ollama id without /v1, and carried the speech engines that were once built into the
         // wallet. Canonicalise the ids and drop those engines once, before route repair.
@@ -73,6 +77,11 @@ public sealed class SourceSet : IDisposable
     }
 
     public OpenRouterSource OpenRouter { get; }
+
+    /// <summary>The public model list (names and prices): what the pickers search and what priced calls use. Refreshed once a day.</summary>
+    public OpenRouterCatalog Catalog { get; }
+
+    readonly bool _refreshCatalog;
 
     /// <summary>The speech sources as the settings list them, the paid OpenRouter one last. The engine keeps this list for its whole life.</summary>
     public IReadOnlyList<ISpeechSource> All => _speech;
@@ -298,9 +307,11 @@ public sealed class SourceSet : IDisposable
         var kind = setting.Kind.Trim().ToLowerInvariant();
         var endpoint = kind == SourceKinds.OpenRouter
             ? "https://openrouter.ai/api/v1"
-            : setting.Endpoint?.Trim() is { Length: > 0 } configured
-                ? configured
-                : OpenAiCompatibleSource.DefaultEndpoint(kind);
+            : kind == ApiServices.Kind
+                ? setting.Endpoint?.Trim() is { Length: > 0 } given ? given : ApiServices.Find(setting.Service)?.BaseUrl ?? ""
+                : setting.Endpoint?.Trim() is { Length: > 0 } configured
+                    ? configured
+                    : OpenAiCompatibleSource.DefaultEndpoint(kind);
         var endpointPolicy = EndpointPolicy.Check(endpoint, agentSupplied: false);
         if (!endpointPolicy.Allowed) throw new ArgumentException(endpointPolicy.Message);
         var testKey = string.IsNullOrWhiteSpace(transientApiKey) ? null : transientApiKey.Trim();
@@ -315,6 +326,11 @@ public sealed class SourceSet : IDisposable
                 => new OpenRouterTextSource(setting.Model.Trim(), setting.Label, setting.SecretRef, TextHttp,
                     () => testKey ?? _secrets.Get(SecretName(setting.SecretRef)),
                     () => testKey is not null || _secrets.Has(SecretName(setting.SecretRef))),
+            ApiServices.Kind
+                when !string.IsNullOrWhiteSpace(setting.Service)
+                => new CloudChatSource(setting.Service.Trim().ToLowerInvariant(), setting.Model.Trim(), setting.Label, endpoint, TextHttp,
+                    () => testKey ?? _secrets.Get(ApiSecretName(setting)),
+                    () => testKey is not null || _secrets.Has(ApiSecretName(setting)), () => Catalog),
             _ => null,
         };
         if (source is OpenAiCompatibleSource runtime && setting.AddedByAgent && !setting.EndpointConfirmed)
@@ -343,6 +359,12 @@ public sealed class SourceSet : IDisposable
     static string SecretName(string? secretRef) =>
         string.IsNullOrWhiteSpace(secretRef) ? OpenRouterSource.SecretName : secretRef;
 
+    /// <summary>The key an API-service source uses: the one saved for its service (shared by every model behind it), unless the setting names another.</summary>
+    public static string ApiSecretName(SourceSetting setting) =>
+        !string.IsNullOrWhiteSpace(setting.SecretRef) ? setting.SecretRef : ApiSecretName(setting.Service, setting.Endpoint);
+
+    public static string ApiSecretName(string? service, string? endpoint) => ApiServices.SecretName(service, endpoint);
+
     /// <summary>The endpoints the scanner should watch besides the two built-in ports.</summary>
     IEnumerable<(string Kind, string Endpoint)> AddedEndpoints() => _store.Snapshot().Sources
         .Where(s => s.Enabled && s.Kind is SourceKinds.LmStudio or SourceKinds.Ollama or SourceKinds.OpenAiCompatible)
@@ -363,7 +385,9 @@ public sealed class SourceSet : IDisposable
         var replacements = settings.Sources.Where(s => s.Kind is not null && !string.IsNullOrWhiteSpace(s.Model))
             .Select(s => (Old: s.Id, New: s.Kind!.Equals(SourceKinds.OpenRouter, StringComparison.OrdinalIgnoreCase)
                 ? SourceKinds.OpenRouter + ":" + s.Model!.Trim()
-                : OpenAiCompatibleSource.MakeId(s.Kind!, s.Model!, s.Endpoint, SkillOf(s))))
+                : s.Kind.Equals(ApiServices.Kind, StringComparison.OrdinalIgnoreCase)
+                    ? SourceIds.Api(s.Service ?? "", s.Model!, s.Endpoint)
+                    : OpenAiCompatibleSource.MakeId(s.Kind!, s.Model!, s.Endpoint, SkillOf(s))))
             .Where(pair => pair.Old != pair.New).ToArray();
         foreach (var (oldId, newId) in replacements)
         {
@@ -407,6 +431,7 @@ public sealed class SourceSet : IDisposable
     public async Task RefreshAsync(CancellationToken ct)
     {
         var infos = await Scanner.ScanAsync(ct).ConfigureAwait(false);
+        _ = await Catalog.RefreshAsync(ct).ConfigureAwait(false);          // at most once a day, and never an error
         var settings = _store.Snapshot();
         foreach (var setting in settings.Sources)
         {

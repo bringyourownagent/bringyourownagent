@@ -83,7 +83,7 @@ public sealed class RegistryTests
         var safe = Assert.Single(registry.ListSources(), s => s.Id == added.Id);
         Assert.True(safe.HasApiKey);
         Assert.DoesNotContain("secret-value", System.Text.Json.JsonSerializer.Serialize(safe), StringComparison.Ordinal);
-        Assert.Equal("secret-value-that-must-not-return", new SecretStore(secretFile).Get("source-key:" + added.Id));
+        Assert.Equal("secret-value-that-must-not-return", new SecretStore(secretFile).Get("openrouter"));        // the one OpenRouter key, shared by every model behind it
     }
 
     [Fact]

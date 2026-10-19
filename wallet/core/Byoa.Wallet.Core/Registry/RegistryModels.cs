@@ -11,7 +11,8 @@ public sealed record SourceDraft(
     string? Endpoint = null,
     IReadOnlyList<string>? Skills = null,
     IReadOnlyList<string>? Languages = null,
-    string? Label = null);
+    string? Label = null,
+    string? Service = null);
 
 /// <summary>Fields changed by an edit; null means leave the old value alone.</summary>
 public sealed record SourceUpdate(

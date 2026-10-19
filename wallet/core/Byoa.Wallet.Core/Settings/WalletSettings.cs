@@ -115,6 +115,41 @@ public sealed class SiteRecord
 
     /// <summary>"you" (paused in Sites) or "unused" (no use for longer than <see cref="LimitSettings.PauseUnusedAfterHours"/>).</summary>
     public string? PauseReason { get; set; }
+
+    // The visitor's own text limits for this site; null means the default from LimitSettings (see TextLimits).
+    public int? TextInputChars { get; set; }
+    public int? TextAnswerTokens { get; set; }
+    public int? TextCallSeconds { get; set; }
+    public int? ParallelCalls { get; set; }
+    public int? CallsPerMinute { get; set; }
+
+    /// <summary>What the site asked for above those limits the last time the visitor saw its request, so the same ask is not put to him again.</summary>
+    public SiteAsk? Asked { get; set; }
+
+    /// <summary>The models the visitor gives this site, per skill, in his order (ids of added sources).</summary>
+    public List<SiteModels> Models { get; set; } = [];
+
+    /// <summary>The site sees the names of its models (only when it asked for them). On by default; the visitor can hide them.</summary>
+    public bool ShowModelNames { get; set; } = true;
+
+    public SiteModels? ModelsFor(string skill) => Models.FirstOrDefault(m => m.Skill == skill);
+}
+
+/// <summary>The sources the visitor gives one site for one skill, in his order.</summary>
+public sealed class SiteModels
+{
+    public string Skill { get; set; } = "";
+    public List<string> SourceIds { get; set; } = [];
+}
+
+/// <summary>The limits a site asked for (its manifest's declared limits), as the visitor last saw them.</summary>
+public sealed class SiteAsk
+{
+    public int? InputChars { get; set; }
+    public int? AnswerTokens { get; set; }
+    public int? CallSeconds { get; set; }
+    public int? ParallelCalls { get; set; }
+    public int? CallsPerMinute { get; set; }
 }
 
 /// <summary>
@@ -158,6 +193,15 @@ public sealed class SourceSetting
     /// <summary>True when an agent created this setting; agent-originated probe results stay redacted.</summary>
     public bool AddedByAgent { get; set; }
 
+    /// <summary>The service behind an API-key source (<c>ApiServices</c>: openai, anthropic...); null for a local program and for OpenRouter.</summary>
+    public string? Service { get; set; }
+
+    /// <summary>The model's name as everyone knows it ("google/gemma-3-1b-it"), so a site that asks for it by name finds it; null means the wallet guesses it.</summary>
+    public string? ModelId { get; set; }
+
+    /// <summary>In the visitor's default set: the wallet offers this model first when a site asks for several and names none he has.</summary>
+    public bool Offer { get; set; } = true;
+
     /// <summary>Addresses observed during visitor confirmation of a name-based agent endpoint.</summary>
     public List<string> ConfirmedAddresses { get; set; } = [];
 
@@ -200,6 +244,13 @@ public sealed class LimitSettings
 
     /// <summary>An allowed site that has not used the wallet for this many hours is paused; 0 = never.</summary>
     public int PauseUnusedAfterHours { get; set; } = 24;
+
+    // text.generate, for every site (a site may have its own, and may ask for more in its manifest; see TextLimits).
+    public int TextInputChars { get; set; } = TextLimits.DefaultInputChars;
+    public int TextAnswerTokens { get; set; } = TextLimits.DefaultAnswerTokens;
+    public int TextCallSeconds { get; set; } = TextLimits.DefaultCallSeconds;
+    public int ParallelCalls { get; set; } = TextLimits.DefaultParallelCalls;
+    public int CallsPerMinute { get; set; } = TextLimits.DefaultCallsPerMinute;
 }
 
 /// <summary>The persisted identity and access granted to one local AI agent using the MCP bridge.</summary>

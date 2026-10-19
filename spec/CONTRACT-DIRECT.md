@@ -37,13 +37,15 @@
 
 ## 4. The channel
 
-JSON text frames over a WebSocket. The wallet accepts a frame of up to 4 MB from the site (a larger one ends the connection). A site MUST accept at least 64 KB per frame from a wallet and MAY refuse more. The wallet's frames stay well below that: the largest is a `result` of `text.generate`, at most 4,000 characters escaped as JSON (about 24 KB in the worst case); `hello` is a few hundred bytes, and the wallet never sends the manifest.
+JSON text frames over a WebSocket. The wallet accepts a frame of up to 4 MB from the site (a larger one ends the connection). A site MUST accept at least 1 MB per frame from a wallet and MAY refuse more. The wallet's frames stay below that: the largest is a `result` of `text.generate`, at most 128,000 characters escaped as JSON (about 768 KB in the worst case); a `chunk` carries at most 16,000 characters; `hello` is a few hundred bytes, plus the models the site was given if it asked for several; and the wallet never sends the manifest.
 
 Wallet to server, first frame:
 
 ```json
 {"type":"hello","v":"0.1","session":"<code>","pairing":null,"wallet":{"name":"Agent wallet","version":"0.1"},"grant":{"skills":["audio.transcribe"],"expiresAt":"..."}}
 ```
+
+For a site that works with text, `grant` also carries `limits` (what the site was held to: `maxTextChars`, `maxAnswerTokens`, `maxCallSeconds`, `maxParallelCalls`, `maxCallsPerMinute`) and, if the site asked for several models, `models` (the list it was given, [CONTRACT.md](CONTRACT.md) sections 3.3 and 3.4).
 
 Server to wallet:
 
@@ -63,17 +65,19 @@ Server to wallet:
 Calls:
 
 - Server to wallet: `{"type":"call","id":N,"skill":"audio.transcribe","input":{...},"params":{...}}` (the input and params of the skill, see [CONTRACT.md](CONTRACT.md) §3).
-- Wallet to server: `{"type":"result","id":N,"ok":true,"output":{...},"receipt":{"cost":"0.000 USD","provider":"local"}}` or `{"type":"result","id":N,"ok":false}`.
+- Wallet to server: `{"type":"result","id":N,"ok":true,"output":{...},"receipt":{"cost":"0.000 USD","provider":"local"}}` or `{"type":"result","id":N,"ok":false}`. For a call that named one of the site's models the receipt also has `"model":"m2"`.
+- **Streaming.** A `text.generate` call with `"params":{"stream":true}` is answered with `{"type":"chunk","id":N,"text":"..."}` frames, in order, as the model writes (the wallet gathers them, at most one frame every 80 ms), and then the `result`, which has the whole answer. The pieces are a preview: the `result` replaces them, and an `ok:false` result discards them. A site that does not stream ignores `chunk` frames (unknown frames are ignored), and a call without `stream` gets no `chunk` at all.
+- **Changes.** When the visitor changes the models or the limits of the site (in the wallet's Sites page), the wallet sends `{"type":"grant","models":{...},"limits":{...}}`: the same two objects as in `hello`, whole. A site that does not read it keeps the old ones until its next connection.
 
 Rules for calls and the connection:
 
 - The wallet applies exactly the same gate, limits, budget, routing, fallbacks, "ask before paid" and activity log as for extension calls.
-- **Calls in flight.** The site MUST keep at most 4 calls in flight to one wallet. It MAY queue more, but only a bounded number, and the waiting time of a call counts from the moment of the call, not from the moment it is sent. The wallet is the backstop: it answers any call beyond 4 in flight with `ok:false`.
+- **Calls in flight.** The site MUST keep at most as many calls in flight to one wallet as `grant.limits.maxParallelCalls` says (8 unless the visitor or the site said otherwise; 4 when the wallet's `hello` has no `limits`). It MAY queue more, but only a bounded number, and the waiting time of a call counts from the moment of the call, not from the moment it is sent. A call may wait for its own limit (`maxCallSeconds`, up to 600 seconds): a site's timeout is not shorter than that. The wallet is the backstop: it answers any call beyond the limit with `ok:false`.
 - Either side may send `{"type":"bye"}` and close.
 - Revoking, blocking or pausing the site in the wallet closes the socket and forgets the pairing.
 - The wallet sends a ping every 30 seconds.
 - On a disconnect, the wallet reconnects with backoff (1, 2, 5, 10, 30 seconds) while the grant is valid **and** the pairing is stored. Otherwise it stays disconnected.
-- A frame over 4 MB from the site ends the connection. A site MUST NOT send one, and MUST bound the size of what it accepts from the wallet (at least 64 KB, see above).
+- A frame over 4 MB from the site ends the connection. A site MUST NOT send one, and MUST bound the size of what it accepts from the wallet (at least 1 MB, see above).
 
 **What ends what**
 
@@ -104,7 +108,7 @@ Rules for calls and the connection:
   - Codes are single use, expire after 120 seconds, and are rate-limited per IP.
   - A code the server did not issue, or one already used or expired, gets `error` with `bad-session`. This is a MUST: the wallet's proof that the server issued a link rests on it (§7).
   - At most one wallet connection per pairing.
-  - Frames from the wallet: at least 64 KB each. The server MAY refuse more, and then closes the connection.
+  - Frames from the wallet: at least 1 MB each. The server MAY refuse more, and then closes the connection.
   - Unknown frames are ignored; malformed JSON closes the connection.
   - The server sends nothing before a valid `hello`.
 

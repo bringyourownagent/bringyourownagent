@@ -12,7 +12,7 @@ namespace Byoa.Wallet.Providers;
 /// the cost estimate before that — from OpenRouter's public price list when the model is in it, a deliberately
 /// round figure when it is not. The real cost comes from the answer's <c>usage</c>.
 /// </summary>
-public sealed class OpenRouterTextSource : ITextSource
+public sealed class OpenRouterTextSource : ITextSource, IStreamingTextSource
 {
     public const string SecretName = "openrouter";
 
@@ -218,7 +218,7 @@ public sealed class OpenRouterTextSource : ITextSource
         // missing usage; a real positive usage value is the amount the visitor was actually charged.
         var cost = reported is > 0 ? reported.Value : estimate;
         var (input, output) = ChatCompletions.Tokens(usage);
-        var reply = json?["choices"]?[0]?["message"];
+        var reply = ChatCompletions.First(json)?["message"];
         var answer = request.Choices is null
             ? Texts.CleanAnswer(ChatCompletions.Str(reply?["content"]) ?? "")
             : ChatCompletions.ExtractChoice(reply, request.Choices) ?? "";
@@ -230,6 +230,53 @@ public sealed class OpenRouterTextSource : ITextSource
         }
 
         // Usage and cost were read before checking the answer above. Missing cost is settled by the engine's estimate floor.
+        return new TextAnswer(answer, cost, input, output, Model + " · OpenRouter");
+    }
+
+    /// <summary>The same answer, handed over as the model writes it; the cost still comes from the usage report at the end of the stream.</summary>
+    public async Task<TextAnswer> GenerateStreamAsync(TextRequest request, Action<string> onText, CancellationToken ct)
+    {
+        var key = _key();
+        if (string.IsNullOrWhiteSpace(key)) throw new InvalidOperationException("no OpenRouter key");
+        if (request.Choices is not null)
+        {
+            var whole = await GenerateAsync(request, ct).ConfigureAwait(false);
+            onText(whole.Text);
+            return whole;
+        }
+
+        var messages = new JsonArray();
+        foreach (var m in request.Messages) messages.Add(new JsonObject { ["role"] = m.Role, ["content"] = m.Content });
+        var body = new JsonObject
+        {
+            ["model"] = Model,
+            ["messages"] = messages,
+            ["max_tokens"] = request.MaxTokens,
+            ["temperature"] = request.Temperature,
+            ["stream"] = true,
+            ["usage"] = new JsonObject { ["include"] = true },
+        };
+        using var message = new HttpRequestMessage(HttpMethod.Post, new Uri(_baseUrl, "api/v1/chat/completions"))
+        {
+            Content = new StringContent(body.ToJsonString(), Encoding.UTF8, "application/json"),
+        };
+        message.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
+        message.Headers.Add("X-Title", "BYOA agent wallet");
+        key = null;
+        using var response = await _http.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+        if (!response.IsSuccessStatusCode)
+        {
+            _lastError = "HTTP " + ((int)response.StatusCode).ToString(CultureInfo.InvariantCulture);
+            throw new HttpRequestException("OpenRouter answered " + _lastError);           // the body may echo the request: only the status is kept
+        }
+
+        var streamed = await ChatStream.ReadAsync(response, onText, ct).ConfigureAwait(false);
+        _lastError = null;
+        var reported = ChatCompletions.Cost(streamed.Usage);
+        var cost = reported is > 0 ? reported.Value : EstimateCost(request);
+        var (input, output) = ChatCompletions.Tokens(streamed.Usage);
+        var answer = Texts.CleanAnswer(streamed.Text);
+        if (answer.Length == 0) throw new TextSourceException("OpenRouter answered nothing", cost, providerCalled: true, responseReceived: true);
         return new TextAnswer(answer, cost, input, output, Model + " · OpenRouter");
     }
 

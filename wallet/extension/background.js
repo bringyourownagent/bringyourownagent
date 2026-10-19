@@ -5,7 +5,8 @@
 "use strict";
 
 const HOST = "org.bringyourownagent.wallet";
-const TIMEOUT_MS = { request: 125000, call: 90000, release: 10000, status: 4000, open: 30000 };
+// A call may wait in the wallet for its own limit (up to ten minutes: a model that is still starting, a long answer), so the extension waits a little longer.
+const TIMEOUT_MS = { request: 125000, call: 610000, release: 10000, status: 4000, open: 30000 };
 const IDLE_MS = 120000;
 
 let port = null;
@@ -110,20 +111,54 @@ function originOf(sender) {
 
 const isString = (v) => typeof v === "string";
 
+const isCount = (v) => Number.isInteger(v) && v >= 0 && v <= 9007199254740991;
+
+// The limits the site was given for text, in the manifest's names; anything else is dropped.
+function shapeLimits(limits) {
+  if (!limits || typeof limits !== "object") return undefined;
+  const out = {};
+  for (const key of ["maxTextChars", "maxAnswerTokens", "maxCallSeconds", "maxParallelCalls", "maxCallsPerMinute"]) {
+    if (isCount(limits[key])) out[key] = limits[key];
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
+// The models the site was given, per skill: { ref, name, id (or null), runs }; at most 16 a skill, short strings only.
+function shapeModels(models) {
+  if (!models || typeof models !== "object" || Array.isArray(models)) return undefined;
+  const out = {};
+  for (const skill of Object.keys(models).slice(0, 8)) {
+    const list = models[skill];
+    if (!/^[a-z][a-z0-9-]*\.[a-z][a-z0-9-]*$/.test(skill) || !Array.isArray(list)) continue;
+    out[skill] = list.slice(0, 16)
+      .filter((m) => m && isString(m.ref) && m.ref.length <= 16 && isString(m.name))
+      .map((m) => ({
+        ref: m.ref,
+        name: m.name.slice(0, 120),
+        id: isString(m.id) ? m.id.slice(0, 120) : null,
+        runs: ["local", "home-server", "api-key"].includes(m.runs) ? m.runs : "api-key",
+      }));
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
 // Only the contract's shapes reach the page.
 function shape(type, result) {
   if (type === "request") {
     if (!result || !isString(result.grantId) || !Array.isArray(result.skills) || !isString(result.expiresAt)) return null;
-    return { grantId: result.grantId, skills: result.skills.filter(isString), expiresAt: result.expiresAt };
+    const granted = { grantId: result.grantId, skills: result.skills.filter(isString), expiresAt: result.expiresAt };
+    const limits = shapeLimits(result.limits);
+    if (limits) granted.limits = limits;
+    const models = shapeModels(result.models);
+    if (models) granted.models = models;
+    return granted;
   }
   if (type === "call") {
     if (!result || result.ok !== true || !result.output || typeof result.output !== "object") return { ok: false };
     const receipt = result.receipt || {};
-    return {
-      ok: true,
-      output: result.output,
-      receipt: { cost: isString(receipt.cost) ? receipt.cost : "0.000 USD", provider: receipt.provider === "api-key" ? "api-key" : "local" },
-    };
+    const shaped = { cost: isString(receipt.cost) ? receipt.cost : "0.000 USD", provider: receipt.provider === "api-key" ? "api-key" : "local" };
+    if (isString(receipt.model) && receipt.model.length <= 16) shaped.model = receipt.model;
+    return { ok: true, output: result.output, receipt: shaped };
   }
   return null;
 }

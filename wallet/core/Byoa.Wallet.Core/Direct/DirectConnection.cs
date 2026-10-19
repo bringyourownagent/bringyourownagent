@@ -2,11 +2,13 @@ using System.Diagnostics;
 using System.Net;
 using System.Net.WebSockets;
 using System.Runtime.Versioning;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Byoa.Wallet.Activity;
 using Byoa.Wallet.Engine;
 using Byoa.Wallet.Settings;
+using Byoa.Wallet.Sources;
 
 namespace Byoa.Wallet.Direct;
 
@@ -22,7 +24,10 @@ public sealed class DirectOptions
     public TimeSpan PingInterval { get; init; } = TimeSpan.FromSeconds(30);
     public TimeSpan ConnectTimeout { get; init; } = TimeSpan.FromSeconds(15);
     public TimeSpan WelcomeTimeout { get; init; } = TimeSpan.FromSeconds(15);
-    public int MaxCallsInFlight { get; init; } = 4;
+
+    /// <summary>Tests only: calls in flight at once on a connection. Null, the default: the site's limit (<see cref="TextLimitSet.ParallelCalls"/>).</summary>
+    public int? MaxCallsInFlight { get; init; }
+
     public int MaxFrameBytes { get; init; } = 4 * 1024 * 1024;
     public int MaxConnectionsPerOrigin { get; init; } = 4;
 
@@ -384,6 +389,13 @@ public sealed class DirectConnection
         using var onEnd = ending.Token.Register(() => _ = ByeAsync(ws));
         using var pings = CancellationTokenSource.CreateLinkedTokenSource(ending.Token);
         var pinger = PingAsync(ws, pings.Token);
+        // What the visitor changes in Sites (the models of this site, its limits) reaches the site at once, in a frame of its own.
+        void OnGrantChanged(string origin)
+        {
+            if (origin == Origin && ws.State == WebSocketState.Open) _ = SendQuietAsync(ws, GrantFrame(grant));
+        }
+
+        _owner.Engine.GrantChanged += OnGrantChanged;
         try
         {
             while (true)
@@ -440,6 +452,7 @@ public sealed class DirectConnection
         }
         finally
         {
+            _owner.Engine.GrantChanged -= OnGrantChanged;
             calls.Cancel();
             pings.Cancel();
             try
@@ -457,13 +470,14 @@ public sealed class DirectConnection
     {
         // A call without a usable id cannot be answered; it is dropped.
         if (frame["id"] is not JsonValue id || !(id.TryGetValue<double>(out _) || (id.TryGetValue<string>(out var s) && s.Length <= 64))) return;
-        if (Interlocked.Increment(ref _inFlight) > Options.MaxCallsInFlight)
+        var most = Options.MaxCallsInFlight ?? _owner.Engine.ParallelCalls(_grant!);
+        if (Interlocked.Increment(ref _inFlight) > most)
         {
             Interlocked.Decrement(ref _inFlight);
             _owner.Engine.Record(new ActivityEntry
             {
                 Origin = Origin, Kind = "call", Via = WalletEngine.ViaLink, Skill = Str(frame["skill"]), Outcome = "limit",
-                Note = "more than " + Options.MaxCallsInFlight + " calls at once on the connection",
+                Note = "more than " + most + " calls at once on the connection",
             });
             _ = SendQuietAsync(ws, Result(id, new JsonObject { ["ok"] = false }));
             return;
@@ -477,11 +491,14 @@ public sealed class DirectConnection
             ["params"] = frame["params"]?.DeepClone(),
         };
         var answerId = id.DeepClone();
+        // A call that asks to stream gets the answer's pieces in chunk frames as they arrive, and the whole answer in the result after them.
+        ChunkPump? pump = frame["params"]?["stream"] is JsonValue stream && stream.TryGetValue<bool>(out var wanted) && wanted ? new ChunkPump(this, ws, answerId) : null;
         _ = Task.Run(async () =>
         {
             try
             {
-                var result = await _owner.Engine.CallViaLinkAsync(Origin, payload, ct).ConfigureAwait(false) as JsonObject ?? new JsonObject { ["ok"] = false };
+                var result = await _owner.Engine.CallViaLinkAsync(Origin, payload, ct, pump is null ? null : pump.Add).ConfigureAwait(false) as JsonObject ?? new JsonObject { ["ok"] = false };
+                if (pump is not null) await pump.FlushAsync().ConfigureAwait(false);          // the last pieces go before the result
                 await SendQuietAsync(ws, Result(answerId, result)).ConfigureAwait(false);
             }
             finally
@@ -489,6 +506,58 @@ public sealed class DirectConnection
                 Interlocked.Decrement(ref _inFlight);
             }
         }, CancellationToken.None);
+    }
+
+    /// <summary>Gathers the pieces of a streamed answer and sends them on in order, at most one frame every 80 ms, and in frames of a sensible size.</summary>
+    sealed class ChunkPump(DirectConnection owner, ClientWebSocket ws, JsonNode id)
+    {
+        const int MaxPiece = 16 * 1024;
+        readonly StringBuilder _pending = new();
+        readonly object _gate = new();
+        readonly SemaphoreSlim _sending = new(1, 1);
+        long _lastSent = Stopwatch.GetTimestamp();
+
+        public void Add(string text)
+        {
+            lock (_gate) _pending.Append(text);
+            if (Stopwatch.GetElapsedTime(Interlocked.Read(ref _lastSent)).TotalMilliseconds >= 80) _ = FlushAsync();
+        }
+
+        public async Task FlushAsync()
+        {
+            await _sending.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                string text;
+                lock (_gate)
+                {
+                    text = _pending.ToString();
+                    _pending.Clear();
+                }
+
+                Interlocked.Exchange(ref _lastSent, Stopwatch.GetTimestamp());
+                for (var at = 0; at < text.Length;)
+                {
+                    var length = Math.Min(MaxPiece, text.Length - at);
+                    if (length < text.Length - at && char.IsHighSurrogate(text[at + length - 1])) length--;       // never cut a character in two
+                    await owner.SendQuietAsync(ws, new JsonObject { ["type"] = "chunk", ["id"] = id.DeepClone(), ["text"] = text.Substring(at, length) }).ConfigureAwait(false);
+                    at += length;
+                }
+            }
+            finally
+            {
+                _sending.Release();
+            }
+        }
+    }
+
+    /// <summary>The frame that tells the site its models or limits changed: what <c>hello</c> carried, again.</summary>
+    static JsonObject GrantFrame(GrantSession grant)
+    {
+        var frame = new JsonObject { ["type"] = "grant" };
+        if (grant.Limits is not null && grant.Skills.Contains(Vocabulary.Generate)) frame["limits"] = grant.LimitsJson();
+        frame["models"] = grant.ModelsJson() ?? new JsonObject();
+        return frame;
     }
 
     static JsonObject Result(JsonNode id, JsonObject result)
@@ -510,8 +579,17 @@ public sealed class DirectConnection
             ["session"] = _session,
             ["pairing"] = _session is null ? _token : null,
             ["wallet"] = new JsonObject { ["name"] = "Agent wallet", ["version"] = "0.1" },
-            ["grant"] = new JsonObject { ["skills"] = skills, ["expiresAt"] = GrantSession.Time(grant.ExpiresAt) },
+            ["grant"] = HelloGrant(grant, skills),
         };
+    }
+
+    /// <summary>What the site is told about its grant: the skills and the end, and for text its limits and, if it asked for several, its models.</summary>
+    static JsonObject HelloGrant(GrantSession grant, JsonArray skills)
+    {
+        var node = new JsonObject { ["skills"] = skills, ["expiresAt"] = GrantSession.Time(grant.ExpiresAt) };
+        if (grant.Limits is not null && grant.Skills.Contains(Vocabulary.Generate)) node["limits"] = grant.LimitsJson();
+        if (grant.ModelsJson() is { } models) node["models"] = models;
+        return node;
     }
 
     async Task PingAsync(ClientWebSocket ws, CancellationToken ct)

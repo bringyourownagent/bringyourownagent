@@ -1136,9 +1136,10 @@ public class DirectTransportTests : IDisposable
     }
 
     [Fact]
-    public async Task AtMostFourCallsRunAtOnceOnAConnection()
+    public async Task AtMostAsManyCallsRunAtOnceAsTheSitesLimitAllows()
     {
         var (_, _, socket, _) = await PairAsync(auto: false);
+        _store.Update(s => s.Site(_site.Origin)!.ParallelCalls = 4);              // the visitor's limit for this site
         _russian.Hold = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         for (var i = 1; i <= 5; i++) await TestSite.SendAsync(socket, Call(i));
         var refused = await TestSite.ReceiveAsync(socket);                          // the fifth, at once

@@ -14,10 +14,10 @@ namespace Byoa.Wallet.Providers;
 /// server is up and still offers the model. A local runtime answers one request at a time — the wallet keeps a
 /// second call from even starting while one runs.
 /// </summary>
-public sealed class OpenAiCompatibleSource : ITextSource, ILiveness, ITextSourceWarmable
+public sealed class OpenAiCompatibleSource : ITextSource, IStreamingTextSource, ILiveness, ITextSourceWarmable
 {
     /// <summary>The room a local model may use for one answer, its own hidden reasoning included.</summary>
-    const int MaxLocalTokens = 4096;
+    const int MaxLocalTokens = 32_768;
 
     readonly HttpClient _http;
     readonly string _kind;
@@ -129,7 +129,7 @@ public sealed class OpenAiCompatibleSource : ITextSource, ILiveness, ITextSource
         // The answer itself is not kept: this is a local warm-up request, not a site call and not a paid source. A model that
         // used its whole budget on hidden reasoning (finish "length") still counts as loaded; one that stopped and wrote nothing does not.
         var (json, _, finish) = await ChatAsync(request, useSchema: false, tokenFactor: 1, ct).ConfigureAwait(false);
-        if (AnswerOf(request, json?["choices"]?[0]?["message"]).Length == 0 && finish != "length")
+        if (AnswerOf(request, ChatCompletions.First(json)?["message"]).Length == 0 && finish != "length")
             throw new InvalidOperationException(RuntimeName + " answered nothing to the warm-up request");
     }
 
@@ -138,7 +138,7 @@ public sealed class OpenAiCompatibleSource : ITextSource, ILiveness, ITextSource
         if (string.IsNullOrWhiteSpace(Model)) throw new InvalidOperationException("no model chosen in the settings");
         var watch = Stopwatch.StartNew();
         var (json, tokens, finish) = await ChatAsync(request, useSchema: !_schemaBlocked, tokenFactor: 1, ct).ConfigureAwait(false);
-        var message = json?["choices"]?[0]?["message"];
+        var message = ChatCompletions.First(json)?["message"];
         var reasoning = ChatCompletions.Str(message?["reasoning_content"]) ?? ChatCompletions.Str(message?["reasoning"]);
         var text = AnswerOf(request, message);
 
@@ -148,7 +148,7 @@ public sealed class OpenAiCompatibleSource : ITextSource, ILiveness, ITextSource
             // more room; a paid one would spend the visitor's money twice, so the route hears it straight away.
             if (Paid) throw new InvalidOperationException(RuntimeName + " spent all its tokens on hidden reasoning; raise maxTokens");
             var (retry, more, retryFinish) = await ChatAsync(request, useSchema: !_schemaBlocked, tokenFactor: 4, ct).ConfigureAwait(false);
-            message = retry?["choices"]?[0]?["message"];
+            message = ChatCompletions.First(retry)?["message"];
             text = AnswerOf(request, message);
             tokens = (tokens.In + more.In, tokens.Out + more.Out);
             if (text.Length == 0 && retryFinish == "length" && !string.IsNullOrEmpty(ChatCompletions.Str(message?["reasoning_content"])))
@@ -167,6 +167,43 @@ public sealed class OpenAiCompatibleSource : ITextSource, ILiveness, ITextSource
 
         var seconds = watch.Elapsed.TotalSeconds;
         return new TextAnswer(text, 0, tokens.In, tokens.Out, RuntimeName + " · " + Model + " · " + seconds.ToString("0.0", CultureInfo.InvariantCulture) + " s");
+    }
+
+    /// <summary>The same answer, handed over as the model writes it. A constrained answer (choices) is a word or two and goes whole.</summary>
+    public async Task<TextAnswer> GenerateStreamAsync(TextRequest request, Action<string> onText, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(Model)) throw new InvalidOperationException("no model chosen in the settings");
+        if (request.Choices is not null)
+        {
+            var whole = await GenerateAsync(request, ct).ConfigureAwait(false);
+            onText(whole.Text);
+            return whole;
+        }
+
+        var watch = Stopwatch.StartNew();
+        var body = Body(request, useSchema: false, tokenFactor: 1);
+        body["stream"] = true;
+        using var message = new HttpRequestMessage(HttpMethod.Post, new Uri(_base, "chat/completions"))
+        {
+            Content = new StringContent(body.ToJsonString(), Encoding.UTF8, "application/json"),
+        };
+        using var response = await _http.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+        if (!response.IsSuccessStatusCode)
+            throw new HttpRequestException(RuntimeName + " answered HTTP " + ((int)response.StatusCode).ToString(CultureInfo.InvariantCulture));
+        var streamed = await ChatStream.ReadAsync(response, onText, ct).ConfigureAwait(false);
+        var text = Texts.CleanAnswer(streamed.Text);
+        if (text.Length == 0 && streamed.Finish == "length" && streamed.Reasoning.Length > 0)
+        {
+            // The model spent its whole budget thinking and showed nothing: the same second try with more room as without a stream.
+            var again = await GenerateAsync(request, ct).ConfigureAwait(false);
+            onText(again.Text);
+            return again;
+        }
+
+        if (text.Length == 0) throw new TextSourceException(RuntimeName + " answered nothing", cost: 0, providerCalled: true, responseReceived: true);
+        var tokens = ChatCompletions.Tokens(streamed.Usage);
+        return new TextAnswer(text, 0, tokens.In, tokens.Out,
+            RuntimeName + " · " + Model + " · " + watch.Elapsed.TotalSeconds.ToString("0.0", CultureInfo.InvariantCulture) + " s");
     }
 
     /// <summary>The answer only: hidden reasoning stays in the runtime. With choices, the exact string the page listed.</summary>
@@ -205,7 +242,7 @@ public sealed class OpenAiCompatibleSource : ITextSource, ILiveness, ITextSource
             throw new HttpRequestException(RuntimeName + " answered something that is not JSON");
         }
 
-        return (json, ChatCompletions.Tokens(json?["usage"]), ChatCompletions.Str(json?["choices"]?[0]?["finish_reason"]));
+        return (json, ChatCompletions.Tokens(json?["usage"]), ChatCompletions.Str(ChatCompletions.First(json)?["finish_reason"]));
     }
 
     JsonObject Body(TextRequest request, bool useSchema, int tokenFactor)

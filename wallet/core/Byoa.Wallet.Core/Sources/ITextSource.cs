@@ -125,6 +125,16 @@ public interface ITextSource
     Task<TextAnswer> GenerateAsync(TextRequest request, CancellationToken ct);
 }
 
+/// <summary>
+/// A text source that can hand an answer over as it is written. The wallet uses it for a call that asked to stream (over the direct link): the
+/// pieces go to the site as they arrive, and the answer that comes back is the whole text, with the model's reasoning left out.
+/// </summary>
+public interface IStreamingTextSource : ITextSource
+{
+    /// <summary>Like <see cref="ITextSource.GenerateAsync"/>; <paramref name="onText"/> gets each piece of visible text as it arrives.</summary>
+    Task<TextAnswer> GenerateStreamAsync(TextRequest request, Action<string> onText, CancellationToken ct);
+}
+
 /// <summary>A local text source that can be made to write one short answer before the first page call.</summary>
 public interface ITextSourceWarmable
 {

@@ -19,7 +19,7 @@ namespace Byoa.Wallet.Engine;
 /// before any source runs, the per-day limits, routing with fallbacks, and asking before a paid source.
 /// Every "no" reaches the page as the same null (or <c>{ ok: false }</c>).
 /// </summary>
-public sealed class WalletEngine
+public sealed partial class WalletEngine
 {
     /// <summary>How long a request may wait for the visitor (the page's promise resolves null after that).</summary>
     public static TimeSpan RequestTimeout { get; set; } = TimeSpan.FromSeconds(120);
@@ -30,11 +30,11 @@ public sealed class WalletEngine
     /// <summary>How long one source may take for one clip before the next one is tried.</summary>
     public static TimeSpan SourceTimeout { get; set; } = TimeSpan.FromSeconds(45);
 
-    /// <summary>How long one text source may take for one answer (the retry included) before the next one is tried.</summary>
-    public static TimeSpan TextSourceTimeout { get; set; } = TimeSpan.FromSeconds(40);
+    /// <summary>Tests only: how long one text source may take for one answer (the retry included). Null, the default: the call's own limit (<see cref="TextLimitSet.CallSeconds"/>, 300 s unless the visitor or the site set another).</summary>
+    public static TimeSpan? TextSourceTimeout { get; set; }
 
-    /// <summary>The complete text route must finish before the page's 90 second call deadline.</summary>
-    public static TimeSpan TextRouteTimeout { get; set; } = TimeSpan.FromSeconds(74);
+    /// <summary>Tests only: how long the complete text route may take. Null, the default: the call's own limit.</summary>
+    public static TimeSpan? TextRouteTimeout { get; set; }
 
     /// <summary>
     /// Allowing a site waits for the models to do their warm-up job (see <see cref="WalletSettings.WarmUpOnConnect"/>), but never
@@ -75,16 +75,15 @@ public sealed class WalletEngine
         public int Count;
         public bool Told;
     }
-    const int MaxTextChars = 4000;
+    const int MaxTextChars = TextLimits.MaxAnswerChars;
 
-    // Hard caps of a text.generate call, whatever the page asks for.
-    const int MaxMessages = 32;
-    const int MaxInputChars = 20_000;
+    // Hard caps of a text.generate call, whatever the page asks for. The size of the input, the length of the answer, the wait
+    // and the number of calls at once are the visitor's to set (see TextLimits); these are fixed by the protocol.
+    const int MaxMessages = 128;
     const int MaxChoices = 20;
     const int MaxChoiceChars = 100;
     const int MaxChoiceCharsTotal = 500;
-    const int MaxTokensCap = 1024;
-    const int DefaultMaxTokens = 512;
+    const int DefaultMaxTokens = TextLimits.DefaultMaxTokens;
     const double DefaultTemperature = 0.7;
     const decimal MaxTextCost = 1000m;
 
@@ -165,8 +164,9 @@ public sealed class WalletEngine
         GuardedAsync(Wire.Request, origin, ViaLink, () => RequestAsync(origin, false, new JsonObject { ["manifest"] = manifest.DeepClone() }, ct, ViaLink, renewal: true));
 
     /// <summary>A call that came over the wallet's own connection to the site: exactly the gate, limits and routing of a page's call.</summary>
-    public Task<JsonNode?> CallViaLinkAsync(string origin, JsonObject payload, CancellationToken ct = default) =>
-        GuardedAsync(Wire.Call, origin, ViaLink, () => CallAsync(origin, payload, ct, ViaLink));
+    /// <param name="onChunk">When the call asked to stream and the source can: gets each piece of the answer as it arrives (the answer that comes back is the whole text).</param>
+    public Task<JsonNode?> CallViaLinkAsync(string origin, JsonObject payload, CancellationToken ct = default, Action<string>? onChunk = null) =>
+        GuardedAsync(Wire.Call, origin, ViaLink, () => CallAsync(origin, payload, ct, ViaLink, onChunk));
 
     /// <summary>
     /// The site's welcome echoed the link's manifest, so the site issued the link: the visitor's Allow for it is stored
@@ -219,6 +219,10 @@ public sealed class WalletEngine
         }
     }
 
+    /// <summary>The most calls of this grant's site in flight at once now: the visitor's limit, held back by what the site declared.</summary>
+    public int ParallelCalls(GrantSession grant) =>
+        _store.Read(s => TextLimits.Effective(s.Limits, s.Site(grant.Origin), grant.Manifest.Limits).ParallelCalls);
+
     /// <summary>A live grant by its id, or null.</summary>
     public GrantSession? FindGrant(string grantId) =>
         _sessions.TryGetValue(grantId, out var s) && s.ExpiresAt > Now ? s : null;
@@ -236,8 +240,11 @@ public sealed class WalletEngine
         if (text.Length > MaxManifestChars || !Manifest.Validate(text).Ok) return false;
         var site = FindSite(origin);
         if (site is not { Status: SiteStatus.Allowed }) return false;
-        var diff = Difference(site, RequestedManifest.From(manifestNode));
-        return diff.NewSkills.Count == 0 && diff.MissingRequired.Count == 0 && !diff.CostRaised;
+        var requested = RequestedManifest.From(manifestNode);
+        var diff = Difference(site, requested);
+        var settings = _store.Snapshot();
+        return diff.NewSkills.Count == 0 && diff.MissingRequired.Count == 0 && !diff.CostRaised
+            && !ModelsNeedAsking(site, requested, settings) && !LimitsRaised(site, requested, settings.Limits);
     }
 
     /// <summary>Adds an entry to the activity log (the direct transport's own events).</summary>
@@ -466,7 +473,9 @@ public sealed class WalletEngine
         if (site.Status == SiteStatus.Declined) return Done(entry, "declined", "declined site: no notice");
 
         var diff = Difference(site, manifest);
-        var covered = site.Status == SiteStatus.Allowed && diff.NewSkills.Count == 0 && diff.MissingRequired.Count == 0 && !diff.CostRaised;
+        var snapshot = _store.Snapshot();
+        var covered = site.Status == SiteStatus.Allowed && diff.NewSkills.Count == 0 && diff.MissingRequired.Count == 0 && !diff.CostRaised
+            && !ModelsNeedAsking(site, manifest, snapshot) && !LimitsRaised(site, manifest, snapshot.Limits);
         // "Decide on my own" grants a page's request and a reconnect with the stored pairing. A new link always asks: its
         // welcome replaces the stored pairing, so the visitor sees it first.
         if (covered && site.AutoDecide && !site.Paused && (via is null || renewal))
@@ -632,9 +641,27 @@ public sealed class WalletEngine
                 return Done(entry, "declined", "declined in the consent window");
             }
 
-            var offered = model.Rows.Where(r => r.CanServe && !answer.LeftOff.Contains(r.Skill)).Select(r => r.Skill).ToList();
-            var leftOff = model.Rows.Where(r => !r.CanServe || answer.LeftOff.Contains(r.Skill)).Select(r => r.Skill).ToList();
+            // The models he ticked for each skill that asked for several; a skill that cannot be given what it needs is left off, not half given.
+            var chosenModels = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+            var unservedModels = new List<string>();
+            foreach (var row in model.Rows.Where(r => r.Models is not null && r.CanServe && !answer.LeftOff.Contains(r.Skill)))
+            {
+                IReadOnlyList<string>? keys = null;
+                if (answer.Models is not null) answer.Models.TryGetValue(row.Skill, out keys);
+                if (ChooseModels(row.Models!, keys) is not { } picked)
+                {
+                    unservedModels.Add(row.Skill);
+                    continue;
+                }
+
+                var ids = EnsureSources(picked);
+                chosenModels[row.Skill] = picked.Select(k => ids[k]).ToList();
+            }
+
+            var offered = model.Rows.Where(r => r.CanServe && !answer.LeftOff.Contains(r.Skill) && !unservedModels.Contains(r.Skill)).Select(r => r.Skill).ToList();
+            var leftOff = model.Rows.Where(r => !r.CanServe || answer.LeftOff.Contains(r.Skill) || unservedModels.Contains(r.Skill)).Select(r => r.Skill).ToList();
             var decided = Now;
+            var wantedLimits = answer.UseSiteLimits ? model.Limits?.Wanted : null;
 
             // What the visitor's Allow makes of the site's record.
             void Decide(SiteRecord r)
@@ -653,6 +680,29 @@ public sealed class WalletEngine
                 r.Paused = false;                       // "Resume" in the consent window of a paused site
                 r.PausedAt = null;
                 r.PauseReason = null;
+                foreach (var (skill, ids) in chosenModels)
+                {
+                    var entry = r.ModelsFor(skill);
+                    if (entry is null)
+                    {
+                        entry = new SiteModels { Skill = skill };
+                        r.Models.Add(entry);
+                    }
+
+                    entry.SourceIds = ids;
+                }
+
+                r.ShowModelNames = answer.ShowNames;
+                if (wantedLimits is { } wanted)
+                {
+                    r.TextInputChars = wanted.InputChars ?? r.TextInputChars;
+                    r.TextAnswerTokens = wanted.AnswerTokens ?? r.TextAnswerTokens;
+                    r.TextCallSeconds = wanted.CallSeconds ?? r.TextCallSeconds;
+                    r.ParallelCalls = wanted.ParallelCalls ?? r.ParallelCalls;
+                    r.CallsPerMinute = wanted.CallsPerMinute ?? r.CallsPerMinute;
+                }
+
+                r.Asked = AskOf(manifest.Limits);       // what he has seen: the same ask is not put to him again
             }
 
             List<string> skills = [];
@@ -679,7 +729,7 @@ public sealed class WalletEngine
                 if (dropped.Count > 0) LinkAnswersDropped?.Invoke(dropped);
             }
 
-            var session = Grant(origin, manifest, skills, answer.Budget);
+            var session = Grant(origin, manifest, skills, answer.Budget, via == ViaLink ? site : null);
             if (session is null) return Done(entry, "declined", "no skill left to grant");
             if (via == ViaLink) _linkDecisions[session.Id] = new LinkDecision(origin, Decide);
             _prompt.Release();
@@ -730,13 +780,15 @@ public sealed class WalletEngine
     ConsentModel BuildConsent(string origin, string host, bool secure, RequestedManifest manifest, SiteRecord site, string? via)
     {
         var (newSkills, missingRequired, costRaised) = Difference(site, manifest);
-        var isDifference = site.Status == SiteStatus.Allowed && (newSkills.Count > 0 || missingRequired.Count > 0 || costRaised);
         var settings = _store.Snapshot();
+        var modelsAsked = ModelsNeedAsking(site, manifest, settings);
+        var limitsAsk = BuildLimitsAsk(site, manifest, settings.Limits);
+        var isDifference = site.Status == SiteStatus.Allowed && (newSkills.Count > 0 || missingRequired.Count > 0 || costRaised || modelsAsked || limitsAsk is not null);
         var rows = new List<ConsentRow>();
         foreach (var skill in manifest.Skills)
         {
-            if (isDifference && !newSkills.Contains(skill.Id) && !missingRequired.Contains(skill.Id)) continue;
-            rows.Add(Row(skill, settings, isNew: isDifference));
+            if (isDifference && !newSkills.Contains(skill.Id) && !missingRequired.Contains(skill.Id) && !(modelsAsked && skill.Models is not null)) continue;
+            rows.Add(Row(skill, settings, site, isNew: isDifference && (newSkills.Contains(skill.Id) || missingRequired.Contains(skill.Id))));
         }
 
         var defaultBudget = Money.Parse(settings.Limits.DefaultSessionBudget, 0.20m);
@@ -755,10 +807,10 @@ public sealed class WalletEngine
         }
 
         return new ConsentModel(origin, host, secure, manifest.Summary, rows, budget, before, site.AutoDecide, isDifference,
-            site.Status == SiteStatus.Allowed && site.Paused ? PauseText(site) : null, via == ViaLink);
+            site.Status == SiteStatus.Allowed && site.Paused ? PauseText(site) : null, via == ViaLink, limitsAsk);
     }
 
-    ConsentRow Row(RequestedSkill skill, WalletSettings settings, bool isNew)
+    ConsentRow Row(RequestedSkill skill, WalletSettings settings, SiteRecord site, bool isNew)
     {
         var name = Vocabulary.SkillName(skill.Id);
         if (!Vocabulary.Served.Contains(skill.Id))
@@ -767,7 +819,7 @@ public sealed class WalletEngine
                 "None of your sources can do this yet: this wallet serves speech to text and text generation.");
         }
 
-        if (skill.Id == Vocabulary.Generate) return TextRow(skill, name, settings, isNew);
+        if (skill.Id == Vocabulary.Generate) return TextRow(skill, name, settings, site, isNew);
 
         var languages = skill.Languages.Count > 0 ? skill.Languages.Cast<string?>().ToList() : [null];
         var routes = new List<RouteLine>();
@@ -792,8 +844,17 @@ public sealed class WalletEngine
         return new ConsentRow(skill.Id, name, skill.Required, isNew, canServe, routes, skill.Languages, string.Join(" ", whys.Distinct()));
     }
 
-    ConsentRow TextRow(RequestedSkill skill, string name, WalletSettings settings, bool isNew)
+    ConsentRow TextRow(RequestedSkill skill, string name, WalletSettings settings, SiteRecord site, bool isNew)
     {
+        // A site that asks for several models gets the models to tick instead of one route line per language.
+        if (PlanModels(skill, settings, site) is { } section)
+        {
+            var why = section.MissingRequired.Count > 0
+                ? "The site cannot work without " + string.Join(", ", section.MissingRequired) + "."
+                : section.Shortfall is { } shortfall ? "The site " + shortfall + ". Add models in Sources, or an OpenRouter key." : "";
+            return new ConsentRow(skill.Id, name, skill.Required, isNew, section.CanServe, [], skill.Languages, why, section);
+        }
+
         var textLanguages = skill.Languages.Count > 0 ? skill.Languages.Cast<string?>().ToList() : [null];
         var routes = new List<RouteLine>();
         var whys = new List<string>();
@@ -837,11 +898,17 @@ public sealed class WalletEngine
         _ => "API key",
     };
 
-    GrantSession? Grant(string origin, RequestedManifest manifest, IReadOnlyList<string> allowedSkills, decimal budget)
+    /// <param name="site">The site's record as the visitor's answer makes it, when it is not stored yet (a link's Allow is held until the site proves the link).</param>
+    GrantSession? Grant(string origin, RequestedManifest manifest, IReadOnlyList<string> allowedSkills, decimal budget, SiteRecord? site = null)
     {
         var skills = manifest.Skills.Select(s => s.Id).Where(allowedSkills.Contains).Where(Vocabulary.Served.Contains).ToList();
         if (skills.Count == 0) return null;
         var session = new GrantSession(origin, manifest, skills, budget, Now);
+        var settings = _store.Snapshot();
+        site ??= settings.Site(origin);
+        session.Models = BuildGranted(site, manifest, settings);
+        session.ShowNames = ShowNamesFor(site, manifest);
+        session.Limits = TextLimits.Effective(settings.Limits, site, manifest.Limits);
         _sessions[session.Id] = session;
         return session;
     }
@@ -1050,7 +1117,7 @@ public sealed class WalletEngine
     // ------------------------------------------------------------------------------------------------
     // call
 
-    async Task<JsonNode?> CallAsync(string origin, JsonObject payload, CancellationToken ct, string? via)
+    async Task<JsonNode?> CallAsync(string origin, JsonObject payload, CancellationToken ct, string? via, Action<string>? onChunk = null)
     {
         var started = Stopwatch.GetTimestamp();
         var grantId = Str(payload["grantId"]);
@@ -1075,6 +1142,10 @@ public sealed class WalletEngine
             return Failed(entry, "paused", "the site is paused: its next request, after a click, asks to resume");
         }
 
+        // The limits of this call: the visitor's (defaults, then his own for the site) tightened by what the site declared. The gate
+        // sees them as the grant's limits, so the draft rules' "the stricter of the two wins" holds for them too.
+        session.Limits = _store.Read(s => TextLimits.Effective(s.Limits, s.Site(origin) ?? site, session.Manifest.Limits));
+
         if (skill is not (Vocabulary.Transcribe or Vocabulary.Generate))
         {
             return Failed(entry, "failed", "skill not served: " + (skill ?? "none"));
@@ -1082,7 +1153,7 @@ public sealed class WalletEngine
 
         if (skill == Vocabulary.Generate)
         {
-            return await GenerateCallAsync(entry, session, site, payload, started, ct).ConfigureAwait(false);
+            return await GenerateCallAsync(entry, session, site, payload, started, ct, onChunk).ConfigureAwait(false);
         }
 
         // The input: a WAV clip, measured here and never trusted from the page.
@@ -1300,7 +1371,8 @@ public sealed class WalletEngine
     // ------------------------------------------------------------------------------------------------
     // call: text.generate
 
-    async Task<JsonNode?> GenerateCallAsync(ActivityEntry entry, GrantSession session, SiteRecord site, JsonObject payload, long started, CancellationToken ct)
+    async Task<JsonNode?> GenerateCallAsync(ActivityEntry entry, GrantSession session, SiteRecord site, JsonObject payload, long started, CancellationToken ct,
+        Action<string>? onChunk = null)
     {
         // The input: the page's messages, measured here and never trusted from the page.
         if (payload["input"]?["messages"] is not JsonArray array)
@@ -1325,10 +1397,11 @@ public sealed class WalletEngine
         if (messages.Count > MaxMessages) return Failed(entry, "invalid", "too many messages: the wallet takes at most " + MaxMessages);
         var chars = messages.Sum(m => m.Content.Length);
         if (chars == 0) return Failed(entry, "invalid", "the messages are empty");
-        if (chars > MaxInputChars) return Failed(entry, "invalid", "text too long for the wallet: at most " + MaxInputChars + " characters");
+        var textLimits = session.Limits ?? TextLimits.Defaults;
+        if (chars > textLimits.InputChars) return Failed(entry, "invalid", "text too long for the wallet: at most " + textLimits.InputChars + " characters");
 
         var parameters = payload["params"] as JsonObject ?? new JsonObject();
-        var maxTokens = Math.Clamp(Int(parameters["maxTokens"]) ?? DefaultMaxTokens, 1, MaxTokensCap);
+        var maxTokens = Math.Clamp(Int(parameters["maxTokens"]) ?? Math.Min(DefaultMaxTokens, textLimits.AnswerTokens), 1, textLimits.AnswerTokens);
         var temperature = Math.Clamp(Num(parameters["temperature"]) ?? DefaultTemperature, 0, 1);
         var language = Vocabulary.PrimaryLanguage(Str(parameters["language"]));
         var declared = session.Manifest.Skill(Vocabulary.Generate)?.Languages ?? [];
@@ -1354,6 +1427,28 @@ public sealed class WalletEngine
             if (choices.Sum(c => c.Length) > MaxChoiceCharsTotal) return Failed(entry, "invalid", "the choices together are longer than " + MaxChoiceCharsTotal + " characters");
         }
 
+        // A site that asked for models reaches only the ones it was given: the one it names, or in the visitor's order when it names none.
+        SkillChain? chainOverride = null;
+        IReadOnlyList<ITextSource>? sourceOverride = null;
+        var named = false;
+        Func<ITextSource, string?>? refOf = null;
+        if (session.Models.TryGetValue(Vocabulary.Generate, out var granted) && granted.Count > 0)
+        {
+            var wanted = Str(parameters["model"]);
+            var pick = wanted is null ? granted.ToList() : granted.Where(g => g.Ref == wanted).ToList();
+            if (pick.Count == 0) return Failed(entry, "invalid", "no such model for this site: " + (wanted ?? "none"));
+            chainOverride = new SkillChain
+            {
+                Skill = Vocabulary.Generate,
+                Stops = pick.SelectMany(g => g.SourceIds).Distinct(StringComparer.Ordinal)
+                    .Select(id => new ChainStop { SourceId = id, AskBeforePaid = false }).ToList(),
+            };
+            var roadIds = chainOverride.Stops.Select(s => s.SourceId).ToHashSet(StringComparer.Ordinal);
+            sourceOverride = _textSources.Where(s => roadIds.Contains(s.Id)).ToList();
+            named = wanted is not null;
+            refOf = source => pick.FirstOrDefault(g => g.SourceIds.Contains(source.Id))?.Ref;
+        }
+
         // The per-day limits of the wallet: the same for a text call as for a clip.
         var limits = _store.Read(s => (
             SitePerDay: Money.Parse(site.PerDay ?? s.Limits.SitePerDay, 0.20m),
@@ -1369,7 +1464,7 @@ public sealed class WalletEngine
         try
         {
             return await RouteTextAsync(entry, session, site, messages, chars, maxTokens, temperature, language, choices,
-                limits.CallsPerDay, limits.SitePerDay, limits.WalletPerDay, hold, started, ct).ConfigureAwait(false);
+                limits.CallsPerDay, limits.SitePerDay, limits.WalletPerDay, hold, started, ct, chainOverride, sourceOverride, named, refOf, onChunk).ConfigureAwait(false);
         }
         finally
         {
@@ -1381,10 +1476,12 @@ public sealed class WalletEngine
         ActivityEntry entry, GrantSession session, SiteRecord site, IReadOnlyList<ChatMessage> messages, int chars,
         int maxTokens, double temperature, string? language, IReadOnlyList<string>? choices,
         int callsPerDay, decimal sitePerDay, decimal walletPerDay, DailyHold hold, long started, CancellationToken ct,
-        SkillChain? chainOverride = null, IReadOnlyList<ITextSource>? sourceOverride = null)
+        SkillChain? chainOverride = null, IReadOnlyList<ITextSource>? sourceOverride = null, bool waitForBusy = false,
+        Func<ITextSource, string?>? refOf = null, Action<string>? onChunk = null)
     {
         using var routeTimeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        var routeBudget = TextRouteTimeout;
+        var routeBudget = TextRouteTimeout ?? TimeSpan.FromSeconds((session.Limits ?? TextLimits.Defaults).CallSeconds);
+        var sourceTimeout = TextSourceTimeout ?? routeBudget;
         if (routeBudget > TimeSpan.Zero) routeTimeout.CancelAfter(routeBudget);
         var routeDeadline = routeBudget > TimeSpan.Zero
             ? Stopwatch.GetTimestamp() + (long)(routeBudget.TotalSeconds * Stopwatch.Frequency)
@@ -1421,9 +1518,13 @@ public sealed class WalletEngine
                 break;
             }
 
-            // One call at a time per source: a second call waits a moment, then tries the next source.
-            var busy = _busy.GetOrAdd(source.Id, _ => new SemaphoreSlim(1, 1));
-            var busyWait = routeBudget > TimeSpan.Zero ? Min(BusyWait, Remaining(routeDeadline)) : BusyWait;
+            // One call at a time per local source (a runtime answers one request at a time), a few at once per paid one. A call
+            // on a chain waits a moment for a busy source and then tries the next; a call for one named model has nothing to
+            // fall back to and waits in line until its own deadline.
+            var busy = _busy.GetOrAdd(source.Id, _ => source.Paid ? new SemaphoreSlim(4, 4) : new SemaphoreSlim(1, 1));
+            var busyWait = waitForBusy
+                ? routeBudget > TimeSpan.Zero ? Remaining(routeDeadline) : TimeSpan.FromHours(1)
+                : routeBudget > TimeSpan.Zero ? Min(BusyWait, Remaining(routeDeadline)) : BusyWait;
             if (busyWait <= TimeSpan.Zero || !await busy.WaitAsync(busyWait, routeCt).ConfigureAwait(false))
             {
                 if (entry.ProviderCalled) ReleaseHeldCall(hold);
@@ -1527,7 +1628,7 @@ public sealed class WalletEngine
 
                 var ran = Stopwatch.GetTimestamp();
                 var (result, miss, cost) = await AnswerAsync(session, source, request, choices, at, estimate, route, Index(source), hold,
-                    sitePerDay, walletPerDay, callsPerDay, textChars, entry, routeCt, routeDeadline, ct).ConfigureAwait(false);
+                    sitePerDay, walletPerDay, callsPerDay, textChars, entry, routeCt, routeDeadline, ct, sourceTimeout, onChunk).ConfigureAwait(false);
                 totalCost = SafeAdd(totalCost, cost);
                 if (result is null)
                 {
@@ -1545,15 +1646,17 @@ public sealed class WalletEngine
                 entry.Milliseconds = (int)Stopwatch.GetElapsedTime(ran).TotalMilliseconds;
                 entry.Note = decision == Decision.Warn ? "warn: " + codes : null;
                 Log(entry);
+                var receipt = new JsonObject
+                {
+                    ["cost"] = Money.ToReceipt(totalCost),
+                    ["provider"] = ProviderReceipt(source),
+                };
+                if (refOf?.Invoke(source) is { } modelRef) receipt["model"] = modelRef;
                 return new JsonObject
                 {
                     ["ok"] = true,
                     ["output"] = new JsonObject { ["text"] = text },
-                    ["receipt"] = new JsonObject
-                    {
-                        ["cost"] = Money.ToReceipt(totalCost),
-                        ["provider"] = ProviderReceipt(source),
-                    },
+                    ["receipt"] = receipt,
                 };
             }
             finally
@@ -1585,12 +1688,12 @@ public sealed class WalletEngine
         GrantSession session, ITextSource source, TextRequest request, IReadOnlyList<string>? choices,
         DateTimeOffset at, decimal estimate, Route route, int index, DailyHold hold, decimal sitePerDay,
         decimal walletPerDay, int callsPerDay, int textChars, ActivityEntry entry, CancellationToken routeCt,
-        long routeDeadline, CancellationToken callerCt)
+        long routeDeadline, CancellationToken callerCt, TimeSpan sourceTimeout, Action<string>? onChunk = null)
     {
         TextAttempt first;
         try
         {
-            first = await InvokeTextAttemptAsync(source, request, routeCt, routeDeadline, callerCt, entry).ConfigureAwait(false);
+            first = await InvokeTextAttemptAsync(source, request, routeCt, routeDeadline, callerCt, entry, sourceTimeout, onChunk).ConfigureAwait(false);
         }
         catch
         {
@@ -1626,7 +1729,7 @@ public sealed class WalletEngine
                 TextAttempt second;
                 try
                 {
-                    second = await InvokeTextAttemptAsync(source, retryRequest, routeCt, routeDeadline, callerCt, entry).ConfigureAwait(false);
+                    second = await InvokeTextAttemptAsync(source, retryRequest, routeCt, routeDeadline, callerCt, entry, sourceTimeout).ConfigureAwait(false);
                 }
                 catch
                 {
@@ -1674,15 +1777,18 @@ public sealed class WalletEngine
     }
 
     async Task<TextAttempt> InvokeTextAttemptAsync(ITextSource source, TextRequest request, CancellationToken routeCt,
-        long routeDeadline, CancellationToken callerCt, ActivityEntry entry)
+        long routeDeadline, CancellationToken callerCt, ActivityEntry entry, TimeSpan sourceTimeout, Action<string>? onChunk = null)
     {
         entry.ProviderCalled = true;
         entry.ProviderCalls++;
         try
         {
             using var limit = CancellationTokenSource.CreateLinkedTokenSource(routeCt);
-            if (TextSourceTimeout > TimeSpan.Zero) limit.CancelAfter(Min(TextSourceTimeout, Remaining(routeDeadline)));
-            var answer = await source.GenerateAsync(request, limit.Token).ConfigureAwait(false);
+            if (sourceTimeout > TimeSpan.Zero) limit.CancelAfter(Min(sourceTimeout, Remaining(routeDeadline)));
+            // A streamed answer is a preview for the site; what comes back is still the whole text, and the one the site keeps.
+            var answer = onChunk is not null && request.Choices is null && source is IStreamingTextSource streaming
+                ? await streaming.GenerateStreamAsync(request, onChunk, limit.Token).ConfigureAwait(false)
+                : await source.GenerateAsync(request, limit.Token).ConfigureAwait(false);
             return new TextAttempt(answer, answer.Cost, true, true, null);
         }
         catch (TextSourceException e)
@@ -2021,6 +2127,7 @@ public sealed class WalletEngine
             var r = Site(s, origin);
             r.Status = SiteStatus.None;
             r.Skills = [];
+            r.Models = [];
             r.AutoDecide = false;
             r.PaidAllowed = false;
             DropLinkDecisions(origin);
@@ -2235,6 +2342,15 @@ public sealed class WalletEngine
         ExpectedCost = r.ExpectedCost, Summary = r.Summary, Privacy = r.Privacy, Languages = [.. r.Languages], PaidAllowed = r.PaidAllowed,
         PerDay = r.PerDay, CallsPerDay = r.CallsPerDay, QuietRequests = r.QuietRequests, LastRequest = r.LastRequest, DecidedAt = r.DecidedAt,
         Paused = r.Paused, PausedAt = r.PausedAt, PauseReason = r.PauseReason,
+        TextInputChars = r.TextInputChars, TextAnswerTokens = r.TextAnswerTokens, TextCallSeconds = r.TextCallSeconds,
+        ParallelCalls = r.ParallelCalls, CallsPerMinute = r.CallsPerMinute,
+        Asked = r.Asked is null ? null : new SiteAsk
+        {
+            InputChars = r.Asked.InputChars, AnswerTokens = r.Asked.AnswerTokens, CallSeconds = r.Asked.CallSeconds,
+            ParallelCalls = r.Asked.ParallelCalls, CallsPerMinute = r.Asked.CallsPerMinute,
+        },
+        Models = r.Models.Select(m => new SiteModels { Skill = m.Skill, SourceIds = [.. m.SourceIds] }).ToList(),
+        ShowModelNames = r.ShowModelNames,
     };
 
     static string? Str(JsonNode? node) => node is JsonValue v && v.TryGetValue<string>(out var s) ? s : null;

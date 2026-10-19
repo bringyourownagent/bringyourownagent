@@ -20,8 +20,20 @@ public sealed class WalletRegistry
 {
     static readonly HashSet<string> Kinds = new(StringComparer.Ordinal)
     {
-        SourceKinds.LmStudio, SourceKinds.Ollama, SourceKinds.OpenAiCompatible, SourceKinds.OpenRouter,
+        SourceKinds.LmStudio, SourceKinds.Ollama, SourceKinds.OpenAiCompatible, SourceKinds.OpenRouter, ApiServices.Kind,
     };
+
+    /// <summary>The kinds that sit behind a key and cost money: OpenRouter and the API services.</summary>
+    static bool IsPaidKind(string? kind) =>
+        kind?.Trim().ToLowerInvariant() is SourceKinds.OpenRouter or ApiServices.Kind;
+
+    /// <summary>A known service has its own address; the one a visitor typed for it is ignored. Only a service he names himself keeps his.</summary>
+    static SourceDraft Normalize(SourceDraft draft)
+    {
+        if (!string.Equals(draft.Kind?.Trim(), ApiServices.Kind, StringComparison.OrdinalIgnoreCase)) return draft;
+        var service = draft.Service?.Trim().ToLowerInvariant();
+        return ApiServices.Find(service) is { } known ? draft with { Service = known.Id, Endpoint = known.BaseUrl } : draft with { Service = service };
+    }
 
     readonly SettingsStore _store;
     readonly SecretStore _secrets;
@@ -133,6 +145,7 @@ public sealed class WalletRegistry
 
     public RegistryOperationResult AddSource(SourceDraft draft, string actor = "you in the window")
     {
+        draft = Normalize(draft);
         var validation = ValidateDraft(draft, visitorEntered: true);
         if (validation is not null) return RegistryOperationResult.Failure(validation);
         var endpoint = Endpoint(draft.Kind, draft.Endpoint);
@@ -145,6 +158,7 @@ public sealed class WalletRegistry
     public async Task<RegistryOperationResult> AddSourceAsync(SourceDraft draft, string actor, string agentName,
         CancellationToken ct = default)
     {
+        draft = Normalize(draft);
         var validation = ValidateDraft(draft, visitorEntered: false);
         if (validation is not null) return RegistryOperationResult.Failure(validation);
         var endpoint = Endpoint(draft.Kind, draft.Endpoint);
@@ -181,7 +195,8 @@ public sealed class WalletRegistry
         EndpointAssessment? assessment = null)
     {
         var skill = SkillOf(draft.Skills);
-        var id = MakeId(draft.Kind, draft.Model, draft.Endpoint, skill);
+        var id = MakeId(draft.Kind, draft.Model, draft.Endpoint, skill, draft.Service);
+        var endpointOfDraft = Endpoint(draft.Kind, draft.Endpoint);
         lock (_gate)
         {
             if (KnownSourceIds().Contains(id, StringComparer.Ordinal))
@@ -203,8 +218,12 @@ public sealed class WalletRegistry
                     ConfirmedAddressClass = assessment?.AddressClass,
                     Skills = CleanList(draft.Skills),
                     Languages = CleanList(draft.Languages),
+                    Service = IsApi(draft.Kind) ? draft.Service?.Trim().ToLowerInvariant() : null,
+                    // Every model behind one OpenRouter key or one service's key uses the one key: the visitor enters it once.
+                    SecretRef = IsApi(draft.Kind) ? ApiServices.SecretName(draft.Service, endpointOfDraft)
+                        : draft.Kind.Trim().Equals(SourceKinds.OpenRouter, StringComparison.OrdinalIgnoreCase) ? "openrouter" : null,
                 });
-                AddStop(s, id, skill, string.Equals(draft.Kind.Trim(), SourceKinds.OpenRouter, StringComparison.OrdinalIgnoreCase));
+                AddStop(s, id, skill, IsPaidKind(draft.Kind));
             });
         }
 
@@ -279,9 +298,9 @@ public sealed class WalletRegistry
 
         var oldSkill = SkillOf(setting.Skills);
         var newSkill = SkillOf(update.Skills ?? setting.Skills);
-        if (newSkill == Vocabulary.Transcribe && kind == SourceKinds.OpenRouter)
+        if (newSkill == Vocabulary.Transcribe && IsPaidKind(kind))
             return RegistryOperationResult.Failure(SpeechNeedsRuntime);
-        var newId = MakeId(kind, model, update.Endpoint ?? setting.Endpoint, newSkill);
+        var newId = MakeId(kind, model, update.Endpoint ?? setting.Endpoint, newSkill, setting.Service);
         if (!string.Equals(newId, id, StringComparison.Ordinal) && KnownSourceIds().Any(x => x == newId))
             return RegistryOperationResult.Failure("A source with id '" + newId + "' already exists.");
 
@@ -319,7 +338,7 @@ public sealed class WalletRegistry
             if (oldSkill != newSkill)
                 foreach (var chain in s.Chains.Where(c => c.Skill == (oldSkill)))
                     chain.Stops.RemoveAll(stop => stop.SourceId == newId);
-            AddStop(s, newId, newSkill, kind == SourceKinds.OpenRouter);
+            AddStop(s, newId, newSkill, IsPaidKind(kind));
         });
         Change("source-updated", newId, actor, "Updated source " + DisplayId(newId));
         return RegistryOperationResult.Success("Source updated: " + newId + ".", newId);
@@ -372,6 +391,11 @@ public sealed class WalletRegistry
     {
         var setting = _store.Snapshot().Sources.FirstOrDefault(s => s.Id == id);
         if (setting is null) return RegistryOperationResult.Failure("There is no source with id '" + id + "'.");
+        // One key serves every model behind its provider (and the OpenRouter key also serves paid speech): removing one model never takes
+        // a key that another model, or the paid speech source, still uses.
+        var keyName = SecretName(id, setting);
+        if (deleteSecret && (keyName == "openrouter" || _store.Snapshot().Sources.Any(x => x.Id != id && SecretName(x.Id, x) == keyName)))
+            deleteSecret = false;
         if (deleteSecret)
         {
             try { _secrets.Remove(SecretName(id, setting)); }
@@ -627,14 +651,14 @@ public sealed class WalletRegistry
     {
         var kind = source.Kind!.ToLowerInvariant();
         var skills = source.Skills.Count == 0 ? [Vocabulary.Generate] : source.Skills.ToArray();
-        var paid = kind == SourceKinds.OpenRouter;
+        var paid = IsPaidKind(kind);
         var validEndpoint = Uri.TryCreate(source.Endpoint, UriKind.Absolute, out var endpoint)
             && endpoint.Scheme is "http" or "https";
             var loopback = validEndpoint && (OpenAiLoopback(endpoint!.Host) || endpoint.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase));
         var runs = paid ? Runs.ApiKey : loopback ? Runs.ThisDevice : "another computer (" + (endpoint?.IdnHost ?? "unknown host") + ")";
         var state = paid && !HasKey(source.Id, source) ? SourceState.NoKey : validEndpoint ? SourceState.Ready : SourceState.Broken;
         var name = DisplayName(source);
-        var shownEndpoint = paid ? "https://openrouter.ai/api/v1" : source.Endpoint;
+        var shownEndpoint = kind == SourceKinds.OpenRouter ? "https://openrouter.ai/api/v1" : source.Endpoint;
         return new RegistrySourceInfo(source.Id, name, kind, source.Model, shownEndpoint, skills, source.Languages.ToArray(), runs,
             paid ? "api-key" : loopback ? "local-model" : "home-server", paid, source.Enabled, false, HasKey(source.Id, source), state.ToString().ToLowerInvariant(),
             paid && !HasKey(source.Id, source) ? "no API key added" : validEndpoint ? "configured; test before use" : "invalid endpoint: use a complete http or https URL");
@@ -670,13 +694,22 @@ public sealed class WalletRegistry
     }
 
     static string SecretName(string id, SourceSetting? setting) => setting?.SecretRef
-        ?? (id == "openrouter-scribe" ? "openrouter" : "source-key:" + id);
+        ?? (id == "openrouter-scribe" || setting?.Kind == SourceKinds.OpenRouter ? "openrouter" : "source-key:" + id);
 
     static string? ValidateDraft(SourceDraft draft, bool visitorEntered)
     {
         var kind = draft.Kind?.Trim().ToLowerInvariant();
-        if (kind is null || !Kinds.Contains(kind)) return "Unknown source kind. Use lmstudio, ollama, openai-compatible, or openrouter.";
+        if (kind is null || !Kinds.Contains(kind)) return "Unknown source kind. Use lmstudio, ollama, openai-compatible, openrouter, or api.";
         if (string.IsNullOrWhiteSpace(draft.Model)) return "Tell the wallet the model id before adding the source.";
+        if (kind == ApiServices.Kind)
+        {
+            var service = draft.Service?.Trim().ToLowerInvariant();
+            if (service != ApiServices.Custom && ApiServices.Find(service) is null)
+                return "Unknown service. Use one of: " + string.Join(", ", ApiServices.All.Select(s => s.Id)) + ", or custom with its https address.";
+            if (!Uri.TryCreate(Endpoint(kind, draft.Endpoint), UriKind.Absolute, out var service1)
+                || !(service1.Scheme == Uri.UriSchemeHttps || service1.Scheme == Uri.UriSchemeHttp && OpenAiLoopback(service1.Host)))
+                return "A model behind an API key needs a complete https address: the key is never sent in the clear.";
+        }
         var endpoint = Endpoint(kind, draft.Endpoint);
         var endpointCheck = EndpointPolicy.Check(endpoint, agentSupplied: !visitorEntered);
         if (!endpointCheck.Allowed) return endpointCheck.Message;
@@ -685,7 +718,7 @@ public sealed class WalletRegistry
             return "Added model sources serve text.generate (text) or audio.transcribe (speech to text).";
         if (draft.Skills is { Count: > 0 } && draft.Skills.Select(skill => skill.Trim()).Distinct(StringComparer.Ordinal).Count() > 1)
             return "Add one source per skill: the same model can be added twice, once for text and once for speech.";
-        if (SkillOf(draft.Skills) == Vocabulary.Transcribe && kind == SourceKinds.OpenRouter) return SpeechNeedsRuntime;
+        if (SkillOf(draft.Skills) == Vocabulary.Transcribe && IsPaidKind(kind)) return SpeechNeedsRuntime;
         return null;
     }
 
@@ -697,11 +730,14 @@ public sealed class WalletRegistry
     static string SkillOf(IReadOnlyList<string>? skills) =>
         skills?.Any(skill => skill.Trim() == Vocabulary.Transcribe) == true ? Vocabulary.Transcribe : Vocabulary.Generate;
 
-    static string MakeId(string kind, string? model, string? endpoint, string skill)
+    static bool IsApi(string? kind) => string.Equals(kind?.Trim(), ApiServices.Kind, StringComparison.OrdinalIgnoreCase);
+
+    static string MakeId(string kind, string? model, string? endpoint, string skill, string? service = null)
     {
         var normalizedKind = kind.Trim().ToLowerInvariant();
         var normalizedModel = model!.Trim();
         if (normalizedKind == SourceKinds.OpenRouter) return normalizedKind + ":" + normalizedModel;
+        if (normalizedKind == ApiServices.Kind) return SourceIds.Api(service ?? "", normalizedModel, Endpoint(normalizedKind, endpoint));
         return SourceIds.OpenAiCompatible(normalizedKind, normalizedModel, Endpoint(normalizedKind, endpoint), skill);
     }
 
@@ -709,7 +745,7 @@ public sealed class WalletRegistry
         ? null
         : setting.Kind.ToLowerInvariant() == SourceKinds.OpenRouter
             ? SourceKinds.OpenRouter + ":" + setting.Model.Trim()
-            : MakeId(setting.Kind, setting.Model, setting.Endpoint, SkillOf(setting.Skills));
+            : MakeId(setting.Kind, setting.Model, setting.Endpoint, SkillOf(setting.Skills), setting.Service);
     static string DisplayId(string id) => id.Length > 80 ? id[..77] + "..." : id;
     static string? Clean(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
@@ -834,7 +870,7 @@ public sealed class WalletRegistry
         var chain = settings.Chain(Vocabulary.Generate);
         if (chain.Stops.Any(stop => stop.SourceId == sourceId)) return;
         var before = paid ? chain.Stops.Count : chain.Stops.FindIndex(stop =>
-            settings.Sources.FirstOrDefault(source => source.Id == stop.SourceId)?.Kind == SourceKinds.OpenRouter);
+            IsPaidKind(settings.Sources.FirstOrDefault(source => source.Id == stop.SourceId)?.Kind));
         if (before < 0) before = chain.Stops.Count;
         chain.Stops.Insert(before, new ChainStop { SourceId = sourceId });
     }

@@ -169,9 +169,9 @@ public class TextEngineTests
         Assert.False(Ok(await _engine.HandleAsync(TextCall(Site, grant, messages: []))));
         Assert.Equal("no messages in the input", _log.Recent()[0].Note);
 
-        var many = Messages(Enumerable.Range(0, 33).Select(i => ("user", "hi " + i)).ToArray());
+        var many = Messages(Enumerable.Range(0, 129).Select(i => ("user", "hi " + i)).ToArray());
         Assert.False(Ok(await _engine.HandleAsync(TextCall(Site, grant, messages: many))));
-        Assert.Equal("too many messages: the wallet takes at most 32", _log.Recent()[0].Note);
+        Assert.Equal("too many messages: the wallet takes at most 128", _log.Recent()[0].Note);
 
         Assert.False(Ok(await _engine.HandleAsync(TextCall(Site, grant, messages: Messages(("tool", "hi"))))));
         Assert.Contains("message role not allowed", _log.Recent()[0].Note);
@@ -179,9 +179,9 @@ public class TextEngineTests
         Assert.False(Ok(await _engine.HandleAsync(TextCall(Site, grant, messages: Messages(("user", ""))))));
         Assert.Equal("the messages are empty", _log.Recent()[0].Note);
 
-        var long_ = new string('x', 20_001);
+        var long_ = new string('x', 100_001);
         Assert.False(Ok(await _engine.HandleAsync(TextCall(Site, grant, messages: Messages(("user", long_))))));
-        Assert.Equal("text too long for the wallet: at most 20000 characters", _log.Recent()[0].Note);
+        Assert.Equal("text too long for the wallet: at most 100000 characters", _log.Recent()[0].Note);
 
         Assert.Equal(0, _first.Calls);                            // the sources never saw any of it
         Assert.All(_log.Recent().Take(5), e => Assert.Equal("invalid", e.Outcome));
@@ -241,7 +241,7 @@ public class TextEngineTests
             ["maxTokens"] = 100_000,
             ["temperature"] = 5.5,
         }));
-        Assert.Equal(1024, _first.LastRequest!.MaxTokens);
+        Assert.Equal(20_000, _first.LastRequest!.MaxTokens);
         Assert.Equal(1.0, _first.LastRequest.Temperature);        // both end at the wallet's own bounds
     }
 
@@ -392,10 +392,10 @@ public class TextEngineTests
     [Fact]
     public async Task ATextAnswerLongerThanTheCapIsCut()
     {
-        _first.Answers = new Queue<string>([new string('y', 5000)]);
+        _first.Answers = new Queue<string>([new string('y', 130_000)]);
         var grant = await GrantAsync();
         var result = await _engine.HandleAsync(TextCall(Site, grant));
-        Assert.Equal(4000, result!["output"]!["text"]!.GetValue<string>().Length);
+        Assert.Equal(128_000, result!["output"]!["text"]!.GetValue<string>().Length);
     }
 
     // ------------------------------------------------------------------ hidden reasoning

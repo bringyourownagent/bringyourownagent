@@ -15,16 +15,23 @@ A manifest asks for it like any skill: `"skills": { "text.generate": { "required
 
 **The wallet's own caps**, whatever a page asks for:
 
-| what | at most | default |
-|---|---|---|
-| messages | 32 | — |
-| characters across all messages | 20 000 | — |
-| `maxTokens` | 1024 | 512 |
-| `temperature` | 0–1 | 0.7 |
-| `choices` | 20 × 100 chars, 500 together | — |
-| the answer back to the page | 4000 chars (cut) | — |
+| what | default | ceiling | who sets it |
+|---|---|---|---|
+| characters across all messages (`maxTextChars`) | 100 000 | 400 000 | the visitor, per site; the site may ask |
+| `maxTokens` (the answer's length, `maxAnswerTokens`) | 512 if the page names none | 32 000 (default limit 20 000) | the visitor, per site; the site may ask |
+| the longest wait for a call (`maxCallSeconds`) | 300 s | 600 s | the visitor, per site; the site may ask |
+| calls in flight at once (`maxParallelCalls`) | 8 | 32 | the visitor, per site; the site may ask |
+| calls a minute (`maxCallsPerMinute`) | 300 | 600 | the visitor, per site; the site may ask |
+| messages | 128 | 128 | fixed |
+| `temperature` | 0.7 | 0–1 | the page |
+| `choices` | 20 × 100 chars, 500 together | — | fixed |
+| the answer back to the page | 128 000 chars (cut) | — | fixed |
 
-`language` narrows to the primary tag (`de-AT` → `de`) and defaults to the manifest's only language. One text source answers one call at a time; while it is busy the wallet waits 10 s and then moves to the next source. Each source gets at most 40 s and the complete text route gets 74 s, leaving room inside the page's 90 s call timeout. The caller's cancellation is passed to the provider and releases the reservation when it leaves. Every refusal — too many messages, a bad role, an empty input, the gate's limits — comes back as `{ ok: false }` with a plain reason in the activity log, and no source ever sees a broken request.
+The limits are the visitor's own (Limits page, for every site and for one), held back by what the site declared in `purpose.limits`; see [spec/CONTRACT.md](../spec/CONTRACT.md) section 3.4. `language` narrows to the primary tag (`de-AT` → `de`) and defaults to the manifest's only language. A local source answers one call at a time and a source behind a key four; a call on the wallet's route waits 10 s for a busy source and then moves to the next, while a call for one named model (below) has nothing to fall back to and waits in line for its own limit. Each call gets the visitor's wait limit (300 s unless set otherwise) for the source and for the whole route. The caller's cancellation is passed to the provider and releases the reservation when it leaves. Every refusal — too many messages, a bad role, an empty input, the gate's limits — comes back as `{ ok: false }` with a plain reason in the activity log, and no source ever sees a broken request.
+
+### Several models, and a stream
+
+A site may ask for several different models ([spec/CONTRACT.md](../spec/CONTRACT.md) section 3.3): the consent window ticks what the visitor has, the grant lists the models the site got (`ref`, name, id, where it runs), and a call names one with `params.model`. A call that names no model goes to the site's models in the visitor's order; a site that asked for no models gets the wallet's own route, as before. `params.stream: true` over the direct link answers in `chunk` frames and then the result. Models behind a key sit at OpenRouter (hundreds of models, one key) or at a vendor's own API (OpenAI, Anthropic, Google, MiniMax, DeepSeek, xAI, Z.ai, Mistral, or an address the visitor names); the catalog of OpenRouter, read once a day and kept on disk, gives the pickers their list and the price of a call.
 
 ## 2. What happens on a call
 

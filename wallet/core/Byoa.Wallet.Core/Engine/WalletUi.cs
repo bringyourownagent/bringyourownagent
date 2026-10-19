@@ -1,3 +1,4 @@
+using Byoa.Wallet.Settings;
 using Byoa.Wallet.Sources;
 
 namespace Byoa.Wallet.Engine;
@@ -54,6 +55,7 @@ public sealed record RouteGroup(RouteLine Route, IReadOnlyList<string> Languages
 }
 
 /// <summary>One row of the consent window: a skill, the sources that will answer it, and the reason.</summary>
+/// <param name="Models">For a skill whose site asked for several models: the models to tick, instead of the route lines.</param>
 public sealed record ConsentRow(
     string Skill,
     string SkillName,
@@ -62,7 +64,12 @@ public sealed record ConsentRow(
     bool CanServe,
     IReadOnlyList<RouteLine> Routes,
     IReadOnlyList<string> Languages,
-    string Why);
+    string Why,
+    ModelSection? Models = null);
+
+/// <summary>What the site asked for above the visitor's own limits, and what those limits are now.</summary>
+/// <param name="Wanted">Only the values above the visitor's (each at most the wallet's ceiling).</param>
+public sealed record LimitsAsk(RequestedLimits Wanted, TextLimitSet Current);
 
 /// <summary>Everything the short consent window shows.</summary>
 /// <param name="IsDifference">The site already has a grant and asks for more: only the new parts are shown.</param>
@@ -80,7 +87,8 @@ public sealed record ConsentModel(
     bool AutoDecide,
     bool IsDifference,
     string? PausedNote = null,
-    bool FromLink = false)
+    bool FromLink = false,
+    LimitsAsk? Limits = null)
 {
     /// <summary>A required skill no source can serve: Allow is not offered.</summary>
     public bool MissingRequired => Rows.Any(r => r.Required && !r.CanServe);
@@ -88,7 +96,12 @@ public sealed record ConsentModel(
 
 /// <summary>The visitor's answer in the consent window.</summary>
 /// <param name="LeftOff">Optional skills the visitor unticked.</param>
-public sealed record ConsentAnswer(bool Allow, decimal Budget, bool AutoDecide, IReadOnlyList<string> LeftOff)
+/// <param name="Models">The models he ticked for each skill that asked for several (the keys of <see cref="ModelChoice"/>), in order; null takes the wallet's proposal.</param>
+/// <param name="ShowNames">The site may see the names of its models.</param>
+/// <param name="UseSiteLimits">Accept the limits the site asked for above his own.</param>
+public sealed record ConsentAnswer(
+    bool Allow, decimal Budget, bool AutoDecide, IReadOnlyList<string> LeftOff,
+    IReadOnlyDictionary<string, IReadOnlyList<string>>? Models = null, bool ShowNames = true, bool UseSiteLimits = true)
 {
     public static readonly ConsentAnswer Declined = new(false, 0, false, []);
 }
