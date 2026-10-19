@@ -33,9 +33,13 @@ public sealed class OpenRouterTextSource : ITextSource, IStreamingTextSource
     string? _lastError;
 
     /// <param name="secretRef">The name of the key in the secret store; null means the wallet's OpenRouter key.</param>
+    readonly Func<IModelCatalog>? _catalog;
+
+    /// <param name="catalog">The wallet's copy of OpenRouter's public model list: the price of a model it knows is used from the start, before this source has read the list itself.</param>
     public OpenRouterTextSource(string model, string? label, string? secretRef, HttpClient http,
-        Func<string?> key, Func<bool> hasKey, Uri? baseUrl = null)
+        Func<string?> key, Func<bool> hasKey, Uri? baseUrl = null, Func<IModelCatalog>? catalog = null)
     {
+        _catalog = catalog;
         Model = model;
         _displayModel = SourceLabels.Clean(model) ?? "model";
         // Keep the wire model id unchanged, but give every UI path a cleaned fallback before Name renders it.
@@ -70,11 +74,19 @@ public sealed class OpenRouterTextSource : ITextSource, IStreamingTextSource
     {
         lock (_priceGate)
         {
-            if (_promptPerToken is not { } prompt || _completionPerToken is not { } completion) return FlatEstimate;
+            var prompt = _promptPerToken;
+            var completion = _completionPerToken;
+            if ((prompt is null || completion is null) && _catalog?.Invoke().Find(ModelNames.Canon(Model)) is { PromptPerToken: { } cp, CompletionPerToken: { } cc })
+            {
+                prompt = cp;
+                completion = cc;
+            }
+
+            if (prompt is not { } promptPrice || completion is not { } completionPrice) return FlatEstimate;
             var input = request.Messages.Sum(m => m.Content.Length) / 4m;   // rough: four characters to a token
             try
             {
-                var answer = Estimate(input, prompt) + Estimate(request.MaxTokens, completion);
+                var answer = Estimate(input, promptPrice) + Estimate(request.MaxTokens, completionPrice);
                 return Math.Max(0.000001m, Math.Ceiling(answer * 1_000_000) / 1_000_000);
             }
             catch (OverflowException)

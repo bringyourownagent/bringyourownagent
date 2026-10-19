@@ -325,7 +325,7 @@ public sealed class SourceSet : IDisposable
             SourceKinds.OpenRouter
                 => new OpenRouterTextSource(setting.Model.Trim(), setting.Label, setting.SecretRef, TextHttp,
                     () => testKey ?? _secrets.Get(SecretName(setting.SecretRef)),
-                    () => testKey is not null || _secrets.Has(SecretName(setting.SecretRef))),
+                    () => testKey is not null || _secrets.Has(SecretName(setting.SecretRef)), catalog: () => Catalog),
             ApiServices.Kind
                 when !string.IsNullOrWhiteSpace(setting.Service)
                 => new CloudChatSource(setting.Service.Trim().ToLowerInvariant(), setting.Model.Trim(), setting.Label, endpoint, TextHttp,

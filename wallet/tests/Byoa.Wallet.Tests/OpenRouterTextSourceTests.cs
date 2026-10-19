@@ -171,6 +171,25 @@ public class OpenRouterTextSourceTests
     }
 
     [Fact]
+    public void TheWalletsCatalogGivesThePriceBeforeTheSourceHasReadTheListItself()
+    {
+        using var server = new FakeHttp(Port);
+        var catalog = new Catalog(new CatalogModel("google/gemma-3-12b-it", "Gemma", 1, 0.0000015m, 0.000002m, 1));
+        var source = new OpenRouterTextSource("google/gemma-3-12b-it", null, null, NoRedirects(), () => "sk-test", () => true, new Uri(server.Url), () => catalog);
+        Assert.Equal(0.001036m, source.EstimateCost(Plain()));              // the same price as after reading the list, from the first call on
+        Assert.NotEqual(OpenRouterTextSource.FlatEstimate, source.EstimateCost(Plain()));
+        var unknown = new OpenRouterTextSource("some/other-model", null, null, NoRedirects(), () => "sk-test", () => true, new Uri(server.Url), () => catalog);
+        Assert.Equal(OpenRouterTextSource.FlatEstimate, unknown.EstimateCost(Plain()));
+    }
+
+    sealed class Catalog(CatalogModel model) : IModelCatalog
+    {
+        public bool Loaded => true;
+        public CatalogModel? Find(string? name) => ModelNames.Canon(name) == model.Canonical ? model : null;
+        public IReadOnlyList<CatalogModel> Search(string? query, CatalogFilter filter = CatalogFilter.All, int limit = 40) => [model];
+    }
+
+    [Fact]
     public async Task APriceListWithoutTheModelLeavesTheFlatEstimate()
     {
         using var server = new FakeHttp(Port);
