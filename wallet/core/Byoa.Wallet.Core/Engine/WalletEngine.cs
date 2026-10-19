@@ -2071,6 +2071,27 @@ public sealed class WalletEngine
         SiteClosed?.Invoke(origin);
     }
 
+    /// <summary>
+    /// Sites → Resume: lifts a pause, the visitor's own or the one for being unused. The "unused" clock starts again from now, so a site
+    /// that was paused for a day without use is not paused again the moment it is resumed. Its sessions ended with the pause: it connects
+    /// again with its next request (a link asks as always; "decide on my own" works again for a reconnect).
+    /// </summary>
+    public void Resume(string origin)
+    {
+        var site = FindSite(origin);
+        if (site is not { Status: SiteStatus.Allowed } || (!site.Paused && UnusedSince(site) is null)) return;
+        _store.Update(s =>
+        {
+            var r = Site(s, origin);
+            r.Paused = false;
+            r.PausedAt = null;
+            r.PauseReason = null;
+            r.LastRequest = Now;
+        });
+        Log(new ActivityEntry { Origin = origin, Kind = Wire.Request, Outcome = "resumed", Note = "resumed in the settings" });
+        SitesChanged?.Invoke();
+    }
+
     /// <summary>An allowed site that may reconnect and get a page's grant without asking: "decide on my own" on, and not paused. A link always asks.</summary>
     public bool DecidesOnItsOwn(string origin) => FindSite(origin) is { Status: SiteStatus.Allowed, AutoDecide: true, Paused: false };
 

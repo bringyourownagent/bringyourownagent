@@ -633,11 +633,7 @@ sealed class AgentPipeServer : IDisposable
             case "unblock": _w.Engine.Block(origin, false); break;
             case "pause": _w.Engine.Pause(origin); break;
             case "resume":
-                _w.Store.Update(s =>
-                {
-                    var site = s.Site(origin);
-                    if (site is not null) { site.Paused = false; site.PausedAt = null; site.PauseReason = null; }
-                });
+                _w.Engine.Resume(origin);           // also starts the "unused" clock again: the site is not paused again at once
                 _w.Activity.Add(new ActivityEntry { At = DateTimeOffset.UtcNow, Origin = origin, Kind = "change", Outcome = "ok", Actor = actor, Change = "Resumed site" });
                 break;
             case "allow": return Failure("A site must be allowed through its visitor consent window; the agent cannot create that consent.");

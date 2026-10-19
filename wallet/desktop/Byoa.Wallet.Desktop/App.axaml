@@ -213,6 +213,22 @@
       <Setter Property="Background" Value="{StaticResource Field}" />
     </Style>
 
+    <!-- a label that is also a button (the red "Paused" of a site: click to resume): no button chrome around it -->
+    <Style Selector="Button.badge">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="Padding" Value="0" />
+    </Style>
+    <Style Selector="Button.badge:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="Transparent" />
+    </Style>
+    <Style Selector="Button.badge:pointerover">
+      <Setter Property="Opacity" Value="0.82" />
+    </Style>
+    <Style Selector="Button.badge:pressed /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="Transparent" />
+    </Style>
+
     <!-- surfaces -->
     <Style Selector="Border.popup">
       <Setter Property="Background" Value="White" />

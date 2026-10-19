@@ -261,7 +261,7 @@ sealed class SettingsWindow : Window
             : null;
         var (chip, kind, line) = site.Status switch
         {
-            SiteStatus.Allowed when paused is not null => ("Paused", "orange", paused + ". It keeps what you allowed; its next request, after your click, asks you to resume."),
+            SiteStatus.Allowed when paused is not null => ("Paused", "orange", paused + ". It keeps what you allowed. Press Resume, or its next request, after your click, asks you to resume."),
             SiteStatus.Allowed => ("Allowed", "", site.AutoDecide ? "Allowed. Next time the wallet decides on its own, within these limits." : "Allowed within your limits. Each new visit asks again after your click."),
             SiteStatus.Declined => ("Declined", "outline", "You declined last time. It may ask again after your next click."),
             SiteStatus.Blocked => ("Blocked", "ink", "Blocked: its requests never show a notice, and it hears only “AI unavailable”."),
@@ -275,7 +275,24 @@ sealed class SettingsWindow : Window
         AutomationProperties.SetAutomationId(dot, "SiteActivity-" + host);
         var title = Ui.Row(9, dot, Ui.Tile(Ui.Globe, 26), Ui.Text(host, "host"), Ui.Text(when, "muted", "small"));
         ((TextBlock)title.Children[2]).FontSize = 19;
-        card.Children.Add(Ui.Columns("*,Auto", title, Ui.Chip(chip, kind)));
+        Control badge = Ui.Chip(chip, kind);
+        if (site.Status == SiteStatus.Allowed && paused is not null)
+        {
+            // the red «Paused» label is a switch too: one click lifts the pause (the card turns to «Allowed»); a real button, so the keyboard and screen readers get it too
+            var button = new Button { Content = badge, HorizontalAlignment = HorizontalAlignment.Right };
+            button.Classes.Add("badge");
+            ToolTip.SetTip(button, "Click to resume");
+            AutomationProperties.SetAutomationId(button, "SitePausedBadge-" + host);
+            AutomationProperties.SetName(button, "Paused. Click to resume");
+            button.Click += (_, _) =>
+            {
+                _w.Engine.Resume(site.Origin);
+                Render();
+            };
+            badge = button;
+        }
+
+        card.Children.Add(Ui.Columns("*,Auto", title, badge));
         card.Children.Add(Ui.Wrap(line, "muted"));
         if (!string.IsNullOrEmpty(site.Summary))
         {
@@ -314,7 +331,9 @@ sealed class SettingsWindow : Window
         var buttons = Ui.Row(8);
         if (site.Status == SiteStatus.Allowed)
         {
-            if (paused is null) buttons.Children.Add(Ui.Button("Pause", "deny", "SitePause-" + host, () => { _w.Engine.Pause(site.Origin); Render(); }, "small"));
+            buttons.Children.Add(paused is null
+                ? Ui.Button("Pause", "deny", "SitePause-" + host, () => { _w.Engine.Pause(site.Origin); Render(); }, "small")
+                : Ui.Button("Resume", "allow", "SiteResume-" + host, () => { _w.Engine.Resume(site.Origin); Render(); }, "small"));
             buttons.Children.Add(Ui.Button("Revoke", "deny", "SiteRevoke-" + host, () => { _w.Engine.Revoke(site.Origin); Render(); }, "small"));
         }
 
@@ -1032,6 +1051,7 @@ sealed class SettingsWindow : Window
                 "blocked" => ("Blocked", "ink"),
                 "revoked" => ("Revoked", "outline"),
                 "paused" => ("Paused", "orange"),
+                "resumed" => ("Resumed", ""),
                 "connected" => ("Connected", ""),
                 "ignored" => ("Ignored", "outline"),
                 "error" => ("Refused", "ink"),

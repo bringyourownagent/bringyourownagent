@@ -477,6 +477,58 @@ public class EngineTests
     }
 
     [Fact]
+    public async Task ResumeLiftsThePauseAtOnceAndTheSiteIsGrantedAgainOnItsOwn()
+    {
+        _ui.Consent = new ConsentAnswer(true, 0.05m, AutoDecide: true, []);
+        await GrantAsync();
+        _engine.Pause(Site);
+        Assert.NotNull(_engine.PausedNow(_engine.FindSite(Site)!));
+
+        _engine.Resume(Site);
+        Assert.False(_store.Read(s => s.Site(Site)!.Paused));
+        Assert.Null(_store.Read(s => s.Site(Site)!.PauseReason));
+        Assert.Null(_engine.PausedNow(_engine.FindSite(Site)!));
+        Assert.True(_engine.DecidesOnItsOwn(Site));
+        Assert.Equal("resumed", _log.Recent()[0].Outcome);
+
+        var asked = _ui.Consents.Count;
+        Assert.NotNull(await _engine.HandleAsync(Clips.Request(Site, click: false)));     // "decide on my own" works again: no question
+        Assert.Equal(asked, _ui.Consents.Count);
+    }
+
+    [Fact]
+    public async Task ResumingASiteThatWasPausedForBeingUnusedStartsTheClockAgain()
+    {
+        _store.Update(s => s.Limits.PauseUnusedAfterHours = 1);
+        _ui.Consent = new ConsentAnswer(true, 0.05m, AutoDecide: true, []);
+        await GrantAsync();
+        _time.Now += TimeSpan.FromHours(3);
+        Assert.NotNull(_engine.PausedNow(_engine.FindSite(Site)!));                        // due, not stored yet
+        Assert.True(_engine.PauseSiteIfDue(Site));
+        Assert.True(_store.Read(s => s.Site(Site)!.Paused));                               // now stored: "unused"
+
+        _engine.Resume(Site);
+        Assert.False(_store.Read(s => s.Site(Site)!.Paused));
+        Assert.Null(_engine.PausedNow(_engine.FindSite(Site)!));                           // not paused again at the very moment
+        Assert.False(_engine.PauseSiteIfDue(Site));
+
+        _time.Now += TimeSpan.FromMinutes(61);
+        Assert.NotNull(_engine.PausedNow(_engine.FindSite(Site)!));                        // an hour of nothing later, it is due again
+    }
+
+    [Fact]
+    public async Task ResumeDoesNothingForASiteThatIsNotPaused()
+    {
+        _ui.Consent = new ConsentAnswer(true, 0.05m, AutoDecide: true, []);
+        await GrantAsync();
+        var before = _log.Recent().Count;
+        _engine.Resume(Site);
+        _engine.Resume("https://never.asked.example");
+        Assert.Equal(before, _log.Recent().Count);
+        Assert.DoesNotContain(_log.Recent(), e => e.Outcome == "resumed");
+    }
+
+    [Fact]
     public async Task NeverPausesWhenTheSettingIsOff()
     {
         _store.Update(s => s.Limits.PauseUnusedAfterHours = 0);
