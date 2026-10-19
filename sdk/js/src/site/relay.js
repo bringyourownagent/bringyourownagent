@@ -60,7 +60,31 @@ function cleanReceipt(receipt) {
   if (receipt === null || typeof receipt !== 'object') return null;
   const { cost, provider } = receipt;
   if (typeof cost !== 'string' || typeof provider !== 'string' || cost.length > 40 || provider.length > 40) return null;
-  return { cost, provider };
+  const model = typeof receipt.model === 'string' && receipt.model.length <= 16 ? receipt.model : undefined;
+  return model === undefined ? { cost, provider } : { cost, provider, model };
+}
+
+const LIMIT_NAMES = ['maxTextChars', 'maxAnswerTokens', 'maxCallSeconds', 'maxParallelCalls', 'maxCallsPerMinute'];
+
+/** What a wallet says it holds the site to (hello.grant.limits, or a "grant" frame): known names, positive integers only; null when it says nothing. */
+function cleanLimits(limits) {
+  if (limits === null || typeof limits !== 'object' || Array.isArray(limits)) return null;
+  const out = {};
+  for (const name of LIMIT_NAMES) {
+    const v = limits[name];
+    if (Number.isInteger(v) && v > 0 && v <= 1_000_000) out[name] = v;
+  }
+  return out;
+}
+
+/** The models the visitor gave this site ({ ref, name, id, runs }), at most 16; a wallet that does not know the models block sends none. */
+function cleanModels(models) {
+  const list = models !== null && typeof models === 'object' ? models['text.generate'] : undefined;
+  if (!Array.isArray(list)) return [];
+  const str = (v, max) => (typeof v === 'string' && v.length <= max ? v : null);
+  return list.slice(0, 16).filter((m) => m !== null && typeof m === 'object' && str(m.ref, 16)).map((m) => ({
+    ref: m.ref, name: str(m.name, 80) ?? m.ref, id: str(m.id, 120), runs: str(m.runs, 16),
+  }));
 }
 
 /**
@@ -101,13 +125,15 @@ export class WalletConnection extends EventEmitter {
 
   /**
    * One use of a skill. Never rejects. `options.timeoutMs` overrides the wait, which counts from now, including
-   * the time spent waiting for a place: at most 4 calls are in flight to one wallet, up to `maxQueued` more wait
-   * their turn, and any call beyond that fails at once.
+   * the time spent waiting for a place: as many calls are in flight to one wallet as its `grant.limits.maxParallelCalls`
+   * says (4 when it says nothing; the option `maxInFlight` caps it), up to `maxQueued` more wait their turn, and any call
+   * beyond that fails at once. `options.onChunk(text)` gets the pieces of a streamed answer (`params.stream: true`) as the
+   * wallet sends them: a preview, the answer replaces them.
    */
   call(skill, input, params = {}, options = {}) {
     return new Promise((resolve) => {
       if (!this.live || this._queue.length >= this.options.maxQueued) { resolve({ ok: false }); return; }
-      const job = { skill, input, params, resolve, done: false, warm: this._warming };
+      const job = { skill, input, params, resolve, done: false, warm: this._warming, onChunk: options.onChunk };
       job.timer = setTimeout(() => this._expire(job), options.timeoutMs ?? (job.warm ? this.options.firstCallTimeoutMs : this.options.callTimeoutMs));
       this._queue.push(job);
       this._pump();
@@ -135,8 +161,14 @@ export class WalletConnection extends EventEmitter {
     this._pump();
   }
 
+  /** How many calls may be in flight to this wallet now: what it allows, or what the site's option allows, whichever is less. */
+  get maxInFlight() {
+    const theirs = this.grant?.limits?.maxParallelCalls ?? 4;
+    return Math.min(theirs, this.options.maxInFlight ?? theirs);
+  }
+
   _pump() {
-    while (this._inFlight < this.options.maxInFlight && this._queue.length > 0 && this.live) {
+    while (this._inFlight < this.maxInFlight && this._queue.length > 0 && this.live) {
       const job = this._queue.shift();
       const id = ++this._nextId;
       const frame = JSON.stringify({ type: 'call', id, skill: job.skill, input: job.input, params: job.params });
@@ -156,6 +188,12 @@ export class WalletConnection extends EventEmitter {
     const sane = frame.ok === true && output !== null && typeof output === 'object' && !Array.isArray(output)
       && JSON.stringify(output).length <= this.options.maxOutputBytes;
     this._finish(job, sane ? { ok: true, output, receipt: cleanReceipt(frame.receipt) } : { ok: false });
+  }
+
+  _chunk(frame) {
+    const job = Number.isInteger(frame.id) ? this._pending.get(frame.id) : undefined;
+    if (!job || job.done || typeof frame.text !== 'string' || typeof job.onChunk !== 'function') return;
+    try { job.onChunk(frame.text); } catch { /* the site's callback must not break the connection */ }
   }
 
   _send(message) { this._sendRaw(JSON.stringify(message)); }
@@ -213,7 +251,8 @@ export class WalletConnection extends EventEmitter {
  * @param {number} [options.maxPairings=1000]
  * @param {number} [options.maxCodes=2000]
  * @param {number} [options.maxQueued=32]    Calls waiting for a free place, per wallet.
- * @param {number} [options.maxOutputBytes=65536]  The biggest `output` taken from a wallet (as JSON).
+ * @param {number} [options.maxInFlight]  Fewest of this and the wallet's own `maxParallelCalls` calls in flight (default: the wallet's).
+ * @param {number} [options.maxOutputBytes=65536]  The biggest `output` taken from a wallet (as JSON); a text answer may be 128 000 characters, raise it for text.generate.
  * @param {number} [options.failureLimit=3]  Calls in a row that fail before the connection emits `failing`.
  * @param {() => number} [options.now]       Clock in ms, for tests.
  */
@@ -255,7 +294,7 @@ export class Relay extends EventEmitter {
       maxQueued: options.maxQueued ?? 32,
       maxOutputBytes: options.maxOutputBytes ?? 65_536,
       failureLimit: options.failureLimit ?? 3,
-      maxInFlight: 4,
+      maxInFlight: options.maxInFlight, // undefined: what the wallet's own limit says (4 when it says none)
     };
     this._now = options.now ?? Date.now;
     this._codes = new Map();
@@ -399,6 +438,13 @@ export class Relay extends EventEmitter {
       if (frame.type === 'result') {
         conn._result(frame);
         this._touch(conn);
+      } else if (frame.type === 'chunk') {
+        conn._chunk(frame);
+      } else if (frame.type === 'grant') {
+        // the visitor changed this site's models or limits in the wallet: whole objects, as in hello
+        conn.grant = { ...conn.grant, limits: cleanLimits(frame.limits), models: cleanModels(frame.models) };
+        conn._pump(); // a raised parallel limit lets waiting calls go
+        conn.emit('grant', conn);
       } else if (frame.type === 'bye') {
         conn.close(1000, 'bye');
       }
@@ -425,7 +471,12 @@ export class Relay extends EventEmitter {
     conn.pairing = welcome.pairing;
     conn.wallet = typeof frame.wallet === 'object' && frame.wallet !== null ? frame.wallet : null;
     const skills = Array.isArray(frame.grant?.skills) ? frame.grant.skills.filter((s) => typeof s === 'string') : [];
-    conn.grant = { skills, expiresAt: typeof frame.grant?.expiresAt === 'string' ? frame.grant.expiresAt : null };
+    conn.grant = {
+      skills,
+      expiresAt: typeof frame.grant?.expiresAt === 'string' ? frame.grant.expiresAt : null,
+      limits: cleanLimits(frame.grant?.limits),
+      models: cleanModels(frame.grant?.models),
+    };
     conn._send({ type: 'welcome', pairing: welcome.pairing, manifest: welcome.manifest });
     armIdle();
     // a long-lived connection is let go now and then; the wallet comes back by itself with its pairing

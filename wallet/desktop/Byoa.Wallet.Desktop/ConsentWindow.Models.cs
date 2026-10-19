@@ -204,7 +204,7 @@ sealed partial class ConsentWindow
         // The search list shows the same models again: redraw it with the current ticks.
         if (shown.Count == 0) return;
         var keys = pick.Results.Children.OfType<Grid>().Select(g => g.Children.OfType<CheckBox>().First())
-            .Select(c => AutomationProperties.GetAutomationId(c)["ConsentModel-".Length..]).ToList();
+            .Select(c => AutomationProperties.GetAutomationId(c)?["ConsentModel-".Length..] ?? "").ToList();
         pick.Results.Children.Clear();
         foreach (var key in keys)
         {

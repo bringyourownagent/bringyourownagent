@@ -10,7 +10,7 @@ import type { Server as HttpsServer } from 'node:https';
  * `receipt` is reduced to two short strings or null.
  */
 export type CallResult =
-  | { ok: true; output: Record<string, unknown>; receipt: { cost: string; provider: string } | null }
+  | { ok: true; output: Record<string, unknown>; receipt: { cost: string; provider: string; model?: string } | null }
   | { ok: false; timedOut?: boolean; cancelled?: boolean; tooBig?: boolean };
 
 /** The visitor's address as the limits count it: IPv4-mapped IPv6 becomes IPv4, any other IPv6 becomes its /64. */
@@ -20,8 +20,10 @@ export function addressKey(ip: string): string;
 export class WalletConnection extends EventEmitter {
   /** The pairing token this wallet was welcomed with. */
   readonly pairing: string | null;
-  /** What the wallet said it was granted: skills and when the grant ends. */
-  readonly grant: { skills: string[]; expiresAt: string | null } | null;
+  /** What the wallet said it was granted: skills, when the grant ends, the limits it holds the site to (null from an older wallet) and the models the visitor gave the site (empty from an older wallet or a site that asked for none). */
+  readonly grant: { skills: string[]; expiresAt: string | null; limits: Partial<Record<'maxTextChars' | 'maxAnswerTokens' | 'maxCallSeconds' | 'maxParallelCalls' | 'maxCallsPerMinute', number>> | null; models: { ref: string; name: string; id: string | null; runs: string | null }[] } | null;
+  /** How many calls may be in flight now: the wallet's `maxParallelCalls` (4 when it says none), at most the relay's `maxInFlight` option. */
+  readonly maxInFlight: number;
   /** The wallet's own name and version, as it announced them. Informational only. */
   readonly wallet: Record<string, unknown> | null;
   /** True while the wallet can take calls. */
@@ -33,16 +35,18 @@ export class WalletConnection extends EventEmitter {
   /** How many calls wait for a free place. */
   readonly queued: number;
   /**
-   * One use of a skill. Never rejects. At most 4 calls are in flight to one wallet, up to `maxQueued` more wait their
-   * turn, and any call beyond that fails at once. The wait (`timeoutMs`, default 12 s) counts from the moment of the
+   * One use of a skill. Never rejects. As many calls are in flight to one wallet as its `maxParallelCalls` says (4 when
+   * it says nothing), up to `maxQueued` more wait their turn, and any call beyond that fails at once. The wait (`timeoutMs`, default 12 s) counts from the moment of the
    * call, including the time spent waiting for a place. The first call after a connect gets a longer wait (a cold
    * model may need time). A call whose frame would exceed 4 MB fails with `tooBig`.
    */
-  call(skill: string, input: unknown, params?: Record<string, unknown>, options?: { timeoutMs?: number }): Promise<CallResult>;
+  call(skill: string, input: unknown, params?: Record<string, unknown>, options?: { timeoutMs?: number; onChunk?: (text: string) => void }): Promise<CallResult>;
   /** Says "bye" and closes. */
   bye(): void;
   close(code?: number, reason?: string): void;
   on(event: 'close', listener: () => void): this;
+  /** The visitor changed this site's models or limits in the wallet: `grant` is up to date. */
+  on(event: 'grant', listener: (connection: WalletConnection) => void): this;
   /** This many calls in a row failed (`failureLimit`): the site should give up on this wallet and use its own path. */
   on(event: 'failing', listener: (failures: number) => void): this;
 }
@@ -76,7 +80,9 @@ export interface RelayOptions {
   maxCodes?: number;
   /** Calls waiting for a free place, per wallet. Default 32. */
   maxQueued?: number;
-  /** The biggest `output` taken from a wallet, as JSON. Default 65536. */
+  /** At most this many calls in flight to one wallet, or fewer if the wallet's own `maxParallelCalls` is lower. Default: the wallet's. */
+  maxInFlight?: number;
+  /** The biggest `output` taken from a wallet, as JSON. Default 65536 (a text answer may be 128 000 characters: raise it for text.generate). */
   maxOutputBytes?: number;
   /** Calls in a row that fail before a connection emits `failing`. Default 3. */
   failureLimit?: number;
