@@ -1432,7 +1432,8 @@ public sealed partial class WalletEngine
         IReadOnlyList<ITextSource>? sourceOverride = null;
         var named = false;
         Func<ITextSource, string?>? refOf = null;
-        if (session.Models.TryGetValue(Vocabulary.Generate, out var granted) && granted.Count > 0)
+        // (a list that is empty is still a site that asked: it gets no answer, never the wallet's own route)
+        if (session.Models.TryGetValue(Vocabulary.Generate, out var granted))
         {
             var wanted = Str(parameters["model"]);
             var pick = wanted is null ? granted.ToList() : granted.Where(g => g.Ref == wanted).ToList();

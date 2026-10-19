@@ -459,6 +459,17 @@ public class ModelRequestTests
     }
 
     [Fact]
+    public async Task ASiteWhoseModelsAreAllGoneIsNeverAnsweredByAnotherModel()
+    {
+        var granted = await RequestAsync(Manifest(TwoOrThree));
+        var grant = granted["grantId"]!.GetValue<string>();
+        _engine.SetSiteModels(Site, "text.generate", []);                      // the visitor took every model away from this site
+        Assert.False(Ok(await _engine.HandleAsync(Call(grant, "m1"))));        // a named model it was once given
+        Assert.False(Ok(await _engine.HandleAsync(Call(grant, null))));        // and a call that names none: the wallet's own route is not for a site that asked for models
+        Assert.Equal(0, _gpt.Calls + _qwen.Calls + _gemma.Calls);
+    }
+
+    [Fact]
     public async Task ASiteThatAsksForNoModelsKeepsTheWalletsRouteAndSeesNoModelList()
     {
         var plain = "{\"byoa\":\"0.1-draft\",\"purpose\":{\"summary\":\"Quiz\",\"limits\":{\"maxTextChars\":8000}},\"skills\":{\"text.generate\":{\"required\":true}},\"privacy\":\"personal\"}";
