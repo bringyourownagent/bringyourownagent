@@ -76,6 +76,7 @@ The wallet measures the clip's length from the WAV itself and never trusts the p
 - `params` (all optional):
   - `maxTokens`: the most tokens to write. The wallet caps it.
   - `temperature`: 0 to 1.
+  - `thinking`: `false` (or `"off"`) asks a model that reasons before it answers to answer at once; left out, the model decides. A simple question deserves `false`: a reasoning model can spend minutes, and all of `maxTokens`, on hidden thoughts before its first word. The visitor can also switch thinking off for a model of his, and that switch wins over a page that wants thinking. Only models that run on the visitor's PC or on a server of his own obey it (the wallet sends `chat_template_kwargs.enable_thinking: false`); a model behind an API key answers as it always does, and a model that does not reason is not changed.
   - `language`: a BCP 47 primary language tag, a hint for choosing a model.
   - `choices`: an array of strings. When given, `output.text` is **exactly one** of them. The wallet constrains the model, or normalises the model's answer (trimming, case-insensitive matching, stripping quotes and punctuation), and treats an answer that is still not one of the choices as a failed call (`ok:false`).
   - `model`: a model of the grant's `models` list, by its `ref` (section 3.3). Without it the call goes to the models the site was given, in the visitor's order, or, for a site that asked for none, along the wallet's own route.

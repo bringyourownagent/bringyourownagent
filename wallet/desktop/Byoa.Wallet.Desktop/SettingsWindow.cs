@@ -458,6 +458,7 @@ sealed partial class SettingsWindow : Window
             Ui.Wrap(detail, "muted"),
             Ui.Wrap((source.Endpoint is null ? "No endpoint" : source.Endpoint) + (source.Model is null ? "" : " · " + source.Model), "mono", "small"));
         if (OfferRow(source) is { } offer) card.Children.Add(offer);
+        if (ThinkingRow(source) is { } thinking) card.Children.Add(thinking);
         card.Children.Add(order);
         return Ui.Box("card", card);
     }

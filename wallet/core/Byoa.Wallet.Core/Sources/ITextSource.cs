@@ -58,12 +58,15 @@ public sealed record ChatMessage(string Role, string Content);
 /// <param name="Temperature">0..1.</param>
 /// <param name="Language">The primary language tag the page gave, or null.</param>
 /// <param name="Choices">When set, the answer must be exactly one of these strings (the wallet constrains or normalises it).</param>
+/// <param name="Thinking">False when the model must answer straight away, without reasoning first: the page asked for it (<c>params.thinking: false</c>)
+/// or the visitor switched thinking off for the source. A source that cannot switch reasoning off ignores it.</param>
 public sealed record TextRequest(
     IReadOnlyList<ChatMessage> Messages,
     int MaxTokens,
     double Temperature,
     string? Language,
-    IReadOnlyList<string>? Choices);
+    IReadOnlyList<string>? Choices,
+    bool Thinking = true);
 
 /// <summary>The result of one text.generate call.</summary>
 /// <param name="Text">The answer only: never the model's hidden reasoning.</param>

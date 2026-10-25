@@ -202,6 +202,12 @@ public sealed class SourceSetting
     /// <summary>In the visitor's default set: the wallet offers this model first when a site asks for several and names none he has.</summary>
     public bool Offer { get; set; } = true;
 
+    /// <summary>
+    /// False when the visitor does not let this model think before it answers: a model that reasons first (Qwen3.5, DeepSeek-R1 and the like) is
+    /// asked to answer straight away, whatever a site wants. True (the default) leaves it to the model and to the site's own request.
+    /// </summary>
+    public bool Thinking { get; set; } = true;
+
     /// <summary>Addresses observed during visitor confirmation of a name-based agent endpoint.</summary>
     public List<string> ConfirmedAddresses { get; set; } = [];
 

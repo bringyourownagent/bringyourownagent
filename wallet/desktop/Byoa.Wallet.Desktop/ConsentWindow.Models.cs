@@ -1,7 +1,9 @@
 using System.Globalization;
+using System.Runtime.CompilerServices;
 using Avalonia;
 using Avalonia.Automation;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Layout;
 using Byoa.Wallet.Engine;
 
@@ -169,14 +171,21 @@ sealed partial class ConsentWindow
     Control ModelLine(ModelPick pick, ModelChoice choice)
     {
         var ticked = pick.Order.Contains(choice.Key);
-        var full = !ticked && pick.Order.Count >= pick.Section.Spec.Max;
-        var box = new CheckBox { IsChecked = ticked, IsEnabled = choice.Ready && !full, MinWidth = 0, Padding = new Thickness(0), VerticalAlignment = VerticalAlignment.Top };
+        // One model, and the site cannot do without it: a choice among several, so round buttons (picking one lets go of the other).
+        // Otherwise boxes; a box is never greyed because the list is full: ticking one more lets go of the oldest tick that is not required.
+        var radio = pick.Section.Spec is { Max: 1, Min: >= 1 };
+        ToggleButton box = radio
+            ? new RadioButton { GroupName = "ConsentModels-" + RuntimeHelpers.GetHashCode(pick), IsChecked = ticked, IsEnabled = choice.Ready, MinWidth = 0, Padding = new Thickness(0), VerticalAlignment = VerticalAlignment.Top }
+            : new CheckBox { IsChecked = ticked, IsEnabled = choice.Ready, MinWidth = 0, Padding = new Thickness(0), VerticalAlignment = VerticalAlignment.Top };
         AutomationProperties.SetAutomationId(box, "ConsentModel-" + choice.Key);
         AutomationProperties.SetName(box, choice.Name + ", " + choice.Where + ", " + choice.Cost);
         box.IsCheckedChanged += (_, _) =>
         {
-            if (box.IsChecked == true) { if (!pick.Order.Contains(choice.Key)) pick.Order.Add(choice.Key); }
-            else pick.Order.Remove(choice.Key);
+            if (box.IsChecked == true)
+            {
+                if (!pick.Order.Contains(choice.Key)) { pick.Order.Add(choice.Key); LetGo(pick, choice.Key); }
+            }
+            else if (!radio) pick.Order.Remove(choice.Key);                 // a round button is let go of by picking another, never by hand
             FillModels(pick);
             // a searched model ticked or unticked also changes the search list (its tick, and who is full)
             if (pick.Extra.IsVisible && pick.Results.Children.Count > 0) RefreshResultTicks(pick);
@@ -198,12 +207,24 @@ sealed partial class ConsentWindow
         return line;
     }
 
+    /// <summary>After a new tick: while more are ticked than the site uses, the oldest tick that is not required goes (the new one itself when nothing else can).</summary>
+    static void LetGo(ModelPick pick, string keep)
+    {
+        var max = pick.Section.Spec.Max;
+        while (pick.Order.Count > max)
+        {
+            var drop = pick.Order.FirstOrDefault(k => k != keep && pick.Known[k].Role != ModelRole.Required);
+            if (drop is null) { pick.Order.Remove(keep); return; }
+            pick.Order.Remove(drop);
+        }
+    }
+
     void RefreshResultTicks(ModelPick pick)
     {
         var shown = pick.Results.Children.OfType<Grid>().ToList();
         // The search list shows the same models again: redraw it with the current ticks.
         if (shown.Count == 0) return;
-        var keys = pick.Results.Children.OfType<Grid>().Select(g => g.Children.OfType<CheckBox>().First())
+        var keys = pick.Results.Children.OfType<Grid>().Select(g => g.Children.OfType<ToggleButton>().First())
             .Select(c => AutomationProperties.GetAutomationId(c)?["ConsentModel-".Length..] ?? "").ToList();
         pick.Results.Children.Clear();
         foreach (var key in keys)

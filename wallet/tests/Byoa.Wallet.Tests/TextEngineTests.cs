@@ -159,6 +159,35 @@ public class TextEngineTests
         Assert.Equal("de", _log.Recent()[0].Language);
     }
 
+    [Fact]
+    public async Task ThinkingIsOnUnlessThePageOrTheVisitorTurnsItOff()
+    {
+        var grant = await GrantAsync();
+        await _engine.HandleAsync(TextCall(Site, grant));
+        Assert.True(_first.LastRequest!.Thinking);                                          // the default: the model decides
+
+        foreach (var off in new JsonNode[] { false, "off", "NO", "none" })
+        {
+            _first.Answers.Enqueue("Paris");
+            await _engine.HandleAsync(TextCall(Site, grant, new JsonObject { ["thinking"] = off.DeepClone() }));
+            Assert.False(_first.LastRequest.Thinking);                                      // the page asked for an answer at once
+        }
+
+        _first.Answers.Enqueue("Paris");
+        await _engine.HandleAsync(TextCall(Site, grant, new JsonObject { ["thinking"] = true }));
+        Assert.True(_first.LastRequest.Thinking);
+
+        _store.Update(s => s.Source(_first.Id).Thinking = false);
+        _first.Answers.Enqueue("Paris");
+        await _engine.HandleAsync(TextCall(Site, grant, new JsonObject { ["thinking"] = true }));
+        Assert.False(_first.LastRequest.Thinking);                                          // the visitor's switch wins over a page that wants thinking
+
+        _first.Answers.Enqueue("Paris");
+        await _engine.HandleAsync(TextCall(Site, grant));
+        Assert.False(_first.LastRequest.Thinking);
+        Assert.True(new SourceSetting().Thinking);                                          // a new or an old setting thinks by default
+    }
+
     // ------------------------------------------------------------------ the caps
 
     [Fact]

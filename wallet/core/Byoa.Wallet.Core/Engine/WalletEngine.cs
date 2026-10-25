@@ -1403,6 +1403,7 @@ public sealed partial class WalletEngine
         var parameters = payload["params"] as JsonObject ?? new JsonObject();
         var maxTokens = Math.Clamp(Int(parameters["maxTokens"]) ?? Math.Min(DefaultMaxTokens, textLimits.AnswerTokens), 1, textLimits.AnswerTokens);
         var temperature = Math.Clamp(Num(parameters["temperature"]) ?? DefaultTemperature, 0, 1);
+        var thinking = ThinkingWanted(parameters["thinking"]);
         var language = Vocabulary.PrimaryLanguage(Str(parameters["language"]));
         var declared = session.Manifest.Skill(Vocabulary.Generate)?.Languages ?? [];
         language ??= declared.Count == 1 ? declared[0] : null;
@@ -1465,7 +1466,7 @@ public sealed partial class WalletEngine
         try
         {
             return await RouteTextAsync(entry, session, site, messages, chars, maxTokens, temperature, language, choices,
-                limits.CallsPerDay, limits.SitePerDay, limits.WalletPerDay, hold, started, ct, chainOverride, sourceOverride, named, refOf, onChunk).ConfigureAwait(false);
+                limits.CallsPerDay, limits.SitePerDay, limits.WalletPerDay, hold, started, ct, chainOverride, sourceOverride, named, refOf, onChunk, thinking).ConfigureAwait(false);
         }
         finally
         {
@@ -1478,7 +1479,7 @@ public sealed partial class WalletEngine
         int maxTokens, double temperature, string? language, IReadOnlyList<string>? choices,
         int callsPerDay, decimal sitePerDay, decimal walletPerDay, DailyHold hold, long started, CancellationToken ct,
         SkillChain? chainOverride = null, IReadOnlyList<ITextSource>? sourceOverride = null, bool waitForBusy = false,
-        Func<ITextSource, string?>? refOf = null, Action<string>? onChunk = null)
+        Func<ITextSource, string?>? refOf = null, Action<string>? onChunk = null, bool thinking = true)
     {
         using var routeTimeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
         var routeBudget = TextRouteTimeout ?? TimeSpan.FromSeconds((session.Limits ?? TextLimits.Defaults).CallSeconds);
@@ -1499,7 +1500,7 @@ public sealed partial class WalletEngine
         foreach (var k in plan.Skipped.Where(k => k.Why == "turned off")) route.Add(Index(k.Source), k.Source.Name + ": turned off");
 
         // What the gate sees: every character the wallet sends the provider, an added instruction included.
-        var request = new TextRequest(messages, maxTokens, temperature, language, choices);
+        var request = new TextRequest(messages, maxTokens, temperature, language, choices, thinking);
         var textChars = chars + (choices is null ? 0 : Texts.ChoicesInstruction(choices).Length);
         var choiceMiss = false;
         string? stopReason = null;
@@ -1782,6 +1783,7 @@ public sealed partial class WalletEngine
     {
         entry.ProviderCalled = true;
         entry.ProviderCalls++;
+        request = WithSourceThinking(source, request);
         try
         {
             using var limit = CancellationTokenSource.CreateLinkedTokenSource(routeCt);
@@ -1950,7 +1952,21 @@ public sealed partial class WalletEngine
     /// <summary>The request again, with the choices spelled out as a last instruction.</summary>
     static TextRequest RetryRequest(TextRequest request, IReadOnlyList<string> choices) =>
         new([.. request.Messages, new ChatMessage("system", Texts.ChoicesInstruction(choices))],
-            request.MaxTokens, request.Temperature, request.Language, request.Choices);
+            request.MaxTokens, request.Temperature, request.Language, request.Choices, request.Thinking);
+
+    /// <summary>What the page said about thinking: only an explicit "no" (<c>false</c>, or "off" / "no" / "none" / "false") turns it off.</summary>
+    static bool ThinkingWanted(JsonNode? node)
+    {
+        if (node is not JsonValue value) return true;
+        if (value.TryGetValue<bool>(out var flag)) return flag;
+        return !(value.TryGetValue<string>(out var word) && word.Trim().ToLowerInvariant() is "off" or "no" or "none" or "false");
+    }
+
+    /// <summary>The visitor's own switch for one source: "Let the model think" unticked means it answers straight away, whatever the page asked.</summary>
+    TextRequest WithSourceThinking(ITextSource source, TextRequest request) =>
+        request.Thinking && _store.Read(s => s.Sources.FirstOrDefault(x => x.Id == source.Id)?.Thinking == false)
+            ? request with { Thinking = false }
+            : request;
 
     static int? Int(JsonNode? node) => node is JsonValue v && v.TryGetValue<int>(out var i) ? i : null;
 

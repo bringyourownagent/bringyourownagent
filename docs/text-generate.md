@@ -7,7 +7,7 @@ Status: working version, 12 October 2026; the speech sources were reworked on 17
 ```js
 await byoa.call(grantId, "text.generate",
                 { messages: [{ role: "user", content: "…" }, …] },
-                { maxTokens, temperature, language, choices })
+                { maxTokens, temperature, language, choices, thinking })
 //                                     → { ok: true, output: { text }, receipt: { cost, provider } } | { ok: false }
 ```
 
@@ -24,10 +24,15 @@ A manifest asks for it like any skill: `"skills": { "text.generate": { "required
 | calls a minute (`maxCallsPerMinute`) | 300 | 600 | the visitor, per site; the site may ask |
 | messages | 128 | 128 | fixed |
 | `temperature` | 0.7 | 0–1 | the page |
+| `thinking` | on (the model decides) | `false` / `"off"` turns it off | the page asks; the visitor's switch per model wins |
 | `choices` | 20 × 100 chars, 500 together | — | fixed |
 | the answer back to the page | 128 000 chars (cut) | — | fixed |
 
 The limits are the visitor's own (Limits page, for every site and for one), held back by what the site declared in `purpose.limits`; see [spec/CONTRACT.md](../spec/CONTRACT.md) section 3.4. `language` narrows to the primary tag (`de-AT` → `de`) and defaults to the manifest's only language. A local source answers one call at a time and a source behind a key four; a call on the wallet's route waits 10 s for a busy source and then moves to the next, while a call for one named model (below) has nothing to fall back to and waits in line for its own limit. Each call gets the visitor's wait limit (300 s unless set otherwise) for the source and for the whole route. The caller's cancellation is passed to the provider and releases the reservation when it leaves. Every refusal — too many messages, a bad role, an empty input, the gate's limits — comes back as `{ ok: false }` with a plain reason in the activity log, and no source ever sees a broken request.
+
+### Thinking
+
+A model that reasons before it answers (Qwen3.5, DeepSeek-R1 and the like) can spend minutes, and the whole `maxTokens`, on hidden thoughts, and then answer nothing. A page that asks something simple passes `params.thinking: false`; the wallet then sends a local runtime `chat_template_kwargs: { enable_thinking: false }` and the model answers at once. The visitor has the same switch for each model of his on this PC or on a server of his own (Sources, "Let the model think before it answers", on by default), and it wins over a page that wants thinking. A model behind an API key and a model that does not reason are not changed. A reasoning model that is left to think and spends its whole budget gets one more try with four times the room, which on a slow machine may be longer than the wait limit.
 
 ### Several models, and a stream
 

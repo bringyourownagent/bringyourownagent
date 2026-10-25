@@ -193,6 +193,17 @@ sealed partial class SettingsWindow
         return Ui.Column(2, offer, Ui.Wrap("A site that asks for several models gets the ones in your default set first. Known as: " + (known.Length == 0 ? "unknown" : known) + ".", "muted", "small"));
     }
 
+    /// <summary>"Let the model think": a model that reasons before it answers can be told to answer at once. Text models that run on this PC or a server of yours.</summary>
+    Control? ThinkingRow(SourceSetting source)
+    {
+        if (source.Skills.Count > 0 && !source.Skills.Contains(Vocabulary.Generate)) return null;
+        if (source.Kind is not (SourceKinds.OpenAiCompatible or SourceKinds.LmStudio or SourceKinds.Ollama)) return null;
+        var think = new CheckBox { Content = "Let the model think before it answers", IsChecked = source.Thinking };
+        AutomationProperties.SetAutomationId(think, "AddedSourceThinking-" + SafeId(source.Id));
+        think.IsCheckedChanged += (_, _) => _w.Store.Update(s => s.Source(source.Id).Thinking = think.IsChecked == true);
+        return Ui.Column(2, think, Ui.Wrap("A model that thinks first (Qwen3.5, DeepSeek-R1 and the like) can spend minutes before its first word. Untick this for quick answers. A site may also ask for no thinking. A model that does not think is not changed.", "muted", "small"));
+    }
+
     static string ModelNamesOf(SourceSetting source)
     {
         if (!string.IsNullOrWhiteSpace(source.ModelId)) return ModelNames.Canon(source.ModelId);

@@ -267,6 +267,9 @@ public sealed class OpenAiCompatibleSource : ITextSource, IStreamingTextSource, 
             ["stream"] = false,
         };
         if (useSchema && request.Choices is not null) body["response_format"] = ChatCompletions.ChoiceSchema(request.Choices);
+        // A model that reasons first can be told to answer at once: llama.cpp (the Llama app), vLLM and the like read this from the chat template;
+        // LM Studio and Ollama ignore a field they do not know, and a model that does not reason is not changed by it.
+        if (!request.Thinking) body["chat_template_kwargs"] = new JsonObject { ["enable_thinking"] = false };
         return body;
     }
 }

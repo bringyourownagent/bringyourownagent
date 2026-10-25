@@ -71,6 +71,21 @@ public class OpenAiCompatibleSourceTests
     }
 
     [Fact]
+    public async Task ARequestWithoutThinkingTellsTheModelToAnswerAtOnce()
+    {
+        using var server = new FakeHttp(Port);
+        server.Respond(200, """{"choices":[{"message":{"role":"assistant","content":"Paris"},"finish_reason":"stop"}]}""");
+        server.Respond(200, """{"choices":[{"message":{"role":"assistant","content":"Paris"},"finish_reason":"stop"}]}""");
+        await Source(server).GenerateAsync(Plain(), default);
+        await Source(server).GenerateAsync(Plain() with { Thinking = false }, default);
+
+        var normal = JsonNode.Parse(server.Requests[0].Body)!.AsObject();
+        var quick = JsonNode.Parse(server.Requests[1].Body)!.AsObject();
+        Assert.Null(normal["chat_template_kwargs"]);                                       // the default leaves it to the model
+        Assert.False(quick["chat_template_kwargs"]!["enable_thinking"]!.GetValue<bool>());
+    }
+
+    [Fact]
     public async Task HiddenThinkingNeverReachesTheAnswer()
     {
         using var server = new FakeHttp(Port);
