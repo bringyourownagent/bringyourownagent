@@ -38,6 +38,10 @@
       "types": "./src/site/browser.d.ts",
       "default": "./src/site/browser.js"
     },
+    "./crossdevice": {
+      "types": "./src/site/crossdevice.d.ts",
+      "default": "./src/site/crossdevice.js"
+    },
     "./package.json": "./package.json"
   },
   "main": "./src/index.js",

@@ -280,6 +280,7 @@ sealed partial class SettingsWindow : Window
     void SitesPage(StackPanel page)
     {
         Head(page, "Sites", "Every site that asked, and your answer. A site gets the same answer, “AI unavailable”, whether you declined, blocked it or have no wallet.");
+        page.Children.Add(ConnectByLinkRow());
         var sites = _w.Store.Snapshot().Sites.OrderByDescending(s => _w.Engine.LastSeen(s) ?? DateTimeOffset.MinValue).ToList();
         if (sites.Count == 0)
         {

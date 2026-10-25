@@ -151,7 +151,7 @@ sealed partial class ConsentWindow : CornerWindow
         }
         else
         {
-            var warn = Ui.Wrap("This site gives no way to check that you started this connection. Allow only if you pressed Connect on its page a moment ago.", "strong", "small");
+            var warn = Ui.Wrap(_model.Handed ? HandedNoCheck : "This site gives no way to check that you started this connection. Allow only if you pressed Connect on its page a moment ago.", "strong", "small");
             warn.Width = 330;
             AutomationProperties.SetAutomationId(warn, "ConsentNoCheck");
             column.Children.Add(warn);
@@ -207,6 +207,7 @@ sealed partial class ConsentWindow : CornerWindow
         if (_model.PausedNote is not null) hostRow.Children.Add(Ui.Chip("paused", "outline"));
         AutomationProperties.SetName(hostRow, _model.Host);
         body.Children.Add(hostRow);
+        if (_model.Handed) body.Children.Add(HandedNotice());
         if (_model.CheckCode is { } checkCode) body.Children.Add(CheckBlock(checkCode));
 
         // The declared purpose, quoted as the site's own words.

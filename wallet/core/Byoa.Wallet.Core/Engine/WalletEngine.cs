@@ -153,8 +153,8 @@ public sealed partial class WalletEngine
     /// ready before the answer), except that a link always asks, even for a site with "decide on my own"; the answer
     /// is a grant or null.
     /// </summary>
-    public Task<JsonNode?> RequestViaLinkAsync(string origin, JsonObject manifest, bool userActivation, CancellationToken ct = default, string? session = null) =>
-        GuardedAsync(Wire.Request, origin, ViaLink, () => RequestAsync(origin, userActivation, new JsonObject { ["manifest"] = manifest.DeepClone() }, ct, ViaLink, linkSession: session));
+    public Task<JsonNode?> RequestViaLinkAsync(string origin, JsonObject manifest, bool userActivation, CancellationToken ct = default, string? session = null, bool handed = false) =>
+        GuardedAsync(Wire.Request, origin, ViaLink, () => RequestAsync(origin, userActivation, new JsonObject { ["manifest"] = manifest.DeepClone() }, ct, ViaLink, linkSession: session, handed: handed));
 
     /// <summary>
     /// A reconnect with a stored pairing (no link, no click): the grant of a site that keeps "decide on my own", silently
@@ -446,9 +446,9 @@ public sealed partial class WalletEngine
     // ------------------------------------------------------------------------------------------------
     // request
 
-    async Task<JsonNode?> RequestAsync(string origin, bool userActivation, JsonObject payload, CancellationToken ct, string? via, bool renewal = false, string? linkSession = null)
+    async Task<JsonNode?> RequestAsync(string origin, bool userActivation, JsonObject payload, CancellationToken ct, string? via, bool renewal = false, string? linkSession = null, bool handed = false)
     {
-        var entry = new ActivityEntry { Origin = origin, Kind = Wire.Request, Via = via, Note = userActivation ? "after a click" : "without a click" };
+        var entry = new ActivityEntry { Origin = origin, Kind = Wire.Request, Via = via, Note = (userActivation ? "after a click" : "without a click") + (handed ? "; pasted by hand" : "") };
         if (!Origins.TryParse(origin, out var host, out var secure)) return Done(entry, "invalid", "origin not allowed");
         // Only a page's request without a click counts here: a request with a click needs a person and opens a window, a link has its own
         // flood limit (the transport), and a renewal comes from the wallet itself.
@@ -510,7 +510,7 @@ public sealed partial class WalletEngine
                 ask = new SharedAsk();
                 if (via is null) _asking[origin] = ask;
                 var shared = ask;
-                ask.Answer = AskVisitorAsync(origin, host, secure, manifest, via, linkSession, ask.Cancel.Token);
+                ask.Answer = AskVisitorAsync(origin, host, secure, manifest, via, linkSession, handed, ask.Cancel.Token);
                 ask.Answer.ContinueWith(_ =>
                 {
                     lock (_askGate)
@@ -589,11 +589,11 @@ public sealed partial class WalletEngine
         }
     }
 
-    async Task<JsonNode?> AskVisitorAsync(string origin, string host, bool secure, RequestedManifest manifest, string? via, string? linkSession, CancellationToken ct)
+    async Task<JsonNode?> AskVisitorAsync(string origin, string host, bool secure, RequestedManifest manifest, string? via, string? linkSession, bool handed, CancellationToken ct)
     {
         await Task.Yield();
         var began = Now;
-        var entry = new ActivityEntry { Origin = origin, Kind = Wire.Request, Via = via, Note = "after a click" };
+        var entry = new ActivityEntry { Origin = origin, Kind = Wire.Request, Via = via, Note = "after a click" + (handed ? "; pasted by hand" : "") };
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeout.CancelAfter(RequestTimeout);
         try
@@ -631,7 +631,7 @@ public sealed partial class WalletEngine
             // The site may have been blocked or changed from the settings while the notice was up.
             var site = _store.Read(s => s.Site(origin) is { } r ? Copy(r) : null) ?? new SiteRecord { Origin = origin };
             if (site.Status == SiteStatus.Blocked) return Done(entry, "blocked", "blocked while asking");
-            var model = BuildConsent(origin, host, secure, manifest, site, via, linkSession);
+            var model = BuildConsent(origin, host, secure, manifest, site, via, linkSession, handed);
             WarmWhileAsking(manifest);              // the models start while the visitor reads: less to wait for after Allow
             var answer = await _ui.ShowConsentAsync(model, timeout.Token).ConfigureAwait(false);
             // A site that shows the check code gets no Allow without the visitor's tick that the two codes are the same (the window enforces it too).
@@ -781,7 +781,7 @@ public sealed partial class WalletEngine
                 var waited = await WarmBeforeResolveAsync(session, host, showPreparing: true, via == ViaLink ? began + LinkPreparationBudget : null, ct).ConfigureAwait(false);
                 // The visitor may have decided about the site while the models loaded: then the link gets no grant.
                 if (via == ViaLink && !_linkDecisions.ContainsKey(session.Id)) return Done(entry, "declined", "the visitor decided about the site while the models loaded");
-                entry.Note = "after a click" + (model.PausedNote is not null ? "; resumed" : "") + (model.IsDifference ? "; only the difference was shown" : "")
+                entry.Note = "after a click" + (handed ? "; pasted by hand" : "") + (model.PausedNote is not null ? "; resumed" : "") + (model.IsDifference ? "; only the difference was shown" : "")
                     + (answer.AutoDecide ? "; decide on my own from now on" : "") + (via == ViaLink ? "; kept once the site confirms the link" : "") + Ready(waited);
                 return Done(entry, "allowed", null, session.ToResult());
             }
@@ -818,7 +818,7 @@ public sealed partial class WalletEngine
         return (newSkills, missing, costRaised);
     }
 
-    ConsentModel BuildConsent(string origin, string host, bool secure, RequestedManifest manifest, SiteRecord site, string? via, string? linkSession = null)
+    ConsentModel BuildConsent(string origin, string host, bool secure, RequestedManifest manifest, SiteRecord site, string? via, string? linkSession = null, bool handed = false)
     {
         var (newSkills, missingRequired, costRaised) = Difference(site, manifest);
         var settings = _store.Snapshot();
@@ -850,7 +850,8 @@ public sealed partial class WalletEngine
         return new ConsentModel(origin, host, secure, manifest.Summary, rows, budget, before, site.AutoDecide, isDifference,
             site.Status == SiteStatus.Allowed && site.Paused ? PauseText(site) : null, via == ViaLink, limitsAsk,
             via == ViaLink && linkSession is not null ? Direct.ConnectCheck.Compute(linkSession) : null,
-            via == ViaLink && linkSession is not null && manifest.ConnectCheck);
+            via == ViaLink && linkSession is not null && manifest.ConnectCheck,
+            via == ViaLink && handed);
     }
 
     ConsentRow Row(RequestedSkill skill, WalletSettings settings, SiteRecord site, bool isNew)

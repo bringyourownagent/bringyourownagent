@@ -1,5 +1,6 @@
 using System.Runtime.Versioning;
 using System.Text.Json.Nodes;
+using BringYourOwnAgent;
 using Byoa.Wallet.Activity;
 using Byoa.Wallet.Engine;
 using Byoa.Wallet.Settings;
@@ -60,8 +61,22 @@ public sealed class DirectTransport : IDisposable
     /// Acts on a link: checks it and its manifest, asks the visitor (also for a site with "decide on my own"),
     /// and after a grant starts the connection. Returns the connection, or null when nothing was opened.
     /// </summary>
-    public async Task<DirectConnection?> HandleLinkAsync(string? url, CancellationToken ct = default, bool userActivation = true)
+    /// <param name="handed">The text reached the wallet by hand (pasted, or from another device): it is cleaned up first (<see cref="HandedLink"/>),
+    /// counts as the visitor's own click, and its consent says where it came from (CONTRACT-PAIR.md section 1).</param>
+    public async Task<DirectConnection?> HandleLinkAsync(string? url, CancellationToken ct = default, bool userActivation = true, bool handed = false)
     {
+        if (handed)
+        {
+            if (!HandedLink.TryNormalize(url, out var link, out var why))
+            {
+                Record("", "invalid", "a pasted link was ignored: " + why);
+                return null;
+            }
+
+            url = link;
+            userActivation = true;                          // he pressed Connect in the wallet himself
+        }
+
         if (Interlocked.Increment(ref _pendingLinks) > Options.MaxPendingLinks)
         {
             Interlocked.Decrement(ref _pendingLinks);
@@ -71,7 +86,7 @@ public sealed class DirectTransport : IDisposable
 
         try
         {
-            return await ActOnLinkAsync(url, userActivation, ct).ConfigureAwait(false);
+            return await ActOnLinkAsync(url, userActivation, handed, ct).ConfigureAwait(false);
         }
         finally
         {
@@ -79,7 +94,25 @@ public sealed class DirectTransport : IDisposable
         }
     }
 
-    async Task<DirectConnection?> ActOnLinkAsync(string? url, bool userActivation, CancellationToken ct)
+    /// <summary>
+    /// What is wrong with a link the visitor pasted, in a sentence for him, or null when the wallet can go on with it. The same checks as
+    /// <see cref="HandleLinkAsync"/> makes, asked first so that the window can say so instead of the activity log.
+    /// </summary>
+    public string? CheckHandedLink(string? text)
+    {
+        if (!HandedLink.TryNormalize(text, out var normal, out var why)) return why;
+        if (!DirectLink.TryParse(normal, Options.DevLocal, out var link, out why)) return "That link cannot be used: " + why + ".";
+        if (!Manifest.Validate(link!.ManifestJson.ToJsonString()).Ok) return "That link cannot be used: the site's request is not valid.";
+        if (Engine.FindSite(link.Origin) is { Status: SiteStatus.Blocked }) return "You blocked " + link.Host + " in this wallet. Unblock it in Sites first.";
+        lock (_gate)
+        {
+            if (_seenSessions.ContainsKey(link.Session)) return "That link was already used. Press Connect on the site's page to get a new one.";
+        }
+
+        return null;
+    }
+
+    async Task<DirectConnection?> ActOnLinkAsync(string? url, bool userActivation, bool handed, CancellationToken ct)
     {
         if (!DirectLink.TryParse(url, Options.DevLocal, out var link, out var why))
         {
@@ -108,7 +141,7 @@ public sealed class DirectTransport : IDisposable
 
         // Keep the browser's activation bit from the hand-off. The manifest is the link's own: nothing has been sent
         // to the site so far, and a link with no click must stay a quiet request.
-        var answer = await Engine.RequestViaLinkAsync(origin, link.ManifestJson, userActivation, ct, link.Session).ConfigureAwait(false);
+        var answer = await Engine.RequestViaLinkAsync(origin, link.ManifestJson, userActivation, ct, link.Session, handed).ConfigureAwait(false);
         if (GrantOf(answer) is not { } grant) return null;
         var connection = new DirectConnection(this, origin, link.Endpoint, link.Manifest, link.Session, token: null, grant);
         if (Add(connection)) return connection;
