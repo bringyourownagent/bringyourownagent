@@ -278,6 +278,8 @@ sealed partial class SettingsWindow : Window
     void SitesPage(StackPanel page)
     {
         Head(page, "Sites", "Every site that asked, and your answer. A site gets the same answer, “AI unavailable”, whether you declined, blocked it or have no wallet.");
+        // while the wallet has no text model at all, the Get started card sits above the sites
+        if (!GetStarted.HasTextModel(_w.Store.Snapshot())) page.Children.Add(GetStartedCard(sites: true));
         var sites = _w.Store.Snapshot().Sites.OrderByDescending(s => _w.Engine.LastSeen(s) ?? DateTimeOffset.MinValue).ToList();
         if (sites.Count == 0)
         {
@@ -488,6 +490,7 @@ sealed partial class SettingsWindow : Window
         Head(page, "My models", "The programs that run your models, and your keys. The site never learns which one answered, and a key goes only to its own provider. "
             + "Add a model that runs on this PC (or on a home server), or one behind your own key: a short wizard tests it before it changes your route. "
             + "Your own AI agents are on My agents.");
+        page.Children.Add(GetStartedCard(sites: false));
         page.Children.Add(Ui.Button("Add a model", "allow", "AddModel", () => _w.Ui.OpenAddModel(), "small"));
         var settings = _w.Store.Snapshot();
 
