@@ -25,6 +25,7 @@ public static class ModelPlanner
         public bool Ready;
         public string? Note;
         public bool Offer;
+        public bool Agent;
         public ModelRoad? Road;
         public bool Picked;
         public int PickedAt;
@@ -40,7 +41,7 @@ public static class ModelPlanner
             var entry = new Entry
             {
                 Key = shelf.SourceId, SourceId = shelf.SourceId, Name = shelf.Name, ModelId = shelf.ModelId, Where = shelf.Where,
-                Paid = shelf.Paid, Cost = shelf.Cost, Ready = shelf.Ready, Note = shelf.NotReady, Offer = shelf.Offer, Order = order++,
+                Paid = shelf.Paid, Cost = shelf.Cost, Ready = shelf.Ready, Note = shelf.NotReady, Offer = shelf.Offer, Agent = shelf.Agent, Order = order++,
             };
             if (WishOf(spec, shelf.ModelId) is not null) entry.Role = ModelRole.Required;
             else if (RankOf(spec, shelf.ModelId) is var rank and >= 0)
@@ -104,7 +105,8 @@ public static class ModelPlanner
         //    a window that ticks every model he owns makes the site slower and dearer than it asked to be, and he can tick more himself.
         foreach (var vendorPass in spec.ByVendor ? new[] { true, false } : new[] { false })
         {
-            foreach (var e in entries.Where(x => x.Ready && !x.IsNew && x.Role == ModelRole.Recommended).OrderBy(x => x.Rank).ThenBy(x => x.Order))
+            // (his agent is never ticked because a site likes it: only a site that cannot work without it, or he himself, ticks it)
+            foreach (var e in entries.Where(x => x.Ready && !x.IsNew && !x.Agent && x.Role == ModelRole.Recommended).OrderBy(x => x.Rank).ThenBy(x => x.Order))
                 if (Room() && Fresh(e, vendorPass)) Pick(e);
             foreach (var e in entries.Where(x => x.Ready && !x.IsNew && x.Offer).OrderBy(x => x.Order))
                 if (pickedCount < spec.Min && Room() && Fresh(e, vendorPass)) Pick(e);
@@ -116,7 +118,7 @@ public static class ModelPlanner
         {
             foreach (var e in entries.Where(x => x.Ready && x.IsNew && x.Role == ModelRole.Recommended).OrderBy(x => x.Rank))
                 if (pickedCount < spec.Min && Fresh(e, spec.ByVendor)) Pick(e);
-            foreach (var e in entries.Where(x => x.Ready && !x.IsNew).OrderBy(x => x.Order))
+            foreach (var e in entries.Where(x => x.Ready && !x.IsNew && !x.Agent).OrderBy(x => x.Order))
                 if (pickedCount < spec.Min) Pick(e);
             foreach (var e in entries.Where(x => x.Ready && x.IsNew && x.Role == ModelRole.Recommended).OrderBy(x => x.Rank))
                 if (pickedCount < spec.Min) Pick(e);

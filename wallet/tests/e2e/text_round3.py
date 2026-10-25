@@ -136,7 +136,7 @@ try:
         "params": {"protocolVersion": "2025-06-18", "clientInfo": {"name": "Round 3 local agent", "version": "1"}},
     }) + "\n")
     mcp.stdin.flush()
-    consent = ui.find_window("Connect an AI agent", 15)
+    consent = ui.find_window("Let an agent manage the wallet", 15)
     if consent is None:
         raise RuntimeError("the wallet did not show the first-agent consent")
     shot(consent, os.path.join(a.shots, "agent-consent-round3.png"))

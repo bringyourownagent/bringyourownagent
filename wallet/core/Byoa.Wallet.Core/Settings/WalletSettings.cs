@@ -23,6 +23,9 @@ public sealed class WalletSettings
     public List<AgentRecord> Agents { get; set; } = [];
     public LimitSettings Limits { get; set; } = new();
 
+    /// <summary>The guard that looks at every request a site makes to the visitor's own agent.</summary>
+    public GuardSettings Guard { get; set; } = new();
+
     /// <summary>
     /// When a site connects, each model it will use is made to do its simplest job once for real (speech: transcribe 3 seconds of
     /// audio; text: write one short answer), and the connection waits for that, so the site's first real request does not meet a
@@ -139,6 +142,12 @@ public sealed class SiteRecord
     /// <summary>The site sees the names of its models (only when it asked for them). On by default; the visitor can hide them.</summary>
     public bool ShowModelNames { get; set; } = true;
 
+    /// <summary>
+    /// What the site said it uses the visitor's agent for (its manifest's <c>purpose.summary</c>) the last time the visitor, or the guard, accepted it.
+    /// A site whose stated goal is no longer this one is asked about again; a call that finds them different is refused.
+    /// </summary>
+    public string? AgentPurposeOk { get; set; }
+
     public SiteModels? ModelsFor(string skill) => Models.FirstOrDefault(m => m.Skill == skill);
 }
 
@@ -227,6 +236,43 @@ public sealed class SourceSetting
 
     /// <summary>The address class observed at confirmation: public, private, or unknown.</summary>
     public string? ConfirmedAddressClass { get; set; }
+
+    /// <summary>For an agent source: the program that runs it (a launcher such as ccodeglm.cmd, or claude.exe). Only the visitor sets it.</summary>
+    public string? AgentCommand { get; set; }
+
+    /// <summary>For an agent source: how to talk to the program, one of <c>AgentFlavors</c>.</summary>
+    public string? AgentFlavor { get; set; }
+}
+
+/// <summary>
+/// The guard: before the visitor's agent answers a site's request, a small fast model (Jev, behind the visitor's OpenRouter key) answers a few
+/// yes-or-no questions about it. A request that looks harmful, that tries to give the agent orders, or that is not what the site said it is
+/// for, waits for the visitor.
+/// </summary>
+public sealed class GuardSettings
+{
+    public const string DefaultDailyLimit = "2.00 USD";
+    public const string Strict = "strict";
+    public const string Normal = "normal";
+    public const string Relaxed = "relaxed";
+
+    /// <summary>The most the guard may spend a day (it is one cent in a hundred requests; the limit is for a runaway).</summary>
+    public string DailyLimit { get; set; } = DefaultDailyLimit;
+
+    /// <summary>
+    /// True (the default): when the guard cannot be asked (no key, no network, the daily limit reached), no request reaches the agent. False: the
+    /// request goes through without a look. A site's goal that could not be checked is never recorded as accepted either way.
+    /// </summary>
+    public bool StopWhenUnavailable { get; set; } = true;
+
+    /// <summary>"strict", "normal" or "relaxed": how soon a request is held for the visitor.</summary>
+    public string Strictness { get; set; } = Normal;
+
+    /// <summary>The visitor's own wording of each question; null or empty keeps the wallet's.</summary>
+    public string? OnPurposeText { get; set; }
+    public string? HarmText { get; set; }
+    public string? RedirectText { get; set; }
+    public string? PurposeRiskText { get; set; }
 }
 
 /// <summary>An ordered chain of sources for one skill: the first that fits answers, the next ones are fallbacks.</summary>

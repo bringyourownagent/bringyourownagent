@@ -65,7 +65,8 @@ public sealed record ModelSection(
 /// <param name="ModelId">The canonical name (<see cref="ModelNames"/>).</param>
 /// <param name="Offer">In the visitor's default set.</param>
 /// <param name="NotReady">Why it cannot answer now ("turned off", "not running", "no API key"...), or null.</param>
-public sealed record ShelfModel(string SourceId, string Name, string ModelId, string Where, bool Paid, string Cost, bool Offer, string? NotReady)
+/// <param name="Agent">His own AI agent, not a model: it is ticked for a site only when the site cannot work without it, or when he ticks it himself.</param>
+public sealed record ShelfModel(string SourceId, string Name, string ModelId, string Where, bool Paid, string Cost, bool Offer, string? NotReady, bool Agent = false)
 {
     public bool Ready => NotReady is null;
 }

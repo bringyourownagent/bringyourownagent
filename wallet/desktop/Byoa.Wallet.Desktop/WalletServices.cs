@@ -2,6 +2,7 @@ using System.Runtime.Versioning;
 using Byoa.Wallet.Activity;
 using Byoa.Wallet.Direct;
 using Byoa.Wallet.Engine;
+using Byoa.Wallet.Guard;
 using Byoa.Wallet.Protocol;
 using Byoa.Wallet.Providers;
 using Byoa.Wallet.Registry;
@@ -30,6 +31,12 @@ sealed class WalletServices : IDisposable
             Catalog = Sources.Catalog,
             HasOpenRouterKey = () => Secrets.Has(OpenRouterSource.SecretName),
         };
+        // The guard: Jev, behind the visitor's OpenRouter key, looks at every request a site makes to his agent. What it spends is counted in a file of its own.
+        GuardLedger = new GuardLedger(Path.Combine(home, "guard-ledger.json"));
+        // (BYOA_GUARD_ENDPOINT points a test run at a fake decision server; only an address on this computer is taken, so that the key can go nowhere else)
+        var guardAddress = Environment.GetEnvironmentVariable("BYOA_GUARD_ENDPOINT") is { Length: > 0 } given
+            && Uri.TryCreate(given, UriKind.Absolute, out var uri) && uri.IsLoopback ? uri : null;
+        Engine.Guard = new GuardService(Store, GuardLedger, new JevDecisionClient(Sources.TextHttp, () => Secrets.Get(OpenRouterSource.SecretName), guardAddress));
         Registry = new WalletRegistry(Store, Secrets, Activity, Sources.All, Sources.Text,
             Sources.Scanner, engine: Engine, textFactory: Sources.CreateTextSource,
             draftTextFactory: Sources.CreateTextSource, speechFactory: Sources.CreateSpeechSource);
@@ -60,6 +67,9 @@ sealed class WalletServices : IDisposable
     public ActivityLog Activity { get; }
     public HttpClient Http { get; }
     public SourceSet Sources { get; }
+
+    /// <summary>What the guard has spent today.</summary>
+    public GuardLedger GuardLedger { get; }
     public DesktopUi Ui { get; }
     public WalletEngine Engine { get; }
     public WalletRegistry Registry { get; }

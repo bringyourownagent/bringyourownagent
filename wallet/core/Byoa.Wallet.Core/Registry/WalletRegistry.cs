@@ -154,6 +154,35 @@ public sealed class WalletRegistry
         return AddSourceCore(draft, actor, endpointConfirmed: true, visitorEntered: true, assessment);
     }
 
+    /// <summary>
+    /// Adds the visitor's own AI agent as a source of answers (docs/agent-source.md). Only the visitor does this, in the wallet's window: the
+    /// program it runs is code the wallet starts, so the MCP bridge has no way to name one (its source kinds do not include <c>agent</c>).
+    /// </summary>
+    public RegistryOperationResult AddAgentSource(string? label, string flavor, string command, string actor = "you in the window")
+    {
+        if (!AgentFlavors.Known(flavor)) return RegistryOperationResult.Failure("The wallet can talk to Claude Code and the launchers built on it so far.");
+        command = command?.Trim() ?? "";
+        if (command.Length == 0) return RegistryOperationResult.Failure("Tell the wallet which program runs your agent.");
+        if (!AgentPrograms.IsPlain(command)) return RegistryOperationResult.Failure("The wallet will not run a program whose name has quotes, percent signs or | < > in it.");
+        if (AgentPrograms.Resolve(command) is null) return RegistryOperationResult.Failure("The wallet did not find the program " + command + ".");
+        var name = CleanLabel(label) ?? AgentFlavors.Name(flavor);
+        var slug = AgentPrograms.Slug(name);
+        var id = AgentPrograms.IdOf(name);
+        lock (_gate)
+        {
+            if (KnownSourceIds().Contains(id, StringComparer.Ordinal))
+                return RegistryOperationResult.Failure("An agent with the name " + name + " is already added.");
+            _store.Update(s => s.Sources.Add(new SourceSetting
+            {
+                Id = id, Kind = SourceKinds.Agent, Model = slug, Label = name, Skills = [Vocabulary.Generate],
+                AgentCommand = command, AgentFlavor = flavor, Offer = false, EndpointConfirmed = true,
+            }));
+        }
+
+        Change("source-added", id, actor, "Added your agent " + name);
+        return RegistryOperationResult.Success("Agent added: " + id + ".", id);
+    }
+
     /// <summary>Adds a source requested by an agent, asking the visitor before any remote endpoint is saved.</summary>
     public async Task<RegistryOperationResult> AddSourceAsync(SourceDraft draft, string actor, string agentName,
         CancellationToken ct = default)
@@ -231,9 +260,14 @@ public sealed class WalletRegistry
         return RegistryOperationResult.Success("Source added: " + id + ".", id);
     }
 
+    /// <summary>A source that runs the visitor's own agent is a program the wallet starts: it is changed only by the visitor, in the window, never by an agent.</summary>
+    static readonly RegistryOperationResult AgentSourceIsTheVisitors = RegistryOperationResult.Failure(
+        "A source that runs the visitor's own agent can be changed only by the visitor, in the wallet's window.");
+
     public RegistryOperationResult UpdateSource(string id, SourceUpdate update, string actor = "you in the window")
     {
         var setting = _store.Snapshot().Sources.FirstOrDefault(s => s.Id == id);
+        if (setting?.Kind?.Equals(SourceKinds.Agent, StringComparison.OrdinalIgnoreCase) == true) return AgentSourceIsTheVisitors;
         var kind = (update.Kind ?? setting?.Kind ?? "").Trim().ToLowerInvariant();
         var endpoint = Endpoint(kind, update.Endpoint ?? setting?.Endpoint);
         var assessment = EndpointPolicy.Check(endpoint, agentSupplied: false);
@@ -248,6 +282,7 @@ public sealed class WalletRegistry
         var setting = _store.Snapshot().Sources.FirstOrDefault(s => s.Id == id);
         if (setting is null || setting.Kind is null)
             return RegistryOperationResult.Failure("That source is built in or does not exist; only an added source can be edited.");
+        if (setting.Kind.Equals(SourceKinds.Agent, StringComparison.OrdinalIgnoreCase)) return AgentSourceIsTheVisitors;
         var kind = (update.Kind ?? setting.Kind).Trim().ToLowerInvariant();
         var endpoint = Endpoint(kind, update.Endpoint ?? setting.Endpoint);
         var assessment = EndpointPolicy.Check(endpoint, agentSupplied: true);
@@ -287,6 +322,7 @@ public sealed class WalletRegistry
         var setting = _store.Snapshot().Sources.FirstOrDefault(s => s.Id == id);
         if (setting is null || setting.Kind is null)
             return RegistryOperationResult.Failure("That source is built in or does not exist; only an added source can be edited.");
+        if (setting.Kind.Equals(SourceKinds.Agent, StringComparison.OrdinalIgnoreCase)) return AgentSourceIsTheVisitors;
         var kind = (update.Kind ?? setting.Kind).Trim().ToLowerInvariant();
         var model = Clean(update.Model ?? setting.Model);
         if (!Kinds.Contains(kind))

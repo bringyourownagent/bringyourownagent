@@ -258,7 +258,7 @@ sealed class AgentPipeServer : IDisposable
     {
         var existing = _w.Store.Snapshot().Agents.FirstOrDefault(a => a.Id == identity.Id);
         if (existing is { Status: "blocked" })
-            return new AgentAccess(false, false, "This agent is blocked in Settings → Agents. Ask the visitor to Revoke it or allow it there.");
+            return new AgentAccess(false, false, "This agent is blocked in Settings → Managing agents. Ask the visitor to Revoke it or allow it there.");
         if (existing is { Status: "allowed" })
         {
             _w.Store.Update(s =>
@@ -370,7 +370,7 @@ sealed class AgentPipeServer : IDisposable
         });
         return answer.Decision == AgentConsentDecision.Allow
             ? new AgentAccess(true, answer.FullAccess && identity.FullAccessAllowed, null)
-            : new AgentAccess(false, false, "The visitor blocked this agent. Revoke the block in Settings → Agents to ask again.");
+            : new AgentAccess(false, false, "The visitor blocked this agent. Revoke the block in Settings → Managing agents to ask again.");
     }
 
     async Task<JsonObject> HandleAsync(AgentSession session, JsonObject message, CancellationToken ct)
@@ -378,14 +378,14 @@ sealed class AgentPipeServer : IDisposable
         var access = CurrentAccess(session);
         if (!access.Allowed)
             return Failure(session.Access.Allowed
-                ? access.Error ?? "This agent is no longer approved to manage the wallet. Ask the visitor to allow it again in Settings → Agents."
+                ? access.Error ?? "This agent is no longer approved to manage the wallet. Ask the visitor to allow it again in Settings → Managing agents."
                 : session.Access.Error ?? "The visitor has not approved this agent.");
         if (!string.Equals(String(message, "type"), AgentPipeProtocol.Request, StringComparison.Ordinal))
             return Failure("The wallet expected an MCP tool request.");
 
         var operation = String(message, "operation");
         if (FullAccessTools.Contains(operation) && !access.FullAccess)
-            return Failure("This action needs Full access. Ask the visitor to give you Full access in Settings → Agents.");
+            return Failure("This action needs Full access. Ask the visitor to give you Full access in Settings → Managing agents.");
 
         if (!NormalAccessTools.Contains(operation) && !FullAccessTools.Contains(operation))
             return Failure("This wallet tool is not classified for agent access. Call tools/list and choose a listed tool.");
@@ -441,7 +441,7 @@ sealed class AgentPipeServer : IDisposable
         if (session.Identity.SessionOnly) return session.Access;
         return record is { Status: "allowed" }
             ? new AgentAccess(true, record.FullAccess, null)
-            : new AgentAccess(false, false, "This agent is no longer approved. Ask the visitor to allow it again in Settings → Agents.");
+            : new AgentAccess(false, false, "This agent is no longer approved. Ask the visitor to allow it again in Settings → Managing agents.");
     }
 
     JsonObject Help(JsonObject args)
@@ -544,7 +544,7 @@ sealed class AgentPipeServer : IDisposable
         var id = String(args, "source_id");
         var source = _w.Registry.ListSources().FirstOrDefault(s => s.Id == id);
         if (source is { BuiltIn: true } && !access.FullAccess)
-            return Failure("Enabling or disabling a built-in source needs Full access. Ask the visitor to give you Full access in Settings → Agents.");
+            return Failure("Enabling or disabling a built-in source needs Full access. Ask the visitor to give you Full access in Settings → Managing agents.");
         return Operation(_w.Registry.EnableSource(id, Bool(args, "enabled"), actor));
     }
 

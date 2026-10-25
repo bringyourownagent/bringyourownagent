@@ -228,6 +228,16 @@ sealed class ScriptedUi : IWalletUi
 
     public void ShowInfo(InfoModel model) => Infos.Add(model);
 
+    /// <summary>What the guard showed the visitor, and what he answers (one answer per question, then "refuse").</summary>
+    public List<GuardPrompt> GuardPrompts { get; } = [];
+    public Queue<GuardAnswer> GuardAnswers { get; } = new();
+
+    public Task<GuardAnswer> AskGuardAsync(GuardPrompt model, CancellationToken ct)
+    {
+        lock (GuardPrompts) GuardPrompts.Add(model);
+        return Task.FromResult(GuardAnswers.Count > 0 ? GuardAnswers.Dequeue() : GuardAnswer.Refuse);
+    }
+
     /// <summary>Every "Preparing your model…" shown, and whether it was closed again.</summary>
     public List<PreparingModel> Preparing { get; } = [];
     public int PreparingClosed;

@@ -53,6 +53,8 @@ public sealed partial class WalletEngine
     {
         if (!string.IsNullOrWhiteSpace(setting.ModelId)) return ModelNames.Canon(setting.ModelId);
         var model = setting.Model ?? "";
+        // His agent is named agent/<its name>: a site that wants one asks for "agent/*" or "agent/claude-code", and no model is ever mistaken for it.
+        if (setting.Kind == SourceKinds.Agent) return "agent/" + ModelNames.Canon(model);
         if (setting.Kind == SourceKinds.OpenRouter) return ModelNames.Canon(model);
         if (setting.Kind == ApiServices.Kind)
         {
@@ -67,6 +69,7 @@ public sealed partial class WalletEngine
     static string WhereOf(SourceSetting setting, ITextSource? source) => setting.Kind switch
     {
         SourceKinds.OpenRouter => "OpenRouter key",
+        SourceKinds.Agent => "your agent",
         ApiServices.Kind => ApiServices.NameOf(setting.Service) + " key",
         _ => source is null ? "this PC" : Where(source),
     };
@@ -105,7 +108,7 @@ public sealed partial class WalletEngine
             var catalogName = Catalog.Find(modelId)?.Name;
             var name = setting.Label is { Length: > 0 } label ? label : ModelNames.Display(setting.Model, catalogName);
             shelf.Add(new ShelfModel(setting.Id, name, modelId, WhereOf(setting, source), source?.Paid ?? setting.Kind is SourceKinds.OpenRouter or ApiServices.Kind,
-                source is null ? "" : CostText(source), setting.Offer, notReady));
+                source is null ? "" : CostText(source), setting.Offer, notReady, Agent: setting.Kind == SourceKinds.Agent));
         }
 
         return shelf;

@@ -27,11 +27,12 @@ sealed partial class SettingsWindow : Window
     [
         ("sites", "Sites", Ui.Globe),
         ("sources", "Sources", Ui.Screen),
+        ("guard", "Agent guard", Ui.Check),
         ("skills", "Skills & fallbacks", Ui.Arrow),
         ("limits", "Limits", Ui.Gauge),
         ("activity", "Activity", Ui.List),
-        ("agents", "Agents", Ui.Screen),
-        ("connect", "Connect your AI agent", Ui.Plus),
+        ("agents", "Managing agents", Ui.Screen),
+        ("connect", "Manage by an agent", Ui.Plus),
         ("help", "Help", Ui.Key),
     ];
 
@@ -161,6 +162,7 @@ sealed partial class SettingsWindow : Window
         {
             case "sites": SitesPage(page); break;
             case "sources": SourcesPage(page); break;
+            case "guard": GuardPage(page); break;
             case "skills": SkillsPage(page); break;
             case "limits": LimitsPage(page); break;
             case "agents": AgentsPage(page); break;
@@ -483,8 +485,10 @@ sealed partial class SettingsWindow : Window
     void SourcesPage(StackPanel page)
     {
         Head(page, "Sources", "The programs that run your models, and your keys. The site never learns which one answered, and a key goes only to its own provider. "
-            + "Add a model that runs on this PC (or on a home server), or one behind your own key: a short wizard tests it before it changes your route.");
-        page.Children.Add(Ui.Button("Add a model", "allow", "AddModel", () => _w.Ui.OpenAddModel(), "small"));
+            + "Add a model that runs on this PC (or on a home server), or one behind your own key: a short wizard tests it before it changes your route. "
+            + "Or add your own AI agent, which can look things up on the web for a site you give it to.");
+        page.Children.Add(Ui.Row(8, Ui.Button("Add a model", "allow", "AddModel", () => _w.Ui.OpenAddModel(), "small"),
+            Ui.Button("Add an agent", "deny", "AddAgent", () => _w.Ui.OpenAddAgent(), "small")));
         var settings = _w.Store.Snapshot();
 
         // the models, one line each: the ones the visitor added, then the wallet's own paid speech model
@@ -568,9 +572,10 @@ sealed partial class SettingsWindow : Window
         enabled.IsCheckedChanged += (_, _) => { _w.Registry.EnableSource(source.Id, enabled.IsChecked == true); Render(); };
         var fullName = info?.Name ?? source.Label ?? source.Model ?? source.Id;
         var name = fullName.Split(" · ")[0];                       // "model · this computer" -> "model": where it runs is in the opened settings
-        var skill = Vocabulary.SkillName(source.Skills.FirstOrDefault() ?? Vocabulary.Generate);
-        return FoldRow(ModelLine(enabled, name, info?.StateText ?? "configured"), Ui.Chip(skill, "outline"), _openSources, source.Id,
-            "AddedSourceExpand-" + source.Id, name, () => AddedSourceDetails(source, info, fullName));
+        var isAgent = source.Kind == SourceKinds.Agent;
+        var skill = isAgent ? "Agent" : Vocabulary.SkillName(source.Skills.FirstOrDefault() ?? Vocabulary.Generate);
+        return FoldRow(ModelLine(enabled, name, info?.StateText ?? "configured"), Ui.Chip(skill, isAgent ? "" : "outline"), _openSources, source.Id,
+            "AddedSourceExpand-" + source.Id, name, () => isAgent ? AgentSourceDetails(source, info) : AddedSourceDetails(source, info, fullName));
     }
 
     /// <summary>All the settings of a model the visitor added.</summary>
@@ -949,11 +954,11 @@ sealed partial class SettingsWindow : Window
 
     void AgentsPage(StackPanel page)
     {
-        Head(page, "Agents", "AI agents can manage sources and routes by default. Full access is a separate switch for site names and access, limits, built-in sources and agent-supplied keys. No tool lets an agent allow a site, approve a paid call or approve another agent.");
+        Head(page, "Managing agents", "These are AI agents you let manage this wallet (Claude Code, Codex, opencode). They can manage sources and routes by default. Full access is a separate switch for site names and access, limits, built-in sources and agent-supplied keys. No tool lets an agent allow a site, approve a paid call or approve another agent.");
         var agents = _w.Store.Snapshot().Agents.OrderByDescending(a => a.LastUsed ?? DateTimeOffset.MinValue).ToList();
         if (agents.Count == 0)
         {
-            page.Children.Add(Ui.Box("card", Ui.Wrap("No AI agent has connected yet. Connect Claude Code, Codex, or OpenCode from the page beside this one.", "muted")));
+            page.Children.Add(Ui.Box("card", Ui.Wrap("No agent manages the wallet yet. Use “Manage by an agent”, beside this page. (Giving your agent to a site is another thing: see Add an agent in Sources.)", "muted")));
             return;
         }
 
@@ -991,7 +996,9 @@ sealed partial class SettingsWindow : Window
 
     void ConnectAgentPage(StackPanel page)
     {
-        Head(page, "Connect your AI agent", "The wallet talks to your agent through byoa-mcp.exe over a per-user pipe. Start the wallet first; the bridge never starts it and never holds your keys.");
+        Head(page, "Let an agent manage the wallet", "Your AI agent (Claude Code, Codex, opencode) can set up this wallet for you: add models, test them, put them in order. " +
+            "It talks to the wallet through byoa-mcp.exe over a per-user pipe. Start the wallet first; the bridge never starts it and never holds your keys. " +
+            "This is not the same as giving your agent to a site to answer its questions: for that, use Add an agent in Sources.");
         var exe = McpPath();
         page.Children.Add(Ui.Box("card", Ui.Column(7,
             Ui.Text("MCP server path", "label"),

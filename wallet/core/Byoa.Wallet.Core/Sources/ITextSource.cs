@@ -18,6 +18,27 @@ public static class SourceKinds
 
     /// <summary>OpenRouter with the visitor's own API key (paid).</summary>
     public const string OpenRouter = "openrouter";
+
+    /// <summary>
+    /// The visitor's own AI agent (Claude Code, opencode...) run as a program on this computer, one question and one answer per call, with
+    /// only web search and page reading. Only the visitor adds one, in the window: never an agent, through the MCP bridge.
+    /// </summary>
+    public const string Agent = "agent";
+}
+
+/// <summary>How the wallet talks to the program of an agent source.</summary>
+public static class AgentFlavors
+{
+    /// <summary>Claude Code and the launchers built on it (<c>claude -p</c>). The only kind the wallet can talk to so far.</summary>
+    public const string ClaudeCode = "claude-code";
+
+    public static bool Known(string? flavor) => flavor is ClaudeCode;
+
+    public static string Name(string? flavor) => flavor switch
+    {
+        ClaudeCode => "Claude Code",
+        _ => "agent",
+    };
 }
 
 /// <summary>
@@ -129,6 +150,16 @@ public interface ITextSource
     decimal EstimateCost(TextRequest request);
 
     Task<TextAnswer> GenerateAsync(TextRequest request, CancellationToken ct);
+}
+
+/// <summary>
+/// A text source that is the visitor's own AI agent, not a model: it can search the web and read pages before it answers. The wallet never puts
+/// it in the route of a site that was not given it by name, and every request to it goes through the guard first.
+/// </summary>
+public interface IAgentTextSource : ITextSource
+{
+    /// <summary>"Claude Code", "opencode": what runs behind the name the visitor gave.</summary>
+    string Program { get; }
 }
 
 /// <summary>

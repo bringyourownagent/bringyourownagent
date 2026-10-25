@@ -1,3 +1,4 @@
+using Byoa.Wallet.Guard;
 using Byoa.Wallet.Settings;
 using Byoa.Wallet.Sources;
 
@@ -21,6 +22,28 @@ public enum PaidAnswer
     Always,
     No,
 }
+
+/// <summary>The visitor's answer when the guard holds a request, or a site's goal, for him.</summary>
+public enum GuardAnswer
+{
+    /// <summary>Let this one through (a goal: accept it).</summary>
+    Allow,
+
+    /// <summary>Refuse this one.</summary>
+    Refuse,
+
+    /// <summary>Refuse it and take the agent away from this site.</summary>
+    TakeAway,
+}
+
+/// <summary>
+/// What the guard saw and why the visitor is asked: a request that tripped a statement (<paramref name="ForPurpose"/> false), or the goal a site
+/// states for his agent (true), or the guard could not be asked and the visitor chose to be told (<paramref name="Unavailable"/>).
+/// </summary>
+/// <param name="Purpose">What the site said it uses the agent for.</param>
+/// <param name="Request">The site's request as it would go to the agent (shortened); null for a goal.</param>
+/// <param name="Agent">The visitor's name for the agent.</param>
+public sealed record GuardPrompt(string Origin, string Host, bool ForPurpose, string Purpose, string? Request, IReadOnlyList<GuardFinding> Findings, string Agent);
 
 /// <param name="FromLink">The request came from a direct link: nothing is stored from its notice, which offers no block.</param>
 public sealed record NoticeModel(string Origin, string Host, bool FromLink = false);
@@ -128,6 +151,9 @@ public interface IWalletUi
     Task<PaidAnswer> AskPaidAsync(PaidModel model, CancellationToken ct);
 
     void ShowInfo(InfoModel model);
+
+    /// <summary>The guard held a request or a site's goal for the visitor. No answer in time is a refusal.</summary>
+    Task<GuardAnswer> AskGuardAsync(GuardPrompt model, CancellationToken ct) => Task.FromResult(GuardAnswer.Refuse);
 
     /// <summary>Shows "Preparing your model…" until the returned handle is disposed.</summary>
     IDisposable ShowPreparing(PreparingModel model);

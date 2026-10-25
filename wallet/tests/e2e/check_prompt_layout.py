@@ -1,7 +1,7 @@
 """Check that wallet prompt actions are inside the visible window bounds.
 
 Run this while the isolated wallet has a prompt open, for example:
-    python check_prompt_layout.py --title "Connect an AI agent" --button AgentAllow --button AgentNotNow --button AgentBlock
+    python check_prompt_layout.py --title "Let an agent manage the wallet" --button AgentAllow --button AgentNotNow --button AgentBlock
 
 The script uses UI Automation bounds rather than a screen capture, so it never reads or saves the owner's desktop.
 Set the process DPI awareness before looking at bounds; the same check can be repeated at 100%, 125% and 150%.

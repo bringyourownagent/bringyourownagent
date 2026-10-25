@@ -197,10 +197,11 @@ class FakeSite:
         result["ms"] = int((time.time() - started) * 1000)
         return result
 
-    def call_text(self, choices=("yes", "no"), seconds=120, params=None):
-        return asyncio.run_coroutine_threadsafe(self._call_text(choices, params), self._loop).result(seconds)
+    def call_text(self, choices=("yes", "no"), seconds=120, params=None, text=None):
+        """One text.generate call. <text> is the user's message (a yes-or-no question when None); no <choices> asks for a free answer."""
+        return asyncio.run_coroutine_threadsafe(self._call_text(choices, params, text), self._loop).result(seconds)
 
-    async def _call_text(self, choices, extra=None):
+    async def _call_text(self, choices, extra=None, text=None):
         self._next_id += 1
         call_id = self._next_id
         future = self._loop.create_future()
@@ -208,8 +209,8 @@ class FakeSite:
         started = time.time()
         await self.live.send_str(json.dumps({
             "type": "call", "id": call_id, "skill": "text.generate",
-            "input": {"messages": [{"role": "user", "content": "Answer the question with yes or no: is two plus two four?"}]},
-            "params": {"choices": list(choices), **(extra or {})},
+            "input": {"messages": [{"role": "user", "content": text or "Answer the question with yes or no: is two plus two four?"}]},
+            "params": {**({"choices": list(choices)} if choices else {}), **(extra or {})},
         }))
         result = await asyncio.wait_for(future, 100)
         result["ms"] = int((time.time() - started) * 1000)

@@ -194,6 +194,8 @@ sealed partial class ConsentWindow
         var name = Ui.Wrap(choice.Name, "strong");
         name.FontSize = 14;
         var about = choice.Where + " · " + choice.Cost + (choice.Note is { Length: > 0 } note ? " · " + note : "");
+        // His own agent is not a model: it searches the web for the site, so the window says what comes with it.
+        if (choice.Where == "your agent") about += " · it searches the web for this site; the guard looks at every request";
         var text = Ui.Column(1, name, Ui.Wrap(about, "muted", "small"));
         Control chip = choice.Role switch
         {

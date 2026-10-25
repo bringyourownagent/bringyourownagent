@@ -38,6 +38,10 @@ A model that reasons before it answers (Qwen3.5, DeepSeek-R1 and the like) can s
 
 A site may ask for several different models ([spec/CONTRACT.md](../spec/CONTRACT.md) section 3.3): the consent window ticks what the visitor has, the grant lists the models the site got (`ref`, name, id, where it runs), and a call names one with `params.model`. A call that names no model goes to the site's models in the visitor's order; a site that asked for no models gets the wallet's own route, as before. `params.stream: true` over the direct link answers in `chunk` frames and then the result. Models behind a key sit at OpenRouter (hundreds of models, one key) or at a vendor's own API (OpenAI, Anthropic, Google, MiniMax, DeepSeek, xAI, Z.ai (also its Coding Plan address), Mistral, or an address the visitor names); the catalog of OpenRouter, read once a day and kept on disk, gives the pickers their list and the price of a call.
 
+### Your own agent as a model
+
+A site may ask for the visitor's own AI agent, named `agent/*` in its `models` block: the wallet runs it for one question at a time, with web search and page reading only, behind a guard that looks at the goal the site states in `purpose.summary` and at every request. The visitor gives it to a site by ticking it; the wallet never puts it in a route of its own. See [agent-source.md](agent-source.md).
+
 ## 2. What happens on a call
 
 The same path as speech: the grant must be live and belong to the calling origin, the gate checks the call against the manifest (`maxTextChars`, rate, budget — a paid source reserves its estimate first, the real cost replaces it after), then the route walks the skill's chain: the first source that is on, available and knows the language tries; if it fails, is busy or gives an unusable answer, the next one is tried. The activity log records skill, language, the source that answered, the fallback chain and the cost — never the messages or the answer text.

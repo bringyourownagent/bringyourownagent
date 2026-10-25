@@ -305,6 +305,14 @@ public sealed class SourceSet : IDisposable
     {
         if (setting.Kind is null || string.IsNullOrWhiteSpace(setting.Model)) return null;
         var kind = setting.Kind.Trim().ToLowerInvariant();
+        // His own agent: a program on this computer, not an address. Only the visitor sets its program (the MCP bridge cannot add one).
+        if (kind == SourceKinds.Agent)
+        {
+            return string.IsNullOrWhiteSpace(setting.AgentCommand) ? null
+                : new AgentCliSource(new AgentCliSource.SourceSettingView(setting.Id, setting.Model.Trim(), setting.Label, setting.AgentFlavor ?? "", setting.AgentCommand.Trim()),
+                    Path.Combine(WalletPaths.Home, "agent-work"));
+        }
+
         var endpoint = kind == SourceKinds.OpenRouter
             ? "https://openrouter.ai/api/v1"
             : kind == ApiServices.Kind
@@ -382,7 +390,8 @@ public sealed class SourceSet : IDisposable
                 source.Endpoint = "https://openrouter.ai/api/v1";
             if (!source.AddedByAgent && IsLoopbackEndpoint(source.Endpoint)) source.EndpointConfirmed = true;
         }
-        var replacements = settings.Sources.Where(s => s.Kind is not null && !string.IsNullOrWhiteSpace(s.Model))
+        var replacements = settings.Sources.Where(s => s.Kind is not null && !string.IsNullOrWhiteSpace(s.Model)
+                && !s.Kind.Equals(SourceKinds.Agent, StringComparison.OrdinalIgnoreCase))
             .Select(s => (Old: s.Id, New: s.Kind!.Equals(SourceKinds.OpenRouter, StringComparison.OrdinalIgnoreCase)
                 ? SourceKinds.OpenRouter + ":" + s.Model!.Trim()
                 : s.Kind.Equals(ApiServices.Kind, StringComparison.OrdinalIgnoreCase)

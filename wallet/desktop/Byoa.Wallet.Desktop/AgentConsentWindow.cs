@@ -17,7 +17,7 @@ sealed class AgentConsentWindow : Window
 
     public AgentConsentWindow(AgentConsentModel model, Func<int>? waitingCount = null)
     {
-        Title = "Connect an AI agent";
+        Title = "Let an agent manage the wallet";
         Width = 540;
         MinWidth = 480;
         Background = Brushes.White;

@@ -73,12 +73,12 @@ def main() -> int:
         while time.monotonic() < deadline:
             if wallet.poll() is not None:
                 return fail("the copied wallet exited before showing the agent consent window.")
-            window = auto.WindowControl(searchDepth=3, Name="Connect an AI agent")
+            window = auto.WindowControl(searchDepth=3, Name="Let an agent manage the wallet")
             if window.Exists(0, 0):
                 print("installed bridge accepted; consent window: " + str(target))
                 return 0
             time.sleep(0.2)
-        return fail("the wallet did not show Connect an AI agent; inspect " + str(target))
+        return fail("the wallet did not show Let an agent manage the wallet; inspect " + str(target))
     finally:
         if bridge is not None and bridge.poll() is None:
             bridge.terminate()

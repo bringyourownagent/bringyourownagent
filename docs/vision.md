@@ -17,7 +17,7 @@ BYOA is not an alternative to the AI companies; it connects them. The most capab
 There are two levels, and BYOA starts with the first.
 
 - **Level 1: skills, served by models.** A site asks for a skill — transcribe speech, translate, solve a math problem, describe an image — and the wallet answers each request with a model. One request in, one answer out: no memory, no tools, no steps the site cannot see.
-- **Level 2: tasks, handed to an agent (Proposed, later).** A site hands a task to the visitor's agent: a model with tools and memory that works in several steps ("plan my next five Spanish lessons").
+- **Level 2: tasks, handed to an agent (Proposed, later).** A site hands a task to the visitor's agent: a model with tools and memory that works in several steps ("plan my next five Spanish lessons"). A first, small version exists in the wallet: one question, one answer, an agent that can search the web and read pages and nothing else, behind a guard (see [agent-source.md](agent-source.md)).
 
 The name "Bring Your Own Agent" says where this goes: start with models, grow to agents. Agents raise a risk that models do not: an agent knows a lot about its owner (memory, history, other sites, contacts). At level 2 the wallet must limit what the visitor's agent may tell each site, per site and per kind of fact, with "nothing" as the default. The wallet's own manager (Section 8.3) is the first agent of this kind, and it works only for the visitor.
 

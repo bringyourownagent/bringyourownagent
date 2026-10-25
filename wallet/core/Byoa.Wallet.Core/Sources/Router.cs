@@ -84,7 +84,7 @@ public static class Router
     public static void EnsureTextChain(WalletSettings settings, IEnumerable<ITextSource> sources)
     {
         var chain = settings.Chain(Vocabulary.Generate);
-        foreach (var source in sources)
+        foreach (var source in sources.Where(s => s is not IAgentTextSource))
         {
             if (chain.Stops.Any(s => s.SourceId == source.Id)) continue;
             var paid = sources.FirstOrDefault(x => chain.Stops.Any(s => s.SourceId == x.Id) && x.Paid);
@@ -97,7 +97,8 @@ public static class Router
     public static void EnsureTextChainFromSettings(WalletSettings settings)
     {
         var sources = settings.Sources
-            .Where(s => s.Kind is not null && (s.Skills.Count == 0 || s.Skills.Contains(Vocabulary.Generate)))
+            .Where(s => s.Kind is not null && !string.Equals(s.Kind, SourceKinds.Agent, StringComparison.OrdinalIgnoreCase)
+                && (s.Skills.Count == 0 || s.Skills.Contains(Vocabulary.Generate)))
             .Select(s => (s.Id, Paid: string.Equals(s.Kind, SourceKinds.OpenRouter, StringComparison.OrdinalIgnoreCase)))
             .ToList();
         var chain = settings.Chain(Vocabulary.Generate);

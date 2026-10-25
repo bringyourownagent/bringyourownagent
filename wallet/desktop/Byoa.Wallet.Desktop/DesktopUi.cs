@@ -46,7 +46,7 @@ sealed class DesktopUi : IWalletUi, IAgentConsentUi, IEndpointConfirmationUi, IS
         activity.Click += (_, _) => OpenSettings("activity");
         var help = new NativeMenuItem("Help");
         help.Click += (_, _) => OpenHelp();
-        var agent = new NativeMenuItem("Connect your AI agent");
+        var agent = new NativeMenuItem("Let an agent manage the wallet");
         agent.Click += (_, _) => OpenSettings("connect");
         var exit = new NativeMenuItem("Quit");
         exit.Click += (_, _) => quit();
@@ -125,6 +125,16 @@ sealed class DesktopUi : IWalletUi, IAgentConsentUi, IEndpointConfirmationUi, IS
                 _ => PaidAnswer.No,
             };
         }, PaidAnswer.No);
+
+    /// <summary>The guard held a request, or a site's goal, for the visitor: one window at a time, and no answer is a refusal.</summary>
+    public Task<GuardAnswer> AskGuardAsync(GuardPrompt model, CancellationToken ct) =>
+        PromptAsync(ct, agentInitiated: false, async () =>
+        {
+            var window = new GuardWindow(model, () => Volatile.Read(ref _waitingVisitorPrompts));
+            window.Show();
+            using var registration = ct.Register(() => PostSafe(window.Close));
+            return await window.Result;
+        }, GuardAnswer.Refuse);
 
     public void ShowInfo(InfoModel model) => PostSafe(() => ToastWindow.Info(model, page => OpenSettings(page)).Show());
 
@@ -281,6 +291,8 @@ sealed class DesktopUi : IWalletUi, IAgentConsentUi, IEndpointConfirmationUi, IS
     });
 
     public void OpenAddModel(string? sourceId = null) => PostSafe(() => new AddModelWindow(_w, sourceId).Show());
+
+    public void OpenAddAgent() => PostSafe(() => new AddAgentWindow(_w).Show());
 
     internal static void PostSafe(Action action)
     {

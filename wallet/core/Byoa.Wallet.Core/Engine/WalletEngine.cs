@@ -475,7 +475,7 @@ public sealed partial class WalletEngine
         var diff = Difference(site, manifest);
         var snapshot = _store.Snapshot();
         var covered = site.Status == SiteStatus.Allowed && diff.NewSkills.Count == 0 && diff.MissingRequired.Count == 0 && !diff.CostRaised
-            && !ModelsNeedAsking(site, manifest, snapshot) && !LimitsRaised(site, manifest, snapshot.Limits);
+            && !ModelsNeedAsking(site, manifest, snapshot) && !LimitsRaised(site, manifest, snapshot.Limits) && !AgentGoalChanged(site, manifest, snapshot);
         // "Decide on my own" grants a page's request and a reconnect with the stored pairing. A new link always asks: its
         // welcome replaces the stored pairing, so the visitor sees it first.
         if (covered && site.AutoDecide && !site.Paused && (via is null || renewal))
@@ -658,6 +658,44 @@ public sealed partial class WalletEngine
                 chosenModels[row.Skill] = picked.Select(k => ids[k]).ToList();
             }
 
+            // His own agent among them: the site must have stated a goal, the guard looks at it, and a goal that looks risky is his to decide.
+            // Without that the agent is left out, and a skill that cannot do without it is left off, not half given.
+            string? acceptedGoal = null;
+            var chosenSettings = _store.Snapshot();
+            var chosenAgents = chosenModels.Values.SelectMany(v => v).Where(id => IsAgentId(chosenSettings, id)).Distinct(StringComparer.Ordinal).ToList();
+            if (chosenAgents.Count > 0)
+            {
+                var first = chosenSettings.Sources.First(s => s.Id == chosenAgents[0]);
+                var (given, accepted, refused) = await AcceptAgentGoalAsync(origin, host, site, manifest.Summary, first.Label ?? first.Model ?? "your agent", timeout.Token).ConfigureAwait(false);
+                if (given) acceptedGoal = accepted;
+                else
+                {
+                    var neededAgent = false;
+                    foreach (var skill in chosenModels.Keys.ToList())
+                    {
+                        var kept = chosenModels[skill].Where(id => !chosenAgents.Contains(id)).ToList();
+                        var row = model.Rows.First(r => r.Skill == skill);
+                        var keptNames = kept.Select(id => ModelIdOf(chosenSettings.Sources.First(s => s.Id == id))).ToList();
+                        if (kept.Count < row.Models!.Spec.Min || !ModelPlanner.Satisfies(row.Models.Spec, keptNames))
+                        {
+                            chosenModels.Remove(skill);
+                            unservedModels.Add(skill);
+                            neededAgent |= row.Required;
+                        }
+                        else chosenModels[skill] = kept;
+                    }
+
+                    // A site that cannot work without the agent and was refused it is declined, as at the consent window; when the guard merely
+                    // could not be asked, nothing about the site is decided: it asks again next time.
+                    if (neededAgent)
+                    {
+                        if (timeout.IsCancellationRequested) return Done(entry, "closed", "no answer in time");
+                        if (refused && via != ViaLink) MarkDeclined(origin, shownAllowed: site.Status == SiteStatus.Allowed);
+                        return Done(entry, "declined", refused ? "declined: you refused your agent to a site that cannot work without it" : "the agent could not be given, and the site cannot work without it");
+                    }
+                }
+            }
+
             var offered = model.Rows.Where(r => r.CanServe && !answer.LeftOff.Contains(r.Skill) && !unservedModels.Contains(r.Skill)).Select(r => r.Skill).ToList();
             var leftOff = model.Rows.Where(r => !r.CanServe || answer.LeftOff.Contains(r.Skill) || unservedModels.Contains(r.Skill)).Select(r => r.Skill).ToList();
             var decided = Now;
@@ -693,6 +731,7 @@ public sealed partial class WalletEngine
                 }
 
                 r.ShowModelNames = answer.ShowNames;
+                if (acceptedGoal is not null) r.AgentPurposeOk = acceptedGoal;
                 if (wantedLimits is { } wanted)
                 {
                     r.TextInputChars = wanted.InputChars ?? r.TextInputChars;
@@ -861,7 +900,7 @@ public sealed partial class WalletEngine
         foreach (var textLanguage in textLanguages)
         {
             var textChain = ChainFor(settings, skill.Id, textLanguage);
-            var textPlan = Router.PlanText(textChain, _textSources, id => IsEnabled(settings, id), textLanguage);
+            var textPlan = Router.PlanText(textChain, PlainTextSources, id => IsEnabled(settings, id), textLanguage);
             whys.Add(Router.ExplainText(textPlan));
             if (textPlan.First is { } textFirst)
             {
@@ -895,6 +934,7 @@ public sealed partial class WalletEngine
     {
         "local-model" => "this PC",
         "home-server" => s.Runs,
+        "subscription" => "your agent",
         _ => "API key",
     };
 
@@ -1039,7 +1079,7 @@ public sealed partial class WalletEngine
         {
             if (skill == Vocabulary.Generate)
             {
-                var textSteps = Router.PlanText(ChainFor(settings, skill, language), _textSources,
+                var textSteps = Router.PlanText(ChainFor(settings, skill, language), PlainTextSources,
                         id => IsEnabled(settings, id), language).Steps
                     .Where(s => !s.Source.Paid).ToList();
                 if (textSteps.FirstOrDefault() is { } firstText) names.Add(firstText.Source.Name);
@@ -1518,7 +1558,7 @@ public sealed partial class WalletEngine
         var routeCt = routeTimeout.Token;
         var settings = _store.Snapshot();
         var chain = chainOverride ?? ChainFor(settings, Vocabulary.Generate, language);
-        var sources = sourceOverride ?? _textSources;
+        var sources = sourceOverride ?? PlainTextSources;
         var plan = Router.PlanText(chain, sources, id => IsEnabled(settings, id), language);
         int Index(ITextSource s) => chain.Stops.FindIndex(x => x.SourceId == s.Id);
 
@@ -1531,6 +1571,7 @@ public sealed partial class WalletEngine
         var textChars = chars + (choices is null ? 0 : Texts.ChoicesInstruction(choices).Length);
         var choiceMiss = false;
         string? stopReason = null;
+        string? guardNote = null;
         decimal totalCost = 0;
 
         try
@@ -1540,6 +1581,19 @@ public sealed partial class WalletEngine
         {
             if (routeCt.IsCancellationRequested || (routeBudget > TimeSpan.Zero && Remaining(routeDeadline) <= TimeSpan.Zero)) break;
             var source = step.Source;
+
+            // An agent runs only when the guard (and, if it held the request, the visitor) says so: nothing is reserved before that.
+            if (source is IAgentTextSource agentSource && session.Origin != TestOrigin)
+            {
+                var cleared = await ClearAgentAsync(session, agentSource, messages, routeCt).ConfigureAwait(false);
+                guardNote = cleared.Note;
+                if (cleared.EndCall) return Failed(entry, "refused", cleared.Note, route.All());
+                if (!cleared.Run)
+                {
+                    route.Add(Index(source), source.Name + ": " + cleared.Note);
+                    continue;
+                }
+            }
 
             if (entry.ProviderCalled && !HoldCall(hold, callsPerDay))
             {
@@ -1674,7 +1728,7 @@ public sealed partial class WalletEngine
                 entry.Fallback = before.Count > 0 ? string.Join(" → ", before) + " → " + source.Name : null;
                 entry.Cost = Money.ToSpec(totalCost);
                 entry.Milliseconds = (int)Stopwatch.GetElapsedTime(ran).TotalMilliseconds;
-                entry.Note = decision == Decision.Warn ? "warn: " + codes : null;
+                entry.Note = JoinNotes(decision == Decision.Warn ? "warn: " + codes : null, source is IAgentTextSource ? guardNote : null);
                 Log(entry);
                 var receipt = new JsonObject
                 {
@@ -2401,7 +2455,7 @@ public sealed partial class WalletEngine
             ParallelCalls = r.Asked.ParallelCalls, CallsPerMinute = r.Asked.CallsPerMinute,
         },
         Models = r.Models.Select(m => new SiteModels { Skill = m.Skill, SourceIds = [.. m.SourceIds] }).ToList(),
-        ShowModelNames = r.ShowModelNames,
+        ShowModelNames = r.ShowModelNames, AgentPurposeOk = r.AgentPurposeOk,
     };
 
     static string? Str(JsonNode? node) => node is JsonValue v && v.TryGetValue<string>(out var s) ? s : null;
