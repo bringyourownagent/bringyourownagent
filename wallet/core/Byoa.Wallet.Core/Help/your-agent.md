@@ -1,6 +1,6 @@
 # Giving your own agent to a site
 
-A site can use your own AI agent, not only a model: an agent can look things up on the web before it answers. A site that asks, for example, for the latest news about a country can be answered by your Claude Code, which searches the web and reads the pages. Add your agent in Sources, with **Add an agent**.
+A site can use your own AI agent, not only a model: an agent can look things up on the web before it answers. A site that asks, for example, for the latest news about a country can be answered by your Claude Code, which searches the web and reads the pages. Add your agent on My agents, with **Add an agent**.
 
 What the wallet lets your agent do for a site:
 
@@ -13,6 +13,6 @@ A site gets your agent only when you give it that site: a site that asks for it 
 
 Every request goes through the guard first (see Agent guard). What the guard holds, you see: the request as the site sent it, what the site said it is for, and what the guard noticed. You can let it through, refuse it, or refuse it and take your agent away from that site. With no answer in two minutes it is refused.
 
-This is not the same as letting an agent manage the wallet (the page "Manage by an agent"): that is an agent working for you on the wallet's settings. Here the agent works for a site, so it is kept on a short leash.
+This is not the same as letting an agent manage the wallet (the page "My MCP"): that is an agent working for you on the wallet's settings. Here the agent works for a site, so it is kept on a short leash.
 
 Add an agent with the program that runs it: a launcher such as `ccodeglm.cmd`, or `claude.exe`. Press Test to ask it one question before you add it. Only you can add or change an agent: no agent can do it through the MCP bridge, because the program you name is one the wallet starts.

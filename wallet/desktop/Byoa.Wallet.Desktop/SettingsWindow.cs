@@ -26,13 +26,13 @@ sealed partial class SettingsWindow : Window
     static readonly (string Id, string Name, string Glyph)[] Pages =
     [
         ("sites", "Sites", Ui.Globe),
-        ("sources", "Sources", Ui.Screen),
+        ("sources", "My models", Ui.Screen),
+        ("myagents", "My agents", Ui.Arrow),
         ("guard", "Agent guard", Ui.Check),
         ("skills", "Skills & fallbacks", Ui.Arrow),
         ("limits", "Limits", Ui.Gauge),
         ("activity", "Activity", Ui.List),
-        ("agents", "Managing agents", Ui.Screen),
-        ("connect", "Manage by an agent", Ui.Plus),
+        ("connect", "My MCP", Ui.Plus),
         ("help", "Help", Ui.Key),
     ];
 
@@ -140,6 +140,7 @@ sealed partial class SettingsWindow : Window
 
     public void Show(string? page)
     {
+        if (page == "agents") page = "connect";                       // the list of managing agents is part of My MCP now
         _page = Pages.Any(p => p.Id == page) ? page! : _page;
         _tabs.SelectedIndex = Array.FindIndex(Pages, p => p.Id == _page);
         PaintTabs();
@@ -162,10 +163,10 @@ sealed partial class SettingsWindow : Window
         {
             case "sites": SitesPage(page); break;
             case "sources": SourcesPage(page); break;
+            case "myagents": MyAgentsPage(page); break;
             case "guard": GuardPage(page); break;
             case "skills": SkillsPage(page); break;
             case "limits": LimitsPage(page); break;
-            case "agents": AgentsPage(page); break;
             case "connect": ConnectAgentPage(page); break;
             case "help": HelpPage(page); break;
             default: ActivityPage(page); break;
@@ -484,15 +485,14 @@ sealed partial class SettingsWindow : Window
 
     void SourcesPage(StackPanel page)
     {
-        Head(page, "Sources", "The programs that run your models, and your keys. The site never learns which one answered, and a key goes only to its own provider. "
+        Head(page, "My models", "The programs that run your models, and your keys. The site never learns which one answered, and a key goes only to its own provider. "
             + "Add a model that runs on this PC (or on a home server), or one behind your own key: a short wizard tests it before it changes your route. "
-            + "Or add your own AI agent, which can look things up on the web for a site you give it to.");
-        page.Children.Add(Ui.Row(8, Ui.Button("Add a model", "allow", "AddModel", () => _w.Ui.OpenAddModel(), "small"),
-            Ui.Button("Add an agent", "deny", "AddAgent", () => _w.Ui.OpenAddAgent(), "small")));
+            + "Your own AI agents are on My agents.");
+        page.Children.Add(Ui.Button("Add a model", "allow", "AddModel", () => _w.Ui.OpenAddModel(), "small"));
         var settings = _w.Store.Snapshot();
 
         // the models, one line each: the ones the visitor added, then the wallet's own paid speech model
-        var added = settings.Sources.Where(s => s.Kind is not null).ToList();
+        var added = settings.Sources.Where(s => s.Kind is not null && !string.Equals(s.Kind, SourceKinds.Agent, StringComparison.OrdinalIgnoreCase)).ToList();
         if (added.Count == 0)
         {
             page.Children.Add(Ui.Wrap("No added models yet. Use Add a model to pick one in a program that runs on this PC, or one behind your own API key.", "muted"));
@@ -952,13 +952,16 @@ sealed partial class SettingsWindow : Window
     // ------------------------------------------------------------------------------------------------
     // Agents, connection and help
 
-    void AgentsPage(StackPanel page)
+    /// <summary>The agents the visitor let manage the wallet over MCP, on the My MCP page below the commands.</summary>
+    void ManagingAgentsSection(StackPanel page)
     {
-        Head(page, "Managing agents", "These are AI agents you let manage this wallet (Claude Code, Codex, opencode). They can manage sources and routes by default. Full access is a separate switch for site names and access, limits, built-in sources and agent-supplied keys. No tool lets an agent allow a site, approve a paid call or approve another agent.");
+        page.Children.Add(Ui.Rule(10, 4));
+        page.Children.Add(Ui.Column(2, Ui.Text("Agents you let manage the wallet", "h2"),
+            Ui.Wrap("They can manage sources and routes by default. Full access is a separate switch for site names and access, limits, built-in sources and agent-supplied keys. No tool lets an agent allow a site, approve a paid call or approve another agent.", "muted")));
         var agents = _w.Store.Snapshot().Agents.OrderByDescending(a => a.LastUsed ?? DateTimeOffset.MinValue).ToList();
         if (agents.Count == 0)
         {
-            page.Children.Add(Ui.Box("card", Ui.Wrap("No agent manages the wallet yet. Use “Manage by an agent”, beside this page. (Giving your agent to a site is another thing: see Add an agent in Sources.)", "muted")));
+            page.Children.Add(Ui.Box("card", Ui.Wrap("No agent manages the wallet yet. Copy one of the commands above into the tool you use.", "muted")));
             return;
         }
 
@@ -996,9 +999,9 @@ sealed partial class SettingsWindow : Window
 
     void ConnectAgentPage(StackPanel page)
     {
-        Head(page, "Let an agent manage the wallet", "Your AI agent (Claude Code, Codex, opencode) can set up this wallet for you: add models, test them, put them in order. " +
+        Head(page, "My MCP", "Let your AI agent (Claude Code, Codex, opencode) manage this wallet: add models, test them, put them in order. " +
             "It talks to the wallet through byoa-mcp.exe over a per-user pipe. Start the wallet first; the bridge never starts it and never holds your keys. " +
-            "This is not the same as giving your agent to a site to answer its questions: for that, use Add an agent in Sources.");
+            "This is not the same as giving your agent to a site to answer its questions: that is My agents.");
         var exe = McpPath();
         page.Children.Add(Ui.Box("card", Ui.Column(7,
             Ui.Text("MCP server path", "label"),
@@ -1023,6 +1026,7 @@ sealed partial class SettingsWindow : Window
             page.Children.Add(Ui.Column(6, Ui.Text(name, "h2"), Ui.Columns("*,Auto", text, copy)));
         }
         page.Children.Add(Ui.Wrap("Use request_api_key_entry when an agent needs a provider key: the visitor types it in the wallet, and the agent never receives it.", "muted", "small"));
+        ManagingAgentsSection(page);
     }
 
     internal static IReadOnlyList<(string Name, string Text)> AgentSnippets(string exe) =>

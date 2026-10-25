@@ -890,7 +890,7 @@ public sealed partial class WalletEngine
         {
             var why = section.MissingRequired.Count > 0
                 ? "The site cannot work without " + string.Join(", ", section.MissingRequired) + "."
-                : section.Shortfall is { } shortfall ? "The site " + shortfall + ". Add models in Sources, or an OpenRouter key." : "";
+                : section.Shortfall is { } shortfall ? "The site " + shortfall + ". Add models in My models, or an OpenRouter key." : "";
             return new ConsentRow(skill.Id, name, skill.Required, isNew, section.CanServe, [], skill.Languages, why, section);
         }
 

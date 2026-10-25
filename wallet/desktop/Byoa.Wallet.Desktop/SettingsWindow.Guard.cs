@@ -136,7 +136,21 @@ sealed partial class SettingsWindow
         }
     }
 
-    /// <summary>The settings of the visitor's own agent, behind the arrow of its line in Sources.</summary>
+    /// <summary>My agents: the visitor's own AI agents that can answer a site's questions, one line each; the settings open with the arrow.</summary>
+    void MyAgentsPage(StackPanel page)
+    {
+        Head(page, "My agents", "Your own AI agent can answer a site's questions and look things up on the web for it: the news of a country, say. " +
+            "A site gets it only when you tick it for that site, it must say what it will ask, and every request passes the Agent guard first. " +
+            "Letting an agent manage this wallet is another thing: see My MCP.");
+        page.Children.Add(Ui.Row(8, Ui.Button("Add an agent", "allow", "AddAgent", () => _w.Ui.OpenAddAgent(), "small"),
+            Ui.Button("Agent guard", "deny", "OpenAgentGuard", () => Show("guard"), "small")));
+        var agents = _w.Store.Snapshot().Sources.Where(s => string.Equals(s.Kind, SourceKinds.Agent, StringComparison.OrdinalIgnoreCase)).ToList();
+        if (agents.Count == 0)
+            page.Children.Add(Ui.Wrap("No agent added yet. Use Add an agent: Claude Code, or a launcher built on it, works so far.", "muted"));
+        foreach (var agent in agents) page.Children.Add(AddedSourceRow(agent));
+    }
+
+    /// <summary>The settings of the visitor's own agent, behind the arrow of its line in My agents.</summary>
     Control AgentSourceDetails(SourceSetting source, RegistrySourceInfo? info)
     {
         var test = Ui.Button("Test it", "deny", "AgentSourceTest-" + SafeId(source.Id), () => _ = TestAgentAsync(source), "small");

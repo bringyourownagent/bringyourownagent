@@ -13,7 +13,7 @@ An **agent source** is a program on the visitor's computer that runs his AI agen
 
 The agent runs on the visitor's own subscription: the wallet counts its cost as 0 and reports provider kind `subscription` to the gate. A site that asks for `local-only` privacy never gets it.
 
-Only the visitor adds or changes an agent source (Sources → Add an agent). The MCP bridge's source kinds do not include `agent`, and it cannot edit one: the program is code the wallet starts.
+Only the visitor adds or changes an agent source (My agents → Add an agent). The MCP bridge's source kinds do not include `agent`, and it cannot edit one: the program is code the wallet starts.
 
 ## How a site asks for it
 

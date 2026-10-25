@@ -46,7 +46,7 @@ sealed class DesktopUi : IWalletUi, IAgentConsentUi, IEndpointConfirmationUi, IS
         activity.Click += (_, _) => OpenSettings("activity");
         var help = new NativeMenuItem("Help");
         help.Click += (_, _) => OpenHelp();
-        var agent = new NativeMenuItem("Let an agent manage the wallet");
+        var agent = new NativeMenuItem("My MCP");
         agent.Click += (_, _) => OpenSettings("connect");
         var exit = new NativeMenuItem("Quit");
         exit.Click += (_, _) => quit();
@@ -207,7 +207,7 @@ sealed class DesktopUi : IWalletUi, IAgentConsentUi, IEndpointConfirmationUi, IS
                 if (history.Count >= 3)
                 {
                     _keyWindows.Remove(request.SourceId);
-                    return RegistryOperationResult.Failure("This agent has opened the API-key field three times in the last hour. Ask the visitor to use Sources in the wallet.");
+                    return RegistryOperationResult.Failure("This agent has opened the API-key field three times in the last hour. Ask the visitor to use My models in the wallet.");
                 }
                 history.Enqueue(DateTimeOffset.UtcNow);
             }

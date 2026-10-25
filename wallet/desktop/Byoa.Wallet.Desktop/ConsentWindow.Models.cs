@@ -114,8 +114,8 @@ sealed partial class ConsentWindow
         pick.Extra.Children.Add(new Avalonia.Controls.Shapes.Line { StartPoint = new Point(0, 0), EndPoint = new Point(330, 0), Stroke = Ui.Brush("Rule"), StrokeThickness = 1, StrokeDashArray = [3, 3] });
         if (_search is null || !_canSearch)
         {
-            pick.Extra.Children.Add(Ui.Wrap("To pick from hundreds more models, add your OpenRouter key in Sources. Models you already have are in the list above.", "muted", "small"));
-            pick.Extra.Children.Add(Ui.Link("Open Sources…", "ConsentModelsSources", () => _openSettings("sources")));
+            pick.Extra.Children.Add(Ui.Wrap("To pick from hundreds more models, add your OpenRouter key in My models. Models you already have are in the list above.", "muted", "small"));
+            pick.Extra.Children.Add(Ui.Link("Open My models…", "ConsentModelsSources", () => _openSettings("sources")));
             return pick.Extra;
         }
 

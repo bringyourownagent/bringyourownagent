@@ -35,7 +35,7 @@ sealed class AgentConsentWindow : Window
             name,
             Ui.Text("First connection", "muted", "small"));
         var interpreterNote = model.Identity.ParentIsInterpreter
-            ? Ui.Wrap("This program runs other programs; anything started through it will share this approval. Full access is not offered on this first connection; you can turn it on later in Settings → Agents.", "muted", "small")
+            ? Ui.Wrap("This program runs other programs; anything started through it will share this approval. Full access is not offered on this first connection; you can turn it on later in Settings → My MCP.", "muted", "small")
             : Ui.Text("", "small");
         _full.IsVisible = model.FullAccessAllowed;
         var accessNote = model.FullAccessAllowed

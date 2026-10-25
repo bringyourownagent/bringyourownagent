@@ -200,6 +200,18 @@ try:
     ui.find_window("Agent wallet", 40)
     time.sleep(2.0)
 
+    # ------------------------------------------------------------------------------------------ the menu
+    w = settle("sites")
+    names = {i: ui.control(w, i, 10).Name for i in ("Tab-sources", "Tab-myagents", "Tab-guard", "Tab-connect")}
+    check("the menu says My models, My agents, Agent guard and My MCP", names == {"Tab-sources": "My models", "Tab-myagents": "My agents", "Tab-guard": "Agent guard", "Tab-connect": "My MCP"}, str(names))
+    try:
+        ui.control(w, "Tab-agents", 1)
+        check("the list of managing agents is part of My MCP, not a menu item of its own", False)
+    except LookupError:
+        check("the list of managing agents is part of My MCP, not a menu item of its own", True)
+    w = settle("connect")
+    check("My MCP shows the commands and the list of agents that manage the wallet", ui.control(w, "AgentCopy-ClaudeCode", 10) is not None)
+
     # ------------------------------------------------------------------------------------------ the Agent guard page
     w = settle("guard")
     check("the Agent guard page needs the OpenRouter key at first", "needs your OpenRouter key" in ui.control(w, "GuardKeyState", 10).Name, ui.control(w, "GuardKeyState", 10).Name)
@@ -240,7 +252,7 @@ try:
     check("one press brings the wallet's wording back", not guard_saved().get("harmText"), str(guard_saved()))
 
     # ------------------------------------------------------------------------------------------ Add an agent
-    w = settle("sources")
+    w = settle("myagents")
     ui.invoke(w, "AddAgent")
     add = ui.find_window("Add your agent", 15)
     check("«Add an agent» opens its window", add is not None)
@@ -272,7 +284,16 @@ try:
         time.sleep(0.8)
         return ui.control(ui.find_window("Agent wallet", 10), "AgentSourceTest-agent-fake-agent", 10) is not None
 
-    check("its line in Sources opens to its own settings", on_page("sources", agent_row))
+    check("its line in My agents opens to its own settings", on_page("myagents", agent_row))
+
+    def models_page_has_no_agent(w):
+        try:
+            ui.control(w, "AddedSourceExpand-agent:fake-agent", 2)
+            return False
+        except LookupError:
+            return True
+
+    check("My models does not list the agent", on_page("sources", models_page_has_no_agent))
 
     # ------------------------------------------------------------------------------------------ a site that needs the agent
     link = site.new_link()

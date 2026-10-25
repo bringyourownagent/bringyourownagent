@@ -518,7 +518,7 @@ sealed class AddModelWindow : Window
         {
             _suggestion.Text = _local
                 ? "Pick a speech model that the program has loaded, for example Qwen3-ASR in Llama. The test sends it a short sound. Leave Languages empty to take any language."
-                : "A paid speech model needs no setup here: add your OpenRouter key on the Sources page, under Paid speech.";
+                : "A paid speech model needs no setup here: add your OpenRouter key on the My models page, under Paid speech.";
         }
         else if (_languages.Text?.Length == 0 && _model.Text?.Contains("qwen", StringComparison.OrdinalIgnoreCase) == true)
         {

@@ -110,7 +110,7 @@ sealed class AddAgentWindow : Window
             return;
         }
 
-        _w.Ui.OpenSettings("sources");
+        _w.Ui.OpenSettings("myagents");
         Close();
     }
 

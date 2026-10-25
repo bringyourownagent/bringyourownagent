@@ -389,7 +389,7 @@ public sealed class WalletRegistry
         if (!TryHasKey(id, setting, out var hasKey, out var keyError))
             return RegistryOperationResult.Failure(keyError!);
         if (hasKey && !visitorInitiated && !fullAccess)
-            return RegistryOperationResult.Failure("Removing this source would remove its saved key. Ask the visitor to do it in the wallet, or to give you Full access in Settings → Agents.");
+            return RegistryOperationResult.Failure("Removing this source would remove its saved key. Ask the visitor to do it in the wallet, or to give you Full access in Settings → My MCP.");
         return RemoveSourceCore(id, actor, hasKey && visitorInitiated);
     }
 
@@ -402,7 +402,7 @@ public sealed class WalletRegistry
         if (!TryHasKey(id, setting, out var hasKey, out var keyError))
             return RegistryOperationResult.Failure(keyError!);
         if (hasKey && !fullAccess)
-            return RegistryOperationResult.Failure("Removing this source would remove its saved key. Ask the visitor to do it in the wallet, or to give you Full access in Settings → Agents.");
+            return RegistryOperationResult.Failure("Removing this source would remove its saved key. Ask the visitor to do it in the wallet, or to give you Full access in Settings → My MCP.");
 
         var deleteSecret = false;
         if (hasKey)
@@ -649,7 +649,7 @@ public sealed class WalletRegistry
         try
         {
             if (_secrets.Has(name) && !visitorInitiated && !fullAccess)
-                return Task.FromResult(RegistryOperationResult.Failure("This source already has a saved key. Ask the visitor to replace it in the wallet, or to give you Full access in Settings → Agents."));
+                return Task.FromResult(RegistryOperationResult.Failure("This source already has a saved key. Ask the visitor to replace it in the wallet, or to give you Full access in Settings → My MCP."));
         }
         catch (CryptographicException)
         {
@@ -679,7 +679,7 @@ public sealed class WalletRegistry
         var info = ListSources().FirstOrDefault(s => s.Id == sourceId);
         if (info is null) return RegistryOperationResult.Failure("There is no source with id '" + sourceId + "'.");
         var handler = ApiKeyEntryRequested;
-        if (handler is null) return RegistryOperationResult.Failure("The wallet cannot open its API-key field right now. Ask the visitor to use Sources in the wallet.");
+        if (handler is null) return RegistryOperationResult.Failure("The wallet cannot open its API-key field right now. Ask the visitor to use My models in the wallet.");
         return await handler(new ApiKeyEntryRequest(sourceId, info.Name, actor, !visitorInitiated, fullAccess)
         {
             AgentId = !visitorInitiated ? agentId : null,
