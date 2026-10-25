@@ -151,8 +151,9 @@ public sealed class OpenAiCompatibleSource : ITextSource, IStreamingTextSource, 
         if (text.Length == 0 && finish == "length" && !string.IsNullOrEmpty(reasoning))
         {
             // A thinking model can spend the whole budget on its hidden reasoning. A local model tries once more with
-            // more room; a paid one would spend the visitor's money twice, so the route hears it straight away.
-            if (Paid) throw new InvalidOperationException(RuntimeName + " spent all its tokens on hidden reasoning; raise maxTokens");
+            // more room; a paid one would spend the visitor's money twice, so the route hears it straight away. A request that
+            // carried a limit on reasoning has already had the room it was promised: trying again would only make the visitor wait.
+            if (Paid || ReasoningBudget(request) > 0) throw new InvalidOperationException(RuntimeName + " spent all its tokens on hidden reasoning; raise maxTokens");
             var (retry, more, retryFinish) = await ChatAsync(request, useSchema: !_schemaBlocked, tokenFactor: 4, ct).ConfigureAwait(false);
             message = ChatCompletions.First(retry)?["message"];
             text = AnswerOf(request, message);
@@ -218,6 +219,12 @@ public sealed class OpenAiCompatibleSource : ITextSource, IStreamingTextSource, 
             ? Texts.CleanAnswer(ChatCompletions.Str(message?["content"]) ?? "")
             : ChatCompletions.ExtractChoice(message, request.Choices) ?? "";
 
+    /// <summary>The reasoning limit this request carries to this runtime: the visitor's, only for a thinking request to a llama.cpp-style server.</summary>
+    int ReasoningBudget(TextRequest request) =>
+        request.Thinking && request.ThinkingBudget > 0 && _kind.Equals(SourceKinds.OpenAiCompatible, StringComparison.OrdinalIgnoreCase)
+            ? request.ThinkingBudget
+            : 0;
+
     /// <summary>One POST chat/completions. A runtime that refuses the JSON schema gets the choices in the prompt instead.</summary>
     async Task<(JsonNode? Json, (int In, int Out) Tokens, string? Finish)> ChatAsync(TextRequest request, bool useSchema, int tokenFactor, CancellationToken ct, int attempt = 0)
     {
@@ -264,14 +271,18 @@ public sealed class OpenAiCompatibleSource : ITextSource, IStreamingTextSource, 
             messages.Add(new JsonObject { ["role"] = "system", ["content"] = Texts.ChoicesInstruction(request.Choices) });
         }
 
+        var budget = ReasoningBudget(request);
         var body = new JsonObject
         {
             ["model"] = Model,
             ["messages"] = messages,
-            ["max_tokens"] = Math.Min(request.MaxTokens * tokenFactor, MaxLocalTokens),
+            // The reasoning limit is not taken out of the answer: the page's room for the answer comes on top of it.
+            ["max_tokens"] = Math.Min(request.MaxTokens * tokenFactor + budget, MaxLocalTokens),
             ["temperature"] = request.Temperature,
             ["stream"] = false,
         };
+        // llama.cpp (the Llama app) stops a model's reasoning after this many tokens and makes it answer; other servers do not know the field.
+        if (budget > 0) body["thinking_budget_tokens"] = budget;
         if (useSchema && request.Choices is not null) body["response_format"] = ChatCompletions.ChoiceSchema(request.Choices);
         // A model that reasons first can be told to answer at once: llama.cpp (the Llama app), vLLM and the like read this from the chat template;
         // LM Studio and Ollama ignore a field they do not know, and a model that does not reason is not changed by it.

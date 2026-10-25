@@ -28,17 +28,19 @@ public static class ApiServices
         new("deepseek", "DeepSeek", "https://api.deepseek.com/v1", "deepseek", "deepseek", "https://platform.deepseek.com/api_keys"),
         new("xai", "xAI", "https://api.x.ai/v1", "xai", "x-ai", "https://console.x.ai"),
         new("zai", "Z.ai (GLM)", "https://api.z.ai/api/paas/v4", "zai", "z-ai", "https://z.ai/manage-apikey/apikey-list"),
+        // The same company, the same key, another address: a Coding Plan subscription is used at /api/coding/paas/v4, the pay-per-token account at /api/paas/v4.
+        new("zai-coding", "Z.ai Coding Plan (GLM)", "https://api.z.ai/api/coding/paas/v4", "zai", "z-ai", "https://z.ai/manage-apikey/apikey-list"),
         new("mistral", "Mistral", "https://api.mistral.ai/v1", "mistral", "mistralai", "https://console.mistral.ai/api-keys"),
     ];
 
     /// <summary>
-    /// The name of the key kept for a service: its id; for a service the visitor named, its address too (two such services have two keys).
-    /// Every model behind one service uses the one key.
+    /// The name of the key kept for a service: its own (the service's <see cref="ApiService.SecretName"/>, which two addresses of one company share);
+    /// for a service the visitor named, its address too (two such services have two keys). Every model behind one service uses the one key.
     /// </summary>
     public static string SecretName(string? service, string? endpoint)
     {
         var id = (service ?? "").Trim().ToLowerInvariant();
-        if (id != Custom) return "api-key:" + id;
+        if (id != Custom) return "api-key:" + (Find(id)?.SecretName ?? id);
         return Uri.TryCreate(endpoint?.Trim(), UriKind.Absolute, out var uri) ? "api-key:custom:" + uri.IdnHost.ToLowerInvariant() : "api-key:custom";
     }
 

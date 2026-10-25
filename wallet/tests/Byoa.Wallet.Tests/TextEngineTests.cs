@@ -188,6 +188,29 @@ public class TextEngineTests
         Assert.True(new SourceSetting().Thinking);                                          // a new or an old setting thinks by default
     }
 
+    [Fact]
+    public async Task TheVisitorsLimitOnThinkingRidesWithEveryCall()
+    {
+        var grant = await GrantAsync();
+        await _engine.HandleAsync(TextCall(Site, grant));
+        Assert.Equal(2000, _first.LastRequest!.ThinkingBudget);                             // the default
+
+        _store.Update(s => s.Source(_first.Id).ThinkingBudget = 700);
+        _first.Answers.Enqueue("Paris");
+        await _engine.HandleAsync(TextCall(Site, grant));
+        Assert.Equal(700, _first.LastRequest.ThinkingBudget);
+
+        _store.Update(s => s.Source(_first.Id).ThinkingBudget = 0);
+        _first.Answers.Enqueue("Paris");
+        await _engine.HandleAsync(TextCall(Site, grant));
+        Assert.Equal(0, _first.LastRequest.ThinkingBudget);                                 // no limit
+
+        _store.Update(s => s.Source(_first.Id).ThinkingBudget = 9_999_999);
+        _first.Answers.Enqueue("Paris");
+        await _engine.HandleAsync(TextCall(Site, grant));
+        Assert.Equal(SourceSetting.MaxThinkingBudget, _first.LastRequest.ThinkingBudget);   // a silly number is held to the most
+    }
+
     // ------------------------------------------------------------------ the caps
 
     [Fact]

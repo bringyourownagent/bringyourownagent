@@ -193,15 +193,40 @@ sealed partial class SettingsWindow
         return Ui.Column(2, offer, Ui.Wrap("A site that asks for several models gets the ones in your default set first. Known as: " + (known.Length == 0 ? "unknown" : known) + ".", "muted", "small"));
     }
 
-    /// <summary>"Let the model think": a model that reasons before it answers can be told to answer at once. Text models that run on this PC or a server of yours.</summary>
+    /// <summary>"Let the model think": a model that reasons before it answers can be told to answer at once. Text models that run on this PC or a server of yours, and GLM at Z.ai.</summary>
     Control? ThinkingRow(SourceSetting source)
     {
         if (source.Skills.Count > 0 && !source.Skills.Contains(Vocabulary.Generate)) return null;
-        if (source.Kind is not (SourceKinds.OpenAiCompatible or SourceKinds.LmStudio or SourceKinds.Ollama)) return null;
+        var glm = source.Kind == ApiServices.Kind && (source.Service is "zai" or "zai-coding");
+        if (source.Kind is not (SourceKinds.OpenAiCompatible or SourceKinds.LmStudio or SourceKinds.Ollama) && !glm) return null;
         var think = new CheckBox { Content = "Let the model think before it answers", IsChecked = source.Thinking };
         AutomationProperties.SetAutomationId(think, "AddedSourceThinking-" + SafeId(source.Id));
         think.IsCheckedChanged += (_, _) => _w.Store.Update(s => s.Source(source.Id).Thinking = think.IsChecked == true);
-        return Ui.Column(2, think, Ui.Wrap("A model that thinks first (Qwen3.5, DeepSeek-R1 and the like) can spend minutes before its first word. Untick this for quick answers. A site may also ask for no thinking. A model that does not think is not changed.", "muted", "small"));
+        var column = Ui.Column(2, think, Ui.Wrap(glm
+            ? "GLM-5.3 always reasons a little. Unticked, the wallet asks for its lowest level of reasoning, so the answer comes quickly. A site may also ask for this."
+            : "A model that thinks first (Qwen3.5, DeepSeek-R1 and the like) can spend minutes before its first word. Untick this for quick answers. A site may also ask for no thinking. A model that does not think is not changed.", "muted", "small"));
+        if (source.Kind == SourceKinds.OpenAiCompatible) column.Children.Add(ThinkingBudgetRow(source));
+        return column;
+    }
+
+    /// <summary>"Thinking limit": the most tokens a thinking model of the Llama app may spend on reasoning before it must answer (0 is no limit).</summary>
+    Control ThinkingBudgetRow(SourceSetting source)
+    {
+        var box = new TextBox { Text = source.ThinkingBudget.ToString(System.Globalization.CultureInfo.InvariantCulture), Width = 90, MinWidth = 90 };
+        AutomationProperties.SetAutomationId(box, "AddedSourceThinkingBudget-" + SafeId(source.Id));
+        box.TextChanged += (_, _) =>
+        {
+            // Only a whole number counts; anything else is left as typed and not saved until it is one.
+            if (!int.TryParse(box.Text?.Trim(), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var tokens)) return;
+            var kept = Math.Clamp(tokens, 0, SourceSetting.MaxThinkingBudget);
+            _w.Store.Update(s => s.Source(source.Id).ThinkingBudget = kept);
+        };
+        box.LostFocus += (_, _) => box.Text = _w.Store.Read(s => s.Sources.FirstOrDefault(x => x.Id == source.Id)?.ThinkingBudget ?? source.ThinkingBudget)
+            .ToString(System.Globalization.CultureInfo.InvariantCulture);
+        return Ui.Column(2,
+            Ui.Row(8, Ui.Text("Thinking limit, tokens", "small"), box),
+            Ui.Wrap("The most the model may spend on thinking before it must answer. A small model can think in circles for minutes; " +
+                    "about 2000 gives it room and keeps the wait short. 0 means no limit. Works with the Llama app and other llama.cpp servers.", "muted", "small"));
     }
 
     static string ModelNamesOf(SourceSetting source)

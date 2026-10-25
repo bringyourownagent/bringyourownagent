@@ -1980,7 +1980,7 @@ public sealed partial class WalletEngine
     /// <summary>The request again, with the choices spelled out as a last instruction.</summary>
     static TextRequest RetryRequest(TextRequest request, IReadOnlyList<string> choices) =>
         new([.. request.Messages, new ChatMessage("system", Texts.ChoicesInstruction(choices))],
-            request.MaxTokens, request.Temperature, request.Language, request.Choices, request.Thinking);
+            request.MaxTokens, request.Temperature, request.Language, request.Choices, request.Thinking, request.ThinkingBudget);
 
     /// <summary>What the page said about thinking: only an explicit "no" (<c>false</c>, or "off" / "no" / "none" / "false") turns it off.</summary>
     static bool ThinkingWanted(JsonNode? node)
@@ -1990,11 +1990,17 @@ public sealed partial class WalletEngine
         return !(value.TryGetValue<string>(out var word) && word.Trim().ToLowerInvariant() is "off" or "no" or "none" or "false");
     }
 
-    /// <summary>The visitor's own switch for one source: "Let the model think" unticked means it answers straight away, whatever the page asked.</summary>
-    TextRequest WithSourceThinking(ITextSource source, TextRequest request) =>
-        request.Thinking && _store.Read(s => s.Sources.FirstOrDefault(x => x.Id == source.Id)?.Thinking == false)
-            ? request with { Thinking = false }
-            : request;
+    /// <summary>The visitor's own settings for one source: "Let the model think" unticked means it answers straight away, whatever the page
+    /// asked; the limit on reasoning (tokens) rides along for a model that thinks.</summary>
+    TextRequest WithSourceThinking(ITextSource source, TextRequest request)
+    {
+        var (thinks, budget) = _store.Read(s =>
+        {
+            var setting = s.Sources.FirstOrDefault(x => x.Id == source.Id);
+            return (setting?.Thinking != false, Math.Clamp(setting?.ThinkingBudget ?? SourceSetting.DefaultThinkingBudget, 0, SourceSetting.MaxThinkingBudget));
+        });
+        return request with { Thinking = request.Thinking && thinks, ThinkingBudget = budget };
+    }
 
     static int? Int(JsonNode? node) => node is JsonValue v && v.TryGetValue<int>(out var i) ? i : null;
 

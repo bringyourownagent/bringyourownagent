@@ -85,6 +85,13 @@ def source(model):
 
 sources = [source("alpha"), source("beta")]
 settings_path = os.path.join(a.home, "settings.json")
+
+
+def saved_source(source_id):
+    """The saved setting of one source, read from the wallet's settings file."""
+    with open(settings_path, encoding="utf-8") as f:
+        return next(s for s in json.load(f)["sources"] if s["id"] == source_id)
+
 with open(settings_path, "w", encoding="utf-8") as f:
     json.dump({"version": 1, "sources": sources,
                "chains": [{"skill": "text.generate", "language": None, "stops": [{"sourceId": s["id"], "enabled": True, "askBeforePaid": True} for s in sources]}]}, f)
@@ -117,6 +124,22 @@ def shot(window, name):
             desk.shot(window, os.path.join(a.shots, name + ".png"))
         except OSError as e:
             print("no picture:", e)
+
+
+def on_sources(action, tries=8):
+    """Runs action(window) on the Sources page of the settings window. The page is drawn again now and then (a scan of the runtime, a change),
+    and a handle taken before that is stale: look the window up again and retry."""
+    last = None
+    for _ in range(tries):
+        try:
+            w = ui.find_window("Agent wallet", 10)
+            ui.select(w, "Tab-sources")
+            time.sleep(1.2)
+            return action(w)
+        except Exception as e:  # noqa: BLE001
+            last = e
+            time.sleep(0.8)
+    raise last
 
 
 def model_buttons(window):
@@ -177,39 +200,55 @@ try:
     r = site.call_text()
     check("a call is answered", r.get("ok") is True, str(r)[:160])
     check("a call without a word about thinking leaves the model to think", "chat_template_kwargs" not in bodies[-1], str(bodies[-1].keys()))
+    check("... within the visitor's default limit of 2000 tokens", bodies[-1].get("thinking_budget_tokens") == 2000, str(bodies[-1].get("thinking_budget_tokens")))
+    r = site.call_text(params={"maxTokens": 300})
+    check("the answer keeps the page's room on top of the limit", bodies[-1].get("max_tokens") == 2300 and bodies[-1].get("thinking_budget_tokens") == 2000, str(bodies[-1].get("max_tokens")))
     r = site.call_text(params={"thinking": False})
     check("params.thinking: false reaches the runtime as enable_thinking: false", bodies[-1].get("chat_template_kwargs") == {"enable_thinking": False}, str(bodies[-1].get("chat_template_kwargs")))
+    check("... and no limit rides with a call that does not think", "thinking_budget_tokens" not in bodies[-1])
     r = site.call_text(params={"thinking": True})
     check("params.thinking: true changes nothing", "chat_template_kwargs" not in bodies[-1])
 
     # the visitor's own switch, in Sources
     subprocess_started = desk.start([a.exe], env=env)                      # a second start hands over to the running wallet: its settings
-    settings = ui.find_window("Agent wallet", 30)
-    check("the settings window opens", settings is not None)
-    ui.select(settings, "Tab-sources")
-    time.sleep(1.5)
+    check("the settings window opens", ui.find_window("Agent wallet", 30) is not None)
     switch_id = "AddedSourceThinking-" + re.sub(r"[^A-Za-z0-9]", "-", picked)
-    box = ui.control(settings, switch_id, 10)
-    shot(settings, "3-sources")
-    check("each text model has «Let the model think before it answers», ticked at first", auto.CheckBoxControl(AutomationId=switch_id).Exists(1, 0.2)
-          and box.GetPattern(auto.PatternId.TogglePattern).ToggleState == 1)
-    ui.toggle(settings, switch_id, on=False)
+    budget_id = "AddedSourceThinkingBudget-" + re.sub(r"[^A-Za-z0-9]", "-", picked)
+    on_sources(lambda w: shot(w, "3-sources"))
+    state = on_sources(lambda w: ui.control(w, switch_id, 10).GetPattern(auto.PatternId.TogglePattern).ToggleState)
+    check("each text model has «Let the model think before it answers», ticked at first", state == 1, str(state))
+
+    # the limit on thinking: a number box under the switch
+    value = on_sources(lambda w: ui.control(w, budget_id, 10).GetPattern(auto.PatternId.ValuePattern).Value)
+    check("a thinking model of the Llama app has «Thinking limit, tokens», 2000 at first", value == "2000", value)
+    on_sources(lambda w: ui.control(w, budget_id, 10).GetPattern(auto.PatternId.ValuePattern).SetValue("500"))
     time.sleep(1.0)
-    saved = json.load(open(settings_path, encoding="utf-8"))
-    mine = [s for s in saved["sources"] if s["id"] == picked]
-    check("unticking it is saved in the settings", len(mine) == 1 and mine[0].get("thinking") is False, str(mine[0].get("thinking") if mine else None))
+    check("typing 500 is saved in the settings", saved_source(picked).get("thinkingBudget") == 500)
+    r = site.call_text(params={"maxTokens": 300})
+    check("the next call carries the new limit and its room", bodies[-1].get("thinking_budget_tokens") == 500 and bodies[-1].get("max_tokens") == 800,
+          f"{bodies[-1].get('thinking_budget_tokens')} / {bodies[-1].get('max_tokens')}")
+    on_sources(lambda w: ui.control(w, budget_id, 10).GetPattern(auto.PatternId.ValuePattern).SetValue("abc"))        # not a number: not saved
+    time.sleep(0.8)
+    check("a word instead of a number is not saved", saved_source(picked).get("thinkingBudget") == 500)
+    on_sources(lambda w: ui.control(w, budget_id, 10).GetPattern(auto.PatternId.ValuePattern).SetValue("0"))
+    time.sleep(1.0)
+    r = site.call_text(params={"maxTokens": 300})
+    check("0 means no limit: nothing is sent and the room is the page's own", "thinking_budget_tokens" not in bodies[-1] and bodies[-1].get("max_tokens") == 300,
+          f"{bodies[-1].get('thinking_budget_tokens')} / {bodies[-1].get('max_tokens')}")
+
+    on_sources(lambda w: ui.toggle(w, switch_id, on=False))
+    time.sleep(1.0)
+    mine = saved_source(picked)
+    check("unticking it is saved in the settings", mine.get("thinking") is False, str(mine.get("thinking")))
     r = site.call_text()
     check("the model answers at once now, though the page said nothing", bodies[-1].get("chat_template_kwargs") == {"enable_thinking": False}, str(bodies[-1].get("chat_template_kwargs")))
     r = site.call_text(params={"thinking": True})
     check("... and a page that wants thinking does not override the visitor", bodies[-1].get("chat_template_kwargs") == {"enable_thinking": False})
 
     # "Never start a model for me": a model the runtime says is not in memory gets no request at all (a request is what starts a model)
-    settings = ui.find_window("Agent wallet", 10)                          # the page was drawn again after the last change: look the window up again
-    ui.select(settings, "Tab-sources")
-    time.sleep(1.5)
-    check("«Never start a model for me» is in Sources and off at first", auto.CheckBoxControl(AutomationId="NeverStartModels").Exists(1, 0.2)
-          and ui.control(settings, "NeverStartModels").GetPattern(auto.PatternId.TogglePattern).ToggleState == 0)
-    ui.toggle(settings, "NeverStartModels", on=True)
+    state = on_sources(lambda w: ui.control(w, "NeverStartModels", 10).GetPattern(auto.PatternId.TogglePattern).ToggleState)
+    check("«Never start a model for me» is in Sources and off at first", state == 0, str(state))
+    on_sources(lambda w: ui.toggle(w, "NeverStartModels", on=True))
     time.sleep(1.0)
     check("ticking it is saved in the settings", json.load(open(settings_path, encoding="utf-8")).get("neverStartModels") is True)
     asked = len(bodies)
@@ -220,7 +259,7 @@ try:
     status[picked.split(":", 1)[1].split("@")[0]] = "loaded"
     r = site.call_text()
     check("the model is in memory again: the answer comes", r.get("ok") is True and len(bodies) == asked + 1, str(r)[:120])
-    ui.toggle(settings, "NeverStartModels", on=False)
+    on_sources(lambda w: ui.toggle(w, "NeverStartModels", on=False))
     time.sleep(0.8)
     status[picked.split(":", 1)[1].split("@")[0]] = "unloaded"
     r = site.call_text()

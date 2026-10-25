@@ -60,13 +60,16 @@ public sealed record ChatMessage(string Role, string Content);
 /// <param name="Choices">When set, the answer must be exactly one of these strings (the wallet constrains or normalises it).</param>
 /// <param name="Thinking">False when the model must answer straight away, without reasoning first: the page asked for it (<c>params.thinking: false</c>)
 /// or the visitor switched thinking off for the source. A source that cannot switch reasoning off ignores it.</param>
+/// <param name="ThinkingBudget">The most tokens the model may spend on reasoning before it must answer (the visitor's limit for the source);
+/// 0 means no limit. The answer keeps the room the page asked for in <paramref name="MaxTokens"/>. A source that cannot limit reasoning ignores it.</param>
 public sealed record TextRequest(
     IReadOnlyList<ChatMessage> Messages,
     int MaxTokens,
     double Temperature,
     string? Language,
     IReadOnlyList<string>? Choices,
-    bool Thinking = true);
+    bool Thinking = true,
+    int ThinkingBudget = 0);
 
 /// <summary>The result of one text.generate call.</summary>
 /// <param name="Text">The answer only: never the model's hidden reasoning.</param>

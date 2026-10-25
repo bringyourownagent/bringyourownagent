@@ -18,7 +18,7 @@ public sealed class CloudChatSource : ITextSource, IStreamingTextSource
     /// <summary>The estimate for a short answer when nothing is known about the model's price: comfortably above it.</summary>
     public const decimal FlatEstimate = 0.02m;
 
-    const int MaxAttempts = 4;
+    const int MaxAttempts = 6;
 
     readonly HttpClient _http;
     readonly Func<string?> _key;
@@ -33,6 +33,9 @@ public sealed class CloudChatSource : ITextSource, IStreamingTextSource
     volatile bool _completionTokens;
     volatile bool _noTemperature;
     volatile bool _noStreamOptions;
+    volatile bool _levelsNotSwitch;      // GLM-5.3 always reasons: "answer at once" is asked as the lowest level, not as a switch
+    volatile bool _noReasoningLevel;
+    volatile bool _noThinkingSwitch;
 
     public CloudChatSource(string service, string model, string? label, string endpoint, HttpClient http,
         Func<string?> key, Func<bool> hasKey, Func<IModelCatalog>? catalog = null)
@@ -80,7 +83,8 @@ public sealed class CloudChatSource : ITextSource, IStreamingTextSource
     public string StateText => State == SourceState.NoKey
         ? "no " + (ApiServices.Find(Service)?.Name ?? "API") + " key added"
         : _lastError is null
-            ? "key added · paid, about " + Money.Show(EstimateCost(Typical)) + " for a short answer"
+            ? "key added · " + (Service == "zai-coding" ? "paid by your Coding Plan, counted here at the public price, about " : "paid, about ")
+              + Money.Show(EstimateCost(Typical)) + " for a short answer"
             : "key added · last call failed: " + _lastError;
 
     static TextRequest Typical { get; } = new([new ChatMessage("user", "Hello!")], 512, 0.7, null, null);
@@ -153,6 +157,24 @@ public sealed class CloudChatSource : ITextSource, IStreamingTextSource
             return true;
         }
 
+        if (said.Contains("cannot be disabled", StringComparison.Ordinal) && !_levelsNotSwitch)
+        {
+            _levelsNotSwitch = true;                     // this model reasons always: the next try asks for the lowest level instead
+            return true;
+        }
+
+        if (said.Contains("reasoning_effort", StringComparison.Ordinal) && !_noReasoningLevel)
+        {
+            _noReasoningLevel = true;
+            return true;
+        }
+
+        if (said.Contains("thinking", StringComparison.Ordinal) && !request.Thinking && !_levelsNotSwitch && !_noThinkingSwitch)
+        {
+            _noThinkingSwitch = true;
+            return true;
+        }
+
         if (said.Contains("temperature", StringComparison.Ordinal) && !_noTemperature)
         {
             _noTemperature = true;
@@ -222,7 +244,26 @@ public sealed class CloudChatSource : ITextSource, IStreamingTextSource
         body[_completionTokens ? "max_completion_tokens" : "max_tokens"] = request.MaxTokens;
         if (!_noTemperature) body["temperature"] = request.Temperature;
         if (request.Choices is not null && !_schemaBlocked) body["response_format"] = ChatCompletions.ChoiceSchema(request.Choices);
+        if (!request.Thinking && IsZai) AskForNoThinking(body);
         return body;
+    }
+
+    bool IsZai => Service is "zai" or "zai-coding";
+
+    /// <summary>
+    /// "Answer at once" for a GLM model. GLM-5.3 (Flash too) reasons always and refuses to be switched off with an error, but takes a level: the
+    /// lowest is as near to an immediate answer as it gets. Older GLM models take a switch. A service that refuses either is not asked again.
+    /// </summary>
+    void AskForNoThinking(JsonObject body)
+    {
+        if (_levelsNotSwitch || Model.StartsWith("glm-5.3", StringComparison.OrdinalIgnoreCase))
+        {
+            if (!_noReasoningLevel) body["reasoning_effort"] = "low";
+        }
+        else if (!_noThinkingSwitch)
+        {
+            body["thinking"] = new JsonObject { ["type"] = "disabled" };
+        }
     }
 
     TextAnswer Settle(string text, TextRequest request)

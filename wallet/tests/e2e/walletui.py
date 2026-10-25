@@ -57,9 +57,13 @@ def window_gone(title, timeout=5.0):
 def control(window, automation_id, timeout=5.0):
     end = time.time() + timeout
     while time.time() < end:
-        c = window.Control(AutomationId=automation_id, searchDepth=30)
-        if c.Exists(0.2, 0.1):
-            return c
+        try:
+            c = window.Control(AutomationId=automation_id, searchDepth=30)
+            if c.Exists(0.2, 0.1):
+                return c
+        except Exception as e:  # noqa: BLE001  (a window that is being drawn again answers "Unspecified error" to a walk: look again)
+            if type(e).__name__ != "COMError":
+                raise
         time.sleep(0.2)
     raise LookupError(f"no control {automation_id!r} in {window.Name!r}")
 

@@ -215,6 +215,13 @@ public sealed class SourceSetting
     /// </summary>
     public bool Thinking { get; set; } = true;
 
+    /// <summary>The most tokens a thinking model of the Llama app or another llama.cpp server may spend on reasoning before it answers; 0 is no limit.
+    /// Without a limit a small model can reason in circles for minutes. A source that cannot limit reasoning ignores it.</summary>
+    public int ThinkingBudget { get; set; } = DefaultThinkingBudget;
+
+    public const int DefaultThinkingBudget = 2000;
+    public const int MaxThinkingBudget = 20000;
+
     /// <summary>Addresses observed during visitor confirmation of a name-based agent endpoint.</summary>
     public List<string> ConfirmedAddresses { get; set; } = [];
 
