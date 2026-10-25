@@ -6,9 +6,10 @@ using Byoa.Wallet.Settings;
 namespace Byoa.Wallet.Guard;
 
 // The guard (see docs/agent-source.md). A site that was given the visitor's own agent can ask it anything, and an agent that searches the web
-// and reads pages can be talked into more than answering. So before the agent runs, a small model that only answers yes or no (Jev, a decision
-// model, behind the visitor's OpenRouter key) is asked a few plain statements about the request. The wallet never lets the guard's answer decide
-// alone what is dangerous: a request that trips a statement waits for the visitor, who sees what the guard saw.
+// and reads pages can be talked into more than answering. So before the agent runs, a judge model is asked a few plain statements about the
+// request: Jev (a decision model behind the visitor's OpenRouter key) by default, or one of the visitor's own text sources — a model on this
+// computer keeps the requests home. The wallet never lets the guard's answer decide alone what is dangerous: a request that trips a statement
+// waits for the visitor, who sees what the guard saw.
 
 /// <summary>What the guard made of a request or of a site's goal.</summary>
 public enum GuardOutcome
@@ -225,8 +226,13 @@ public sealed class GuardLedger
     }
 }
 
-/// <summary>Asks the decision model the statements about a request and weighs the answers against the visitor's strictness and limit.</summary>
-public sealed class GuardService(SettingsStore store, GuardLedger ledger, IDecisionClient client, TimeProvider? time = null) : IGuard
+/// <summary>
+/// Asks the guard's judge — Jev by default, or the visitor's own text source he picked — the statements about a request and
+/// weighs the answers against the visitor's strictness and limit. A local judge costs nothing and is not counted; a paid
+/// one is counted through its own cost. A judge that is gone or cannot answer is "unavailable": the visitor's
+/// stop-when-unavailable setting then decides, and an answer is never guessed.
+/// </summary>
+public sealed class GuardService(SettingsStore store, GuardLedger ledger, IDecisionClient client, TimeProvider? time = null, Func<string, int, IDecisionClient?>? judgeClient = null) : IGuard
 {
     /// <summary>A long request is sent whole up to this many characters; more than that keeps its start and its end (where an order is hidden).</summary>
     const int HeadChars = 20_000;
@@ -259,7 +265,10 @@ public sealed class GuardService(SettingsStore store, GuardLedger ledger, IDecis
     async Task<GuardVerdict> AskAsync(JsonObject state, string[] names, CancellationToken ct)
     {
         var (settings, limit) = store.Read(s => (s.Guard, Money.Parse(s.Guard.DailyLimit, 2.00m)));
-        if (!client.HasKey) return GuardVerdict.Unavailable("the guard needs your OpenRouter key");
+        var judge = Judge(settings, out var isJev);
+        if (judge is null) return GuardVerdict.Unavailable("the model chosen to check the requests is not among your sources; pick one in Agent guard");
+        if (!judge.HasKey)
+            return GuardVerdict.Unavailable(isJev ? "the guard needs your OpenRouter key" : "the model chosen to check the requests is not ready");
         var day = DateOnly.FromDateTime(_time.GetUtcNow().UtcDateTime);
         var spent = ledger.SpentOn(day);
         if (spent >= limit) return GuardVerdict.Unavailable("the guard's limit of " + Money.Show(limit) + " a day is spent");
@@ -268,7 +277,7 @@ public sealed class GuardService(SettingsStore store, GuardLedger ledger, IDecis
         DecisionAnswer answer;
         try
         {
-            answer = await client.AskAsync(state, statements, ct).ConfigureAwait(false);
+            answer = await judge.AskAsync(state, statements, ct).ConfigureAwait(false);
         }
         catch (DecisionException e)
         {
@@ -287,6 +296,23 @@ public sealed class GuardService(SettingsStore store, GuardLedger ledger, IDecis
         }
 
         return new GuardVerdict(findings.Any(f => f.Tripped) ? GuardOutcome.Hold : GuardOutcome.Allow, findings, answer.Cost);
+    }
+
+    /// <summary>
+    /// Who checks the requests: Jev, or the visitor's text source named by his setting. A source that is not there (or one
+    /// of his agents, which never judge) comes back null and the guard says so in words instead of guessing an answer.
+    /// </summary>
+    IDecisionClient? Judge(GuardSettings settings, out bool isJev)
+    {
+        var name = settings.Judge?.Trim();
+        if (string.IsNullOrEmpty(name) || name.Equals(GuardSettings.DefaultJudge, StringComparison.OrdinalIgnoreCase))
+        {
+            isJev = true;
+            return client;
+        }
+
+        isJev = false;
+        return judgeClient?.Invoke(name, settings.MaxInputChars);
     }
 
     static string Shorten(string text) =>

@@ -9,6 +9,7 @@ using Byoa.Wallet.Providers;
 using Byoa.Wallet.Registry;
 using Byoa.Wallet.Secrets;
 using Byoa.Wallet.Settings;
+using Byoa.Wallet.Sources;
 
 namespace Byoa.Wallet.Desktop;
 
@@ -32,12 +33,14 @@ sealed class WalletServices : IDisposable
             Catalog = Sources.Catalog,
             HasOpenRouterKey = () => Secrets.Has(OpenRouterSource.SecretName),
         };
-        // The guard: Jev, behind the visitor's OpenRouter key, looks at every request a site makes to his agent. What it spends is counted in a file of its own.
+        // The guard: Jev behind the visitor's OpenRouter key by default, or the text source he picked in Agent guard (a model on this
+        // computer keeps the requests home and costs nothing). What a paid judge spends is counted in a file of its own.
         GuardLedger = new GuardLedger(Path.Combine(home, "guard-ledger.json"));
         // (BYOA_GUARD_ENDPOINT points a test run at a fake decision server; only an address on this computer is taken, so that the key can go nowhere else)
         var guardAddress = Environment.GetEnvironmentVariable("BYOA_GUARD_ENDPOINT") is { Length: > 0 } given
             && Uri.TryCreate(given, UriKind.Absolute, out var uri) && uri.IsLoopback ? uri : null;
-        Engine.Guard = new GuardService(Store, GuardLedger, new JevDecisionClient(Sources.TextHttp, () => Secrets.Get(OpenRouterSource.SecretName), guardAddress));
+        Engine.Guard = new GuardService(Store, GuardLedger, new JevDecisionClient(Sources.TextHttp, () => Secrets.Get(OpenRouterSource.SecretName), guardAddress),
+            judgeClient: JudgeClient);
         Registry = new WalletRegistry(Store, Secrets, Activity, Sources.All, Sources.Text,
             Sources.Scanner, engine: Engine, textFactory: Sources.CreateTextSource,
             draftTextFactory: Sources.CreateTextSource, speechFactory: Sources.CreateSpeechSource);
@@ -69,6 +72,10 @@ sealed class WalletServices : IDisposable
         popup.Controller = check;
         return new EverywhereService(Store, new HotkeyMonitor(new WinKeyboardHook()), dictation, check, HotkeyProbe, keyboard);
     }
+
+    /// <summary>The text source the visitor picked as the guard's judge, wrapped; null when the id is not one of his text models (his agents never judge).</summary>
+    IDecisionClient? JudgeClient(string id, int maxInputChars) =>
+        Sources.FindText(id) is { } judge && judge is not IAgentTextSource ? new ModelDecisionClient(judge, maxInputChars) : null;
 
     /// <summary>Acts on a bringyourownagent:// link (from the command line or handed over by a second instance).</summary>
     public void OpenLink(string? url, bool userActivation = true) => _ = Task.Run(async () =>

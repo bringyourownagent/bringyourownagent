@@ -266,6 +266,22 @@ public sealed class GuardSettings
     public string DailyLimit { get; set; } = DefaultDailyLimit;
 
     /// <summary>
+    /// Who checks the requests: "jev", the default (TypeSafe's decision model, through the visitor's OpenRouter key), or the
+    /// id of one of the visitor's text sources — a model on this computer keeps the requests home and costs nothing, a paid
+    /// one is counted by what it really costs. The visitor picks one in Agent guard; an agent source never judges.
+    /// </summary>
+    public string Judge { get; set; } = DefaultJudge;
+
+    public const string DefaultJudge = "jev";
+
+    /// <summary>
+    /// The longest input one call to a text-source judge sees, in characters. More than this is judged in three chunks (the
+    /// start, the middle and the end) and the chunks are combined on the careful side. The default keeps the whole prompt
+    /// (statements and request) under about 4,000 tokens, inside even a small local model's context.
+    /// </summary>
+    public int MaxInputChars { get; set; } = 6000;
+
+    /// <summary>
     /// True (the default): when the guard cannot be asked (no key, no network, the daily limit reached), no request reaches the agent. False: the
     /// request goes through without a look. A site's goal that could not be checked is never recorded as accepted either way.
     /// </summary>
