@@ -9,7 +9,9 @@ namespace Byoa.Wallet.Sources;
 /// <param name="SecretName">The name of its key in the wallet's secret store.</param>
 /// <param name="Vendor">The vendor part of the names of its models, as <see cref="ModelNames"/> spells it ("x-ai").</param>
 /// <param name="KeyPage">Where the visitor makes a key.</param>
-public sealed record ApiService(string Id, string Name, string BaseUrl, string SecretName, string? Vendor, string KeyPage);
+/// <param name="Demo">A free public demo service: it answers without any key, but it may keep what is sent and its limits are small;
+/// the wallet labels it, counts no money for it, and the gate still sees it as cloud (provider kind api-key).</param>
+public sealed record ApiService(string Id, string Name, string BaseUrl, string SecretName, string? Vendor, string KeyPage, bool Demo = false);
 
 public static class ApiServices
 {
@@ -34,6 +36,18 @@ public static class ApiServices
     ];
 
     /// <summary>
+    /// Free public demo services, no sign-up: a first answer without a key, for the visitor who has nothing else yet. Both were tested from a
+    /// home computer in October 2026. They are not private (a public service may keep what is sent) and their limits are small and can change
+    /// (OVHcloud documents about 2 requests a minute per address for its anonymous tier; llm7.io answers its "turbo" tier without a key and its
+    /// "pro" tier only with credits), so the wallet labels them "demo" and they are never the wallet's suggestion for private text.
+    /// </summary>
+    public static readonly IReadOnlyList<ApiService> Demo =
+    [
+        new("llm7", "LLM7.io (free demo)", "https://api.llm7.io/v1", "llm7", null, "https://llm7.io", Demo: true),
+        new("ovh", "OVHcloud AI Endpoints (free demo)", "https://oai.endpoints.kepler.ai.cloud.ovh.net/v1", "ovh", null, "https://endpoints.ai.cloud.ovh.net", Demo: true),
+    ];
+
+    /// <summary>
     /// The name of the key kept for a service: its own (the service's <see cref="ApiService.SecretName"/>, which two addresses of one company share);
     /// for a service the visitor named, its address too (two such services have two keys). Every model behind one service uses the one key.
     /// </summary>
@@ -45,7 +59,10 @@ public static class ApiServices
     }
 
     public static ApiService? Find(string? id) =>
-        string.IsNullOrWhiteSpace(id) ? null : All.FirstOrDefault(s => s.Id.Equals(id.Trim(), StringComparison.OrdinalIgnoreCase));
+        string.IsNullOrWhiteSpace(id) ? null : All.Concat(Demo).FirstOrDefault(s => s.Id.Equals(id.Trim(), StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>True for a free public demo service: it answers without any key, and nothing it answers costs money.</summary>
+    public static bool IsDemo(string? service) => Find(service)?.Demo == true;
 
     /// <summary>"OpenAI", or "your own service" for a custom one.</summary>
     public static string NameOf(string? id) => Find(id)?.Name ?? (id == Custom ? "Other service" : "API");

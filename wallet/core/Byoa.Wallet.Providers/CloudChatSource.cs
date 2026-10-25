@@ -67,8 +67,12 @@ public sealed class CloudChatSource : ITextSource, IStreamingTextSource
     public string Runs => Sources.Runs.ApiKey;
     public string ProviderKind => "api-key";
     public IReadOnlyList<string>? Languages => null;
-    public bool Paid => true;
-    public SourceState State => _hasKey() ? SourceState.Ready : SourceState.NoKey;
+
+    /// <summary>A free public demo service: no key is needed, nothing it answers costs money, but it is not private.</summary>
+    public bool Demo => ApiServices.IsDemo(Service);
+
+    public bool Paid => !Demo;
+    public SourceState State => Demo || _hasKey() ? SourceState.Ready : SourceState.NoKey;
 
     /// <summary>The model's name as the catalog spells it: the service's vendor, then the model.</summary>
     public string Canonical
@@ -83,7 +87,9 @@ public sealed class CloudChatSource : ITextSource, IStreamingTextSource
 
     public string StateText => State == SourceState.NoKey
         ? "no " + (ApiServices.Find(Service)?.Name ?? "API") + " key added"
-        : _lastError is null
+        : Demo && !_hasKey()
+            ? "free public service: no key needed · may keep what you send; slow and limited; not for private text"
+            : _lastError is null
             ? "key added · " + (Service == "zai-coding" ? "paid by your Coding Plan, counted here at the public price, about " : "paid, about ")
               + Money.Show(EstimateCost(Typical)) + " for a short answer"
             : "key added · last call failed: " + _lastError;
@@ -92,6 +98,7 @@ public sealed class CloudChatSource : ITextSource, IStreamingTextSource
 
     public decimal EstimateCost(TextRequest request)
     {
+        if (Demo) return 0m;                                    // a public demo answers for free; the risk is privacy, not money
         var entry = _catalog().Find(Canonical);
         if (entry?.PromptPerToken is not { } prompt || entry.CompletionPerToken is not { } completion) return FlatEstimate;
         return Cost(prompt, completion, request.Messages.Sum(m => m.Content.Length) / 4m, request.MaxTokens) ?? FlatEstimate;
@@ -113,14 +120,14 @@ public sealed class CloudChatSource : ITextSource, IStreamingTextSource
     public async Task<TextAnswer> GenerateAsync(TextRequest request, CancellationToken ct)
     {
         var key = _key();
-        if (string.IsNullOrWhiteSpace(key)) throw new InvalidOperationException("no API key for " + (ApiServices.Find(Service)?.Name ?? "this service"));
+        if (string.IsNullOrWhiteSpace(key) && !Demo) throw new InvalidOperationException("no API key for " + (ApiServices.Find(Service)?.Name ?? "this service"));
         for (var attempt = 1; ; attempt++)
         {
             using var message = new HttpRequestMessage(HttpMethod.Post, new Uri(_base, "chat/completions"))
             {
                 Content = new StringContent(Body(request).ToJsonString(), Encoding.UTF8, "application/json"),
             };
-            message.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
+            if (!string.IsNullOrWhiteSpace(key)) message.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
             using var response = await _http.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
             var text = await BoundedHttp.ReadJsonAsync(response, ct).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
@@ -218,7 +225,7 @@ public sealed class CloudChatSource : ITextSource, IStreamingTextSource
     public async Task<TextAnswer> GenerateStreamAsync(TextRequest request, Action<string> onText, CancellationToken ct)
     {
         var key = _key();
-        if (string.IsNullOrWhiteSpace(key)) throw new InvalidOperationException("no API key for " + (ApiServices.Find(Service)?.Name ?? "this service"));
+        if (string.IsNullOrWhiteSpace(key) && !Demo) throw new InvalidOperationException("no API key for " + (ApiServices.Find(Service)?.Name ?? "this service"));
         if (request.Choices is not null)
         {
             var whole = await GenerateAsync(request, ct).ConfigureAwait(false);
@@ -235,7 +242,7 @@ public sealed class CloudChatSource : ITextSource, IStreamingTextSource
             {
                 Content = new StringContent(body.ToJsonString(), Encoding.UTF8, "application/json"),
             };
-            message.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
+            if (!string.IsNullOrWhiteSpace(key)) message.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
             using var response = await _http.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
             {
