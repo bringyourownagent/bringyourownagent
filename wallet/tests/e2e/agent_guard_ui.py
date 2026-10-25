@@ -119,18 +119,21 @@ def guard_saved():
 from fake_site import FakeSite  # noqa: E402
 
 
-def manifest_for(summary):
-    return {
+def manifest_for(summary, check=False):
+    manifest = {
         "byoa": "0.1-draft",
         "purpose": {"summary": summary, "limits": {"maxTextChars": 20000, "maxCallsPerMinute": 20}},
         "skills": {"text.generate": {"required": True, "models": {"count": 1, "require": ["agent/*"], "why": "It looks things up on the web."}}},
         "privacy": "personal",
         "expectedCost": {"perSession": "0.05 USD"},
     }
+    if check:
+        manifest["connect"] = {"check": True}
+    return manifest
 
 
 GOAL = "Family geography game: news about the countries the players name"
-site = FakeSite("news", manifest_for(GOAL)).start()
+site = FakeSite("news", manifest_for(GOAL, check=True)).start()
 risky = FakeSite("tidy", manifest_for("Helps you tidy your files: it reads and sorts your files for you")).start()
 env = dict(os.environ, BYOA_WALLET_HOME=a.home, BYOA_WALLET_DEV_LOCAL="1", BYOA_GUARD_ENDPOINT=f"http://127.0.0.1:{a.port}/decisions")
 
@@ -300,15 +303,23 @@ try:
     # ------------------------------------------------------------------------------------------ a site that needs the agent
     link = site.new_link()
     desk.start([a.exe, "--url", link], env=env)
-    notice = ui.find_window("Agent wallet notice", 40)
-    check("the notice for the link shows", notice is not None)
-    ui.click(notice, "NoticeShow")
-    consent = ui.find_window("Agent wallet consent", 20)
-    check("the consent window shows", consent is not None)
+    consent = ui.to_consent(40)
+    check("a link goes straight to the consent window, with no notice before it", consent is not None)
     time.sleep(1.5)
     shot(consent, "4-consent")
     ticked = selected(consent, "ConsentModel-agent:fake-agent")
     check("the agent is ticked: the site cannot work without it", ticked)
+    # the connect check code: four characters from the link's session, to be compared with the site's page (CONTRACT-DIRECT.md 3a)
+    import hashlib
+    import urllib.parse as up
+    session = up.parse_qs(up.urlparse(link).query)["session"][0]
+    digest = hashlib.sha256(("BYOA-CHECK-1:" + session).encode()).digest()
+    expected_code = "".join("ABCDEFGHJKMNPQRSTUVWXYZ23456789"[digest[i] % 31] for i in range(4))
+    check("the consent window shows the check code of the link", ui.control(consent, "ConsentCheckCode", 10).Name == expected_code, ui.control(consent, "ConsentCheckCode", 10).Name + " vs " + expected_code)
+    check("Allow waits for the tick that the code is the same", not ui.control(consent, "ConsentAllow", 10).IsEnabled)
+    ui.toggle(consent, "ConsentCheckSame", True)
+    time.sleep(0.8)
+    check("with the tick Allow is offered", ui.control(consent, "ConsentAllow", 10).IsEnabled)
     ui.invoke(consent, "ConsentAllow")
     check("the site is connected", site.wait_hello(40))
     check("its goal was looked at by the guard", any("declared_purpose" in b["state"]["site"] and "purpose_risk" in b["questions"] for b in jev["bodies"]), str(len(jev["bodies"])))
@@ -379,10 +390,9 @@ try:
     # ------------------------------------------------------------------------------------------ a goal that looks risky
     link2 = risky.new_link()
     desk.start([a.exe, "--url", link2], env=env)
-    notice = ui.find_window("Agent wallet notice", 40)
-    ui.click(notice, "NoticeShow")
-    consent = ui.find_window("Agent wallet consent", 20)
+    consent = ui.to_consent(40)
     time.sleep(1.5)
+    check("a site that does not show the code gets a warning, not a tick box", ui.control(consent, "ConsentNoCheck", 10) is not None and ui.control(consent, "ConsentAllow", 10).IsEnabled)
     ui.invoke(consent, "ConsentAllow")
     goal_window = ui.find_window("Give your agent to this site?", 30)
     check("a goal that looks risky for the agent is put to the visitor", goal_window is not None)

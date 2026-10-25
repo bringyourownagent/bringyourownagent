@@ -105,6 +105,20 @@ def click(window, automation_id):
     return c
 
 
+def to_consent(timeout=40.0, notice_timeout=0.5):
+    """The consent window of a request. A link goes straight to it (the small notice before it is gone for links); a page's request through the
+    extension still shows the notice first, which is clicked away here. None when no consent window comes in time."""
+    end = time.time() + timeout
+    while time.time() < end:
+        w = find_window("Agent wallet consent", notice_timeout)
+        if w is not None:
+            return w
+        n = find_window("Agent wallet notice", notice_timeout)
+        if n is not None:
+            invoke(n, "NoticeShow")
+    return None
+
+
 def toggle(window, automation_id, on=True):
     c = control(window, automation_id)
     pattern = c.GetPattern(auto.PatternId.TogglePattern)

@@ -170,10 +170,7 @@ def model_buttons(window):
 
 
 try:
-    notice = ui.find_window("Agent wallet notice", 40)
-    check("the notice for the link shows", notice is not None)
-    ui.click(notice, "NoticeShow")
-    consent = ui.find_window("Agent wallet consent", 20)
+    consent = ui.to_consent(40)
     check("the consent window shows", consent is not None)
     time.sleep(1.5)
     shot(consent, "1-consent")

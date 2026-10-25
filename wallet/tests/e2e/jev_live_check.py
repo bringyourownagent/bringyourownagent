@@ -104,9 +104,7 @@ try:
         sys.exit(2)
 
     desk.start([a.exe, "--url", site.new_link()], env=env)
-    notice = ui.find_window("Agent wallet notice", 40)
-    ui.click(notice, "NoticeShow")
-    consent = ui.find_window("Agent wallet consent", 20)
+    consent = ui.to_consent(40)
     time.sleep(1.5)
     ui.invoke(consent, "ConsentAllow")
     title, window = held_window(20) if not site.wait_hello(25) else (None, None)
