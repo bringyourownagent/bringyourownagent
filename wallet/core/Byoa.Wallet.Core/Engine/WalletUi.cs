@@ -99,6 +99,8 @@ public sealed record LimitsAsk(RequestedLimits Wanted, TextLimitSet Current);
 /// <param name="BudgetBefore">With <paramref name="IsDifference"/>, the budget the visitor allowed before.</param>
 /// <param name="PausedNote">The site was allowed before and is paused ("Paused after a day without use"): Allow resumes it.</param>
 /// <param name="FromLink">The request came from a direct link, so the browser has not vouched for the origin yet.</param>
+/// <param name="CheckCode">A link's connect check code (CONTRACT-DIRECT.md section 3a), shown for the visitor to compare with the site's page; null when there is none.</param>
+/// <param name="CheckRequired">The site says it shows the code: Allow needs the visitor's tick that the two are the same.</param>
 public sealed record ConsentModel(
     string Origin,
     string Host,
@@ -111,7 +113,9 @@ public sealed record ConsentModel(
     bool IsDifference,
     string? PausedNote = null,
     bool FromLink = false,
-    LimitsAsk? Limits = null)
+    LimitsAsk? Limits = null,
+    string? CheckCode = null,
+    bool CheckRequired = false)
 {
     /// <summary>A required skill no source can serve: Allow is not offered.</summary>
     public bool MissingRequired => Rows.Any(r => r.Required && !r.CanServe);
@@ -122,9 +126,10 @@ public sealed record ConsentModel(
 /// <param name="Models">The models he ticked for each skill that asked for several (the keys of <see cref="ModelChoice"/>), in order; null takes the wallet's proposal.</param>
 /// <param name="ShowNames">The site may see the names of its models.</param>
 /// <param name="UseSiteLimits">Accept the limits the site asked for above his own.</param>
+/// <param name="CheckConfirmed">The visitor ticked that the check code is the same on the site's page.</param>
 public sealed record ConsentAnswer(
     bool Allow, decimal Budget, bool AutoDecide, IReadOnlyList<string> LeftOff,
-    IReadOnlyDictionary<string, IReadOnlyList<string>>? Models = null, bool ShowNames = true, bool UseSiteLimits = true)
+    IReadOnlyDictionary<string, IReadOnlyList<string>>? Models = null, bool ShowNames = true, bool UseSiteLimits = true, bool CheckConfirmed = false)
 {
     public static readonly ConsentAnswer Declined = new(false, 0, false, []);
 }

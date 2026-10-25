@@ -139,7 +139,7 @@ public sealed record RequestedLimits(int? InputChars, int? AnswerTokens, int? Ca
 /// with their languages and models, the privacy class, the expected cost per session and the limits the site declared.
 /// </summary>
 public sealed record RequestedManifest(string Json, string Summary, IReadOnlyList<RequestedSkill> Skills, string Privacy, decimal? ExpectedPerSession,
-    RequestedLimits? Limits = null)
+    RequestedLimits? Limits = null, bool ConnectCheck = false)
 {
     public static RequestedManifest From(JsonObject manifest)
     {
@@ -168,7 +168,9 @@ public sealed record RequestedManifest(string Json, string Summary, IReadOnlyLis
 
         var privacy = manifest["privacy"] is JsonValue pv && pv.TryGetValue<string>(out var ps) ? ps : "";
         decimal? expected = manifest["expectedCost"]?["perSession"] is JsonValue ev && ev.TryGetValue<string>(out var es) && Money.TryParse(es, out var e) ? e : null;
-        return new RequestedManifest(manifest.ToJsonString(), summary, skills, privacy, expected, RequestedLimits.From(manifest["purpose"]?["limits"]));
+        // the site says it shows the connect check code on its page (CONTRACT-DIRECT.md section 3a)
+        var check = manifest["connect"]?["check"] is JsonValue cv && cv.TryGetValue<bool>(out var cb) && cb;
+        return new RequestedManifest(manifest.ToJsonString(), summary, skills, privacy, expected, RequestedLimits.From(manifest["purpose"]?["limits"]), check);
     }
 
     public RequestedSkill? Skill(string id) => Skills.FirstOrDefault(s => s.Id == id);

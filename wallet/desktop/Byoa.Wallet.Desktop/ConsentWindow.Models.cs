@@ -247,7 +247,7 @@ sealed partial class ConsentWindow
     {
         var plain = _model.Rows.Any(r => r.Required && r.Models is null && !r.CanServe);
         var models = _picks.Any(p => p.Value.Required && !_leftOff.Contains(p.Key) && !Satisfied(p.Value));
-        _allow.IsEnabled = !plain && !models;
+        _allow.IsEnabled = !plain && !models && (_checkSame is null || _checkSame.IsChecked == true);
     }
 
     /// <summary>What the site asked for above the visitor's limits, with one tick to accept it.</summary>

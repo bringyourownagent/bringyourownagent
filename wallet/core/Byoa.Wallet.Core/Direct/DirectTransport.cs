@@ -108,7 +108,7 @@ public sealed class DirectTransport : IDisposable
 
         // Keep the browser's activation bit from the hand-off. The manifest is the link's own: nothing has been sent
         // to the site so far, and a link with no click must stay a quiet request.
-        var answer = await Engine.RequestViaLinkAsync(origin, link.ManifestJson, userActivation, ct).ConfigureAwait(false);
+        var answer = await Engine.RequestViaLinkAsync(origin, link.ManifestJson, userActivation, ct, link.Session).ConfigureAwait(false);
         if (GrantOf(answer) is not { } grant) return null;
         var connection = new DirectConnection(this, origin, link.Endpoint, link.Manifest, link.Session, token: null, grant);
         if (Add(connection)) return connection;

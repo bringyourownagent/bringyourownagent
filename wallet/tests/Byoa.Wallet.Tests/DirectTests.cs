@@ -1464,6 +1464,92 @@ public class DirectTransportTests : IDisposable
         Assert.Equal(SiteStatus.None, _engine.FindSite(_site.Origin)!.Status);   // "not now": nothing is stored
     }
 
+    // ------------------------------------------------------------------------------------------ the connect check code (CONTRACT-DIRECT.md 3a)
+
+    [Theory]
+    [InlineData("a", "G3Y6")]
+    [InlineData("session-1", "6FR5")]
+    [InlineData("AAAAAAAAAAAAAAAAAAAAAAAA", "SD95")]
+    [InlineData("Zm9v", "5ZT8")]
+    [InlineData("k7MQ-_9", "4H5J")]
+    public void TheCheckCodeIsTheOneTheSpecDefinesForASession(string session, string code)
+    {
+        Assert.Equal(code, ConnectCheck.Compute(session));              // the vectors were made by an independent script, not by this code
+    }
+
+    [Fact]
+    public void TheCheckCodeIsFourCharactersWithoutTheConfusingOnes()
+    {
+        for (var i = 0; i < 200; i++)
+        {
+            var code = ConnectCheck.Compute(TestSite.NewCode());
+            Assert.Equal(4, code.Length);
+            Assert.All(code, c => Assert.Contains(c, "ABCDEFGHJKMNPQRSTUVWXYZ23456789"));
+        }
+    }
+
+    JsonObject ManifestWithCheck()
+    {
+        var manifest = JsonNode.Parse(Clips.GeoManifest)!.AsObject();
+        manifest["connect"] = new JsonObject { ["check"] = true };
+        return manifest;
+    }
+
+    [Fact]
+    public async Task ALinkFromASiteThatShowsTheCodeNeedsTheTickThatTheCodesAreTheSame()
+    {
+        _site.Manifest = ManifestWithCheck().ToJsonString();
+        var session = TestSite.NewCode();
+        _ui.Consent = new ConsentAnswer(true, 0.2m, false, [], CheckConfirmed: false);               // Allow pressed without the tick (a window that did not enforce it)
+
+        Assert.Null(await Transport().HandleLinkAsync(_site.Link(session)));
+
+        var model = Assert.Single(_ui.Consents);
+        Assert.Equal(ConnectCheck.Compute(session), model.CheckCode);
+        Assert.True(model.CheckRequired);
+        await Task.Delay(300);
+        Assert.Equal(0, _site.Accepts);                                                               // no tick, no contact with the site
+        Assert.Equal(SiteStatus.None, _engine.FindSite(_site.Origin)!.Status);
+    }
+
+    [Fact]
+    public async Task WithTheTickALinkFromASiteThatShowsTheCodeConnects()
+    {
+        _site.Manifest = ManifestWithCheck().ToJsonString();
+        _ui.Consent = new ConsentAnswer(true, 0.2m, false, [], CheckConfirmed: true);
+
+        var connection = await Transport().HandleLinkAsync(_site.Link());
+
+        Assert.NotNull(connection);
+        Assert.True(Assert.Single(_ui.Consents).CheckRequired);
+    }
+
+    [Fact]
+    public async Task ALinkFromASiteThatDoesNotShowTheCodeStillGetsAWarningAndNeedsNoTick()
+    {
+        var session = TestSite.NewCode();
+
+        var connection = await Transport().HandleLinkAsync(_site.Link(session));
+
+        Assert.NotNull(connection);                                                                   // the default answer has no tick and is accepted
+        var model = Assert.Single(_ui.Consents);
+        Assert.Equal(ConnectCheck.Compute(session), model.CheckCode);                                 // the code is still shown, with a warning that nothing proves it
+        Assert.False(model.CheckRequired);                                                            // a link cannot demand it for a site that never shows it
+    }
+
+    [Fact]
+    public async Task APagesRequestThroughTheExtensionHasNoCheckCode()
+    {
+        _site.Manifest = ManifestWithCheck().ToJsonString();
+
+        await _engine.HandleAsync(Clips.Request(_site.Origin, click: true, _site.Manifest));
+
+        var model = Assert.Single(_ui.Consents);
+        Assert.Null(model.CheckCode);                                                                 // the browser has tied the request to the page already
+        Assert.False(model.CheckRequired);
+        Assert.False(model.FromLink);
+    }
+
     [Fact]
     public async Task ADeclineFromALinkIsNotStoredSoTheSitesOwnRequestIsAskedAgain()
     {

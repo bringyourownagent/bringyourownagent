@@ -153,8 +153,8 @@ public sealed partial class WalletEngine
     /// ready before the answer), except that a link always asks, even for a site with "decide on my own"; the answer
     /// is a grant or null.
     /// </summary>
-    public Task<JsonNode?> RequestViaLinkAsync(string origin, JsonObject manifest, bool userActivation, CancellationToken ct = default) =>
-        GuardedAsync(Wire.Request, origin, ViaLink, () => RequestAsync(origin, userActivation, new JsonObject { ["manifest"] = manifest.DeepClone() }, ct, ViaLink));
+    public Task<JsonNode?> RequestViaLinkAsync(string origin, JsonObject manifest, bool userActivation, CancellationToken ct = default, string? session = null) =>
+        GuardedAsync(Wire.Request, origin, ViaLink, () => RequestAsync(origin, userActivation, new JsonObject { ["manifest"] = manifest.DeepClone() }, ct, ViaLink, linkSession: session));
 
     /// <summary>
     /// A reconnect with a stored pairing (no link, no click): the grant of a site that keeps "decide on my own", silently
@@ -446,7 +446,7 @@ public sealed partial class WalletEngine
     // ------------------------------------------------------------------------------------------------
     // request
 
-    async Task<JsonNode?> RequestAsync(string origin, bool userActivation, JsonObject payload, CancellationToken ct, string? via, bool renewal = false)
+    async Task<JsonNode?> RequestAsync(string origin, bool userActivation, JsonObject payload, CancellationToken ct, string? via, bool renewal = false, string? linkSession = null)
     {
         var entry = new ActivityEntry { Origin = origin, Kind = Wire.Request, Via = via, Note = userActivation ? "after a click" : "without a click" };
         if (!Origins.TryParse(origin, out var host, out var secure)) return Done(entry, "invalid", "origin not allowed");
@@ -510,7 +510,7 @@ public sealed partial class WalletEngine
                 ask = new SharedAsk();
                 if (via is null) _asking[origin] = ask;
                 var shared = ask;
-                ask.Answer = AskVisitorAsync(origin, host, secure, manifest, via, ask.Cancel.Token);
+                ask.Answer = AskVisitorAsync(origin, host, secure, manifest, via, linkSession, ask.Cancel.Token);
                 ask.Answer.ContinueWith(_ =>
                 {
                     lock (_askGate)
@@ -589,7 +589,7 @@ public sealed partial class WalletEngine
         }
     }
 
-    async Task<JsonNode?> AskVisitorAsync(string origin, string host, bool secure, RequestedManifest manifest, string? via, CancellationToken ct)
+    async Task<JsonNode?> AskVisitorAsync(string origin, string host, bool secure, RequestedManifest manifest, string? via, string? linkSession, CancellationToken ct)
     {
         await Task.Yield();
         var began = Now;
@@ -609,31 +609,33 @@ public sealed partial class WalletEngine
         try
         {
             var allowedWhenAsked = _store.Read(s => s.Site(origin)?.Status == SiteStatus.Allowed);
-            var notice = await _ui.ShowNoticeAsync(new NoticeModel(origin, host, FromLink: via == ViaLink), timeout.Token).ConfigureAwait(false);
-            switch (notice)
+            // A link comes from a click the visitor has just made, so it goes straight to the consent window (its Decline is "not now": from a
+            // link nothing is stored, the site can prove a link only by connecting, and a stranger's link must not switch a real site off).
+            // A page's request through the extension still gets the small notice first.
+            if (via != ViaLink)
             {
-                // From a link nothing is stored: the site can prove a link only by connecting, and a stranger's link must
-                // not be able to switch a real site off. A link's notice has no block: "Block in Sites…" opens the Sites list.
-                case NoticeAnswer.Block when via == ViaLink:
-                case NoticeAnswer.Decline when via == ViaLink:
-                    return Done(entry, "declined", "declined from a link: nothing stored");
-                case NoticeAnswer.Block:
-                    Block(origin, true);
-                    return Done(entry, "blocked", "blocked from the notice");
-                case NoticeAnswer.Decline:
-                    MarkDeclined(origin, shownAllowed: allowedWhenAsked);
-                    return Done(entry, "declined", "declined in the notice");
-                case NoticeAnswer.Closed:
-                    return Done(entry, "closed", timeout.IsCancellationRequested ? "no answer in time" : "notice closed");
+                var notice = await _ui.ShowNoticeAsync(new NoticeModel(origin, host, FromLink: false), timeout.Token).ConfigureAwait(false);
+                switch (notice)
+                {
+                    case NoticeAnswer.Block:
+                        Block(origin, true);
+                        return Done(entry, "blocked", "blocked from the notice");
+                    case NoticeAnswer.Decline:
+                        MarkDeclined(origin, shownAllowed: allowedWhenAsked);
+                        return Done(entry, "declined", "declined in the notice");
+                    case NoticeAnswer.Closed:
+                        return Done(entry, "closed", timeout.IsCancellationRequested ? "no answer in time" : "notice closed");
+                }
             }
 
             // The site may have been blocked or changed from the settings while the notice was up.
             var site = _store.Read(s => s.Site(origin) is { } r ? Copy(r) : null) ?? new SiteRecord { Origin = origin };
             if (site.Status == SiteStatus.Blocked) return Done(entry, "blocked", "blocked while asking");
-            var model = BuildConsent(origin, host, secure, manifest, site, via);
+            var model = BuildConsent(origin, host, secure, manifest, site, via, linkSession);
             WarmWhileAsking(manifest);              // the models start while the visitor reads: less to wait for after Allow
             var answer = await _ui.ShowConsentAsync(model, timeout.Token).ConfigureAwait(false);
-            if (!answer.Allow || model.MissingRequired)
+            // A site that shows the check code gets no Allow without the visitor's tick that the two codes are the same (the window enforces it too).
+            if (!answer.Allow || model.MissingRequired || (model.CheckRequired && !answer.CheckConfirmed))
             {
                 if (timeout.IsCancellationRequested) return Done(entry, "closed", "no answer in time");
                 if (via == ViaLink) return Done(entry, "declined", "declined from a link: nothing stored");
@@ -816,7 +818,7 @@ public sealed partial class WalletEngine
         return (newSkills, missing, costRaised);
     }
 
-    ConsentModel BuildConsent(string origin, string host, bool secure, RequestedManifest manifest, SiteRecord site, string? via)
+    ConsentModel BuildConsent(string origin, string host, bool secure, RequestedManifest manifest, SiteRecord site, string? via, string? linkSession = null)
     {
         var (newSkills, missingRequired, costRaised) = Difference(site, manifest);
         var settings = _store.Snapshot();
@@ -846,7 +848,9 @@ public sealed partial class WalletEngine
         }
 
         return new ConsentModel(origin, host, secure, manifest.Summary, rows, budget, before, site.AutoDecide, isDifference,
-            site.Status == SiteStatus.Allowed && site.Paused ? PauseText(site) : null, via == ViaLink, limitsAsk);
+            site.Status == SiteStatus.Allowed && site.Paused ? PauseText(site) : null, via == ViaLink, limitsAsk,
+            via == ViaLink && linkSession is not null ? Direct.ConnectCheck.Compute(linkSession) : null,
+            via == ViaLink && linkSession is not null && manifest.ConnectCheck);
     }
 
     ConsentRow Row(RequestedSkill skill, WalletSettings settings, SiteRecord site, bool isNew)

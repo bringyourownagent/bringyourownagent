@@ -25,6 +25,7 @@ sealed partial class ConsentWindow : CornerWindow
     readonly Dictionary<string, ModelPick> _picks = new(StringComparer.Ordinal);
     CheckBox? _names;
     CheckBox? _siteLimits;
+    CheckBox? _checkSame;
     readonly TaskCompletionSource<ConsentAnswer> _answer = new(TaskCreationOptions.RunContinuationsAsynchronously);
     readonly HashSet<string> _leftOff = [];
     readonly CheckBox _auto;
@@ -118,9 +119,45 @@ sealed partial class ConsentWindow : CornerWindow
         _answer.TrySetResult(allow
             ? new ConsentAnswer(true, _budget, _auto.IsChecked == true, _leftOff.ToList(),
                 _picks.Count == 0 ? null : _picks.ToDictionary(p => p.Key, p => (IReadOnlyList<string>)p.Value.Order.ToList(), StringComparer.Ordinal),
-                _names?.IsChecked != false, _siteLimits?.IsChecked != false)
+                _names?.IsChecked != false, _siteLimits?.IsChecked != false, _checkSame?.IsChecked == true)
             : ConsentAnswer.Declined);
         if (!_closed) Close();
+    }
+
+    /// <summary>
+    /// The connect check code (CONTRACT-DIRECT.md section 3a): the page where the visitor pressed Connect shows the same four characters. When the
+    /// site says it shows the code, Allow waits for his tick that they are the same; otherwise he is told that nothing can prove he started this.
+    /// </summary>
+    Control CheckBlock(string code)
+    {
+        var big = new TextBlock
+        {
+            Text = code, FontSize = 30, FontWeight = FontWeight.Bold, LetterSpacing = 6,
+            FontFamily = new FontFamily("Cascadia Mono, Consolas, monospace"), HorizontalAlignment = HorizontalAlignment.Center,
+        };
+        AutomationProperties.SetAutomationId(big, "ConsentCheckCode");
+        AutomationProperties.SetName(big, code);
+        var column = Ui.Column(6, Ui.Text("Check code", "strong"), big);
+        if (_model.CheckRequired)
+        {
+            var how = Ui.Wrap("The page where you pressed Connect shows the same code. If you did not just press Connect on this site yourself, Decline.", "muted", "small");
+            how.Width = 330;
+            _checkSame = new CheckBox { Content = Ui.Wrap("The code is the same on the site's page"), FontSize = 14 };
+            AutomationProperties.SetAutomationId(_checkSame, "ConsentCheckSame");
+            AutomationProperties.SetName(_checkSame, "The code is the same on the site's page");
+            _checkSame.IsCheckedChanged += (_, _) => UpdateAllow();
+            column.Children.Add(how);
+            column.Children.Add(_checkSame);
+        }
+        else
+        {
+            var warn = Ui.Wrap("This site gives no way to check that you started this connection. Allow only if you pressed Connect on its page a moment ago.", "strong", "small");
+            warn.Width = 330;
+            AutomationProperties.SetAutomationId(warn, "ConsentNoCheck");
+            column.Children.Add(warn);
+        }
+
+        return Ui.Box("field", column);
     }
 
     Control TitleBar()
@@ -170,6 +207,7 @@ sealed partial class ConsentWindow : CornerWindow
         if (_model.PausedNote is not null) hostRow.Children.Add(Ui.Chip("paused", "outline"));
         AutomationProperties.SetName(hostRow, _model.Host);
         body.Children.Add(hostRow);
+        if (_model.CheckCode is { } checkCode) body.Children.Add(CheckBlock(checkCode));
 
         // The declared purpose, quoted as the site's own words.
         var purpose = Ui.Runs(("“" + _model.Summary + "”", false));

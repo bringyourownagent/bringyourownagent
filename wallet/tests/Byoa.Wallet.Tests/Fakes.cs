@@ -202,6 +202,15 @@ sealed class ScriptedUi : IWalletUi
 
     public async Task<ConsentAnswer> ShowConsentAsync(ConsentModel model, CancellationToken ct)
     {
+        // A link has no separate notice any more (it goes straight to the consent window, whose Decline is "not now"). The tests count a link's ask here and
+        // read a preset Notice other than Show as "the visitor said not now", as the notice used to say.
+        if (model.FromLink)
+        {
+            Notices++;
+            NoticeModels.Add(new NoticeModel(model.Origin, model.Host, FromLink: true));
+            if (Notice != NoticeAnswer.Show) return ConsentAnswer.Declined;
+        }
+
         lock (Consents) Consents.Add(model);
         ConsentToken = ct;
         if (ConsentGate is { } gate)
