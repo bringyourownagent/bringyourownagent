@@ -44,6 +44,7 @@ try:
     ui.select(w, "Tab-sources")
     time.sleep(3.0)                                          # the page settles (the first scan of the runtimes comes in)
     box_id = "AddedSourceThinkingBudget-" + "".join(c if c.isalnum() else "-" for c in source["id"])
+    ui.open_row(ui.find_window("Agent wallet", 5), "AddedSourceExpand-" + source["id"])
     ui.control(ui.find_window("Agent wallet", 5), box_id, 10)   # the page has the box that once made it flash
     last, redraws, started = None, [], time.time()
     while time.time() - started < a.seconds:

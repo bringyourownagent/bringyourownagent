@@ -68,6 +68,26 @@ def control(window, automation_id, timeout=5.0):
     raise LookupError(f"no control {automation_id!r} in {window.Name!r}")
 
 
+def open_row(window, expand_id, timeout=8.0):
+    """Opens a row of the settings' Sites or Sources page (presses its arrow) unless it is open already: the settings of a row are not even built
+    while it is closed. The arrow's name starts with "Show" when the row is closed and with "Hide" when it is open."""
+    end = time.time() + timeout
+    while time.time() < end:
+        try:
+            c = window.Control(AutomationId=expand_id, searchDepth=40)
+            if c.Exists(0.5, 0.1):
+                if (c.Name or "").startswith("Hide"):
+                    return c
+                c.GetPattern(auto.PatternId.InvokePattern).Invoke()
+                time.sleep(0.7)
+                continue
+        except Exception as e:  # noqa: BLE001  (a page being drawn again answers "Unspecified error" to a walk: look again)
+            if type(e).__name__ != "COMError":
+                raise
+        time.sleep(0.3)
+    raise LookupError(f"no row to open: {expand_id!r}")
+
+
 def invoke(window, automation_id):
     """Presses a button through UI Automation (no mouse movement)."""
     c = control(window, automation_id)

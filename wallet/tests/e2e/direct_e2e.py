@@ -304,6 +304,7 @@ host = f"localhost:{main.port}"
 if settings is not None:
     ui.select(settings, "Tab-sites")
     time.sleep(1.2)
+    ui.open_row(settings, "SiteExpand-" + host)                        # the settings of a site show when its arrow is pressed
     connected_text = settings.TextControl(SubName="Connected without the extension", searchDepth=40).Exists(2, 0.2)
     ui.shot(settings, os.path.join(a.shots, "23-settings-sites-link.png"))
     ui.select(settings, "Tab-activity")

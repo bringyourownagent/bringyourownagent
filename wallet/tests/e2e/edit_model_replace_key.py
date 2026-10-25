@@ -125,7 +125,11 @@ def on_sources(action, tries=8):
 
 
 def open_edit():
-    on_sources(lambda w: ui.invoke(w, "AddedSourceEdit-" + source_id))
+    def press_edit(w):
+        ui.open_row(w, "AddedSourceExpand-" + source_id)                # Edit is among the settings of the row
+        ui.invoke(w, "AddedSourceEdit-" + source_id)
+
+    on_sources(press_edit)
     win = ui.find_window("Edit model source", 20)
     time.sleep(1.5)
     return ui.find_window("Edit model source", 10)

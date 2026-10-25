@@ -50,6 +50,13 @@ sealed partial class SettingsWindow : Window
     bool _dirty;
     DateTimeOffset _rendered;
 
+    // Sites and Sources are lists of one-line rows, a page of RowsPerPage at a time; the settings of a row show when its arrow is pressed
+    // (nothing of them is built before), and what is open stays open when the page is drawn again.
+    const int RowsPerPage = 20;
+    readonly HashSet<string> _openSites = new(StringComparer.Ordinal);
+    readonly HashSet<string> _openSources = new(StringComparer.Ordinal);
+    int _sitesPage, _sourcesPage;
+
     public SettingsWindow(WalletServices services)
     {
         _w = services;
@@ -194,21 +201,96 @@ sealed partial class SettingsWindow : Window
         return right is null ? t : Ui.Columns("*,Auto", t, right);
     }
 
+    /// <summary>
+    /// A one-line row with an arrow at its right. The settings (<paramref name="details"/>) show when the arrow is pressed and are not even built
+    /// before; <paramref name="open"/> remembers what is open, so a page drawn again keeps it open. <paramref name="right"/> sits next to the arrow.
+    /// </summary>
+    Control FoldRow(Control left, Control? right, HashSet<string> open, string key, string expandId, string what, Func<Control> details)
+    {
+        var box = new StackPanel { Spacing = 10 };
+        Control? shown = null;
+        Button arrow = null!;
+
+        void Paint()
+        {
+            var isOpen = open.Contains(key);
+            arrow.Content = isOpen ? "▴" : "▾";
+            AutomationProperties.SetName(arrow, (isOpen ? "Hide the settings of " : "Show the settings of ") + what);
+            ToolTip.SetTip(arrow, isOpen ? "Hide the settings" : "Show the settings");
+        }
+
+        arrow = Ui.Button("▾", "deny", expandId, () =>
+        {
+            if (open.Remove(key))
+            {
+                if (shown is not null) box.Children.Remove(shown);
+                shown = null;
+            }
+            else
+            {
+                open.Add(key);
+                shown = details();
+                box.Children.Add(shown);
+            }
+
+            Paint();
+        }, "square");
+        if (right is not null) right.Margin = new Thickness(10, 0, 10, 0);
+        box.Children.Add(right is null ? Ui.Columns("*,Auto", left, arrow) : Ui.Columns("*,Auto,Auto", left, right, arrow));
+        if (open.Contains(key))
+        {
+            shown = details();
+            box.Children.Add(shown);
+        }
+
+        Paint();
+        return Ui.Box("card", box);
+    }
+
+    /// <summary>«‹ Previous · 1–20 of 45 · page 1 of 3 · Next ›»; nothing when everything fits on one page.</summary>
+    Control? RowsPager(int total, int page, int pages, Action<int> go, string where)
+    {
+        if (pages <= 1) return null;
+        var first = page * RowsPerPage;
+        var count = Math.Min(RowsPerPage, total - first);
+        var previous = Ui.Button("‹ Previous", "deny", "RowsPrevious" + where, () => go(page - 1), "small");
+        var next = Ui.Button("Next ›", "deny", "RowsNext" + where, () => go(page + 1), "small");
+        previous.IsEnabled = page > 0;
+        next.IsEnabled = page < pages - 1;
+        var place = Ui.Text((first + 1).ToString(CultureInfo.InvariantCulture) + "–" + (first + count).ToString(CultureInfo.InvariantCulture)
+            + " of " + total.ToString(CultureInfo.InvariantCulture) + " · page " + (page + 1).ToString(CultureInfo.InvariantCulture)
+            + " of " + pages.ToString(CultureInfo.InvariantCulture), "muted");
+        place.VerticalAlignment = VerticalAlignment.Center;
+        return Ui.Row(10, previous, place, next);
+    }
+
+    /// <summary>Another page of a list starts at its top (Render has put the old scroll position back at Loaded, so this waits for it).</summary>
+    void ScrollToTop() => Dispatcher.UIThread.Post(() => _content.Offset = new Vector(_content.Offset.X, 0), DispatcherPriority.Background);
+
+    // ------------------------------------------------------------------------------------------------
+    // Sites
     // ------------------------------------------------------------------------------------------------
     // Sites
 
     void SitesPage(StackPanel page)
     {
         Head(page, "Sites", "Every site that asked, and your answer. A site gets the same answer, “AI unavailable”, whether you declined, blocked it or have no wallet.");
-        page.Children.Add(PauseSetting());
         var sites = _w.Store.Snapshot().Sites.OrderByDescending(s => _w.Engine.LastSeen(s) ?? DateTimeOffset.MinValue).ToList();
         if (sites.Count == 0)
         {
             page.Children.Add(Ui.Wrap("No site has asked yet. When a page asks to use your AI after your click, a short notice appears above the tray.", "muted"));
-            return;
+        }
+        else
+        {
+            var pages = (sites.Count + RowsPerPage - 1) / RowsPerPage;
+            _sitesPage = Math.Clamp(_sitesPage, 0, pages - 1);
+            foreach (var site in sites.Skip(_sitesPage * RowsPerPage).Take(RowsPerPage)) page.Children.Add(SiteRow(site));
+            if (RowsPager(sites.Count, _sitesPage, pages, to => { _sitesPage = to; Render(); ScrollToTop(); }, "Sites") is { } pager) page.Children.Add(pager);
         }
 
-        foreach (var site in sites) page.Children.Add(SiteCard(site));
+        // a setting for every site, not for one: it comes after the sites, at the very bottom
+        page.Children.Add(Ui.Rule(10, 4));
+        page.Children.Add(PauseSetting());
     }
 
     static readonly (int Hours, string Label)[] PauseChoices = [(0, "never"), (1, "an hour"), (24, "a day"), (168, "a week")];
@@ -262,7 +344,8 @@ sealed partial class SettingsWindow : Window
         return dot;
     }
 
-    Control SiteCard(SiteRecord site)
+    /// <summary>One site in one line: a dot, its name, when it was last used, its state, and an arrow that opens all its settings.</summary>
+    Control SiteRow(SiteRecord site)
     {
         Origins.TryParse(site.Origin, out var host, out _);
         if (host.Length == 0) host = site.Origin;
@@ -281,11 +364,12 @@ sealed partial class SettingsWindow : Window
         if (unavailableSkill is not null)
             line = "Allowed, but nothing on this computer can serve " + Vocabulary.SkillName(unavailableSkill) + ".";
 
-        var card = new StackPanel { Spacing = 8 };
         var dot = ActivityDot(_w.Engine.LastSeen(site), out var when);
         AutomationProperties.SetAutomationId(dot, "SiteActivity-" + host);
-        var title = Ui.Row(9, dot, Ui.Tile(Ui.Globe, 26), Ui.Text(host, "host"), Ui.Text(when, "muted", "small"));
-        ((TextBlock)title.Children[2]).FontSize = 19;
+        var name = Ui.Text(host, "host");
+        name.FontSize = 16;
+        name.VerticalAlignment = VerticalAlignment.Center;
+        var left = Ui.Row(9, dot, name, Ui.Text(when, "muted", "small"));
         Control badge = Ui.Chip(chip, kind);
         if (site.Status == SiteStatus.Allowed && paused is not null)
         {
@@ -303,7 +387,13 @@ sealed partial class SettingsWindow : Window
             badge = button;
         }
 
-        card.Children.Add(Ui.Columns("*,Auto", title, badge));
+        return FoldRow(left, badge, _openSites, site.Origin, "SiteExpand-" + host, host, () => SiteDetails(site, host, paused, line));
+    }
+
+    /// <summary>All the settings of one site: what it was told, its limits, its models, and what can be done with it.</summary>
+    Control SiteDetails(SiteRecord site, string host, string? paused, string line)
+    {
+        var card = new StackPanel { Spacing = 8 };
         card.Children.Add(Ui.Wrap(line, "muted"));
         if (!string.IsNullOrEmpty(site.Summary))
         {
@@ -358,7 +448,7 @@ sealed partial class SettingsWindow : Window
             card.Children.Add(Ui.Wrap("To the site, a block looks exactly like a decline or a missing wallet.", "muted", "small"));
         }
 
-        return Ui.Box("card", card);
+        return card;
     }
 
     /// <summary>Checks the same language-specific route the engine will use, without changing settings.</summary>
@@ -392,11 +482,48 @@ sealed partial class SettingsWindow : Window
 
     void SourcesPage(StackPanel page)
     {
-        Head(page, "Sources", "The programs that run your models, and your keys. The site never learns which one answered, and a key goes only to its own provider.");
+        Head(page, "Sources", "The programs that run your models, and your keys. The site never learns which one answered, and a key goes only to its own provider. "
+            + "Add a model that runs on this PC (or on a home server), or one behind your own key: a short wizard tests it before it changes your route.");
+        page.Children.Add(Ui.Button("Add a model", "allow", "AddModel", () => _w.Ui.OpenAddModel(), "small"));
         var settings = _w.Store.Snapshot();
 
-        page.Children.Add(Ui.Columns("*,Auto", Ui.Wrap("Add a model that runs on this PC (or on a home server), or a provider model with your own key. The short wizard tests it before it changes your route.", "muted"),
-            Ui.Button("Add a model", "allow", "AddModel", () => _w.Ui.OpenAddModel(), "small")));
+        // the models, one line each: the ones the visitor added, then the wallet's own paid speech model
+        var added = settings.Sources.Where(s => s.Kind is not null).ToList();
+        if (added.Count == 0)
+        {
+            page.Children.Add(Ui.Wrap("No added models yet. Use Add a model to pick one in a program that runs on this PC, or one behind your own API key.", "muted"));
+        }
+
+        var rows = new List<Func<Control>>();
+        foreach (var source in added)
+        {
+            var one = source;
+            rows.Add(() => AddedSourceRow(one));
+        }
+
+        rows.Add(() => SpeechSourceRow(_w.Sources.OpenRouter, settings,
+            () => Ui.Wrap("ElevenLabs Scribe v2 through OpenRouter, with your own key. Stored with Windows DPAPI for your account only; never shown, never logged.", "muted"), KeyExtras));
+        var pages = (rows.Count + RowsPerPage - 1) / RowsPerPage;
+        _sourcesPage = Math.Clamp(_sourcesPage, 0, pages - 1);
+        foreach (var row in rows.Skip(_sourcesPage * RowsPerPage).Take(RowsPerPage)) page.Children.Add(row());
+        if (RowsPager(rows.Count, _sourcesPage, pages, to => { _sourcesPage = to; Render(); ScrollToTop(); }, "Sources") is { } pager) page.Children.Add(pager);
+
+        // below the models: what applies to all of them
+        page.Children.Add(Ui.Rule(10, 4));
+        // A model that needs no key runs in a program on this PC (or on a home server): once one is added, the wallet does not
+        // offer to get such a program; it only says what is still missing (a speech model).
+        var programModels = settings.Sources.Where(s => s.Kind is not null && s.SecretRef is null).ToList();
+        if (programModels.Count == 0)
+        {
+            page.Children.Add(Ui.Box("card", Ui.Column(4,
+                Ui.Wrap("The wallet holds no model of its own. A model runs in a program on this PC, and the wallet only hands it the request: the Llama app (the easiest start), LM Studio, Ollama, or any OpenAI-compatible server.", "muted"),
+                Ui.Wrap("For speech to text, run a speech model in that program (Qwen3-ASR in Llama works well) and add it with Add a model, skill Speech to text.", "muted", "small"),
+                Ui.Button("Get Llama", "deny", "SettingsGetLlama", OpenLlamaPage, "small"))));
+        }
+        else if (!programModels.Any(s => s.Skills.Contains(Vocabulary.Transcribe)))
+        {
+            page.Children.Add(Ui.Wrap("There is no speech model yet: run one in your program (Qwen3-ASR in Llama works well) and add it with Add a model, skill Speech to text.", "muted", "small"));
+        }
 
         // On by default: when a site connects, each model does its simplest job once for real and the connection waits for it.
         var warmUp = new CheckBox { Content = "Check the models when a site connects", IsChecked = settings.WarmUpOnConnect };
@@ -415,72 +542,59 @@ sealed partial class SettingsWindow : Window
             Ui.Wrap("You start your models yourself (in the Llama app, LM Studio or Ollama). The wallet then makes no model do a warm-up job, and sends nothing to a model that is not " +
                     "in memory, so no program starts one because of a site: a site's question goes to the next model that is running, or the site hears that AI is unavailable. " +
                     "It works with programs that say what is in memory: the Llama app, LM Studio and Ollama. For another server the wallet cannot tell, and it does not hold the model back.", "muted", "small"))));
-
-        page.Children.Add(Section("On this PC"));
-        // A model that needs no key runs in a program on this PC (or on a home server): once one is added, the wallet does not
-        // offer to get such a program; it only says what is still missing (a speech model).
-        var programModels = settings.Sources.Where(s => s.Kind is not null && s.SecretRef is null).ToList();
-        if (programModels.Count == 0)
-        {
-            page.Children.Add(Ui.Box("card", Ui.Column(4,
-                Ui.Wrap("The wallet holds no model of its own. A model runs in a program on this PC, and the wallet only hands it the request: the Llama app (the easiest start), LM Studio, Ollama, or any OpenAI-compatible server.", "muted"),
-                Ui.Wrap("For speech to text, run a speech model in that program (Qwen3-ASR in Llama works well) and add it with Add a model, skill Speech to text.", "muted", "small"),
-                Ui.Button("Get Llama", "deny", "SettingsGetLlama", OpenLlamaPage, "small"))));
-        }
-        else
-        {
-            var lines = new List<Control>
-            {
-                Ui.Wrap("The wallet holds no model of its own: your models run in a program on this PC, and the wallet only hands it the request. Add more with Add a model.", "muted"),
-            };
-            if (!programModels.Any(s => s.Skills.Contains(Vocabulary.Transcribe)))
-                lines.Add(Ui.Wrap("There is no speech model yet: run one in that program (Qwen3-ASR in Llama works well) and add it with Add a model, skill Speech to text.", "muted", "small"));
-            page.Children.Add(Ui.Box("card", Ui.Column(4, lines.ToArray())));
-        }
-
-        page.Children.Add(Section("Paid speech (your own key)"));
-        page.Children.Add(SourceCard(_w.Sources.OpenRouter, settings,
-            Ui.Wrap("ElevenLabs Scribe v2 through OpenRouter, with your own key. Stored with Windows DPAPI for your account only; never shown, never logged.", "muted"), KeyExtras()));
-
-        page.Children.Add(Section("Added models"));
-        var added = settings.Sources.Where(s => s.Kind is not null).ToList();
-        if (added.Count == 0)
-        {
-            page.Children.Add(Ui.Box("card", Ui.Wrap("No added models yet. Use Add a model to pick one in a program that runs on this PC, or one behind your own API key.", "muted")));
-        }
-        else
-        {
-            foreach (var source in added) page.Children.Add(AddedSourceCard(source));
-        }
     }
 
-    Control AddedSourceCard(SourceSetting source)
+    /// <summary>Left part of a model's line: its «Use it» switch, its name, and a short state that is cut off rather than wrapped.</summary>
+    static Control ModelLine(CheckBox enabled, string name, string state)
+    {
+        var title = Ui.Text(name, "strong");
+        title.VerticalAlignment = VerticalAlignment.Center;
+        title.Margin = new Thickness(6, 0, 0, 0);
+        var detail = Ui.Text(state, "muted", "small");
+        detail.TextTrimming = TextTrimming.CharacterEllipsis;
+        detail.VerticalAlignment = VerticalAlignment.Center;
+        detail.Margin = new Thickness(14, 0, 0, 0);
+        return Ui.Columns("Auto,Auto,*", enabled, title, detail);
+    }
+
+    /// <summary>A model the visitor added, in one line; its settings open with the arrow.</summary>
+    Control AddedSourceRow(SourceSetting source)
     {
         var info = _w.Registry.ListSources().FirstOrDefault(s => s.Id == source.Id);
+        var invalid = _w.Sources.InvalidTextSources.FirstOrDefault(x => x.Id == source.Id);
+        if (invalid is not null && info is not null) info = info with { StateText = "invalid: " + invalid.Message };
         var enabled = new CheckBox { Content = "Use it", IsChecked = source.Enabled };
         AutomationProperties.SetAutomationId(enabled, "AddedSourceEnabled-" + source.Id);
         enabled.IsCheckedChanged += (_, _) => { _w.Registry.EnableSource(source.Id, enabled.IsChecked == true); Render(); };
+        var fullName = info?.Name ?? source.Label ?? source.Model ?? source.Id;
+        var name = fullName.Split(" · ")[0];                       // "model · this computer" -> "model": where it runs is in the opened settings
+        var skill = Vocabulary.SkillName(source.Skills.FirstOrDefault() ?? Vocabulary.Generate);
+        return FoldRow(ModelLine(enabled, name, info?.StateText ?? "configured"), Ui.Chip(skill, "outline"), _openSources, source.Id,
+            "AddedSourceExpand-" + source.Id, name, () => AddedSourceDetails(source, info, fullName));
+    }
+
+    /// <summary>All the settings of a model the visitor added.</summary>
+    Control AddedSourceDetails(SourceSetting source, RegistrySourceInfo? info, string fullName)
+    {
         var edit = Ui.Button("Edit", "deny", "AddedSourceEdit-" + source.Id, () => _w.Ui.OpenAddModel(source.Id), "small");
         var remove = Ui.Button("Remove", "deny", "AddedSourceRemove-" + source.Id, () =>
         {
             _w.Registry.RemoveSource(source.Id);
             Render();
         }, "small");
-        var invalid = _w.Sources.InvalidTextSources.FirstOrDefault(x => x.Id == source.Id);
-        if (invalid is not null && info is not null) info = info with { StateText = "invalid: " + invalid.Message };
         var detail = (info?.StateText ?? "configured") + " · " + string.Join(", ", source.Skills.Count == 0 ? ["text.generate"] : source.Skills)
             + (source.Languages.Count == 0 ? " · any language" : " · " + string.Join(", ", source.Languages));
         detail += source.LabelFromAgent ? " · label supplied by agent" : "";
-        var buttons = Ui.Row(8, enabled, edit, remove);
-        var order = AddedSourceOrder(source);
         var card = Ui.Column(7,
-            Ui.Columns("*,Auto", Ui.Column(2, Ui.Wrap(info?.Name ?? source.Label ?? source.Model ?? source.Id, "h2"), Ui.Wrap(source.Id, "mono", "small")), buttons),
+            Ui.Wrap(fullName, "strong"),
+            Ui.Wrap(source.Id, "mono", "small"),
             Ui.Wrap(detail, "muted"),
             Ui.Wrap((source.Endpoint is null ? "No endpoint" : source.Endpoint) + (source.Model is null ? "" : " · " + source.Model), "mono", "small"));
         if (OfferRow(source) is { } offer) card.Children.Add(offer);
         if (ThinkingRow(source) is { } thinking) card.Children.Add(thinking);
-        card.Children.Add(order);
-        return Ui.Box("card", card);
+        card.Children.Add(AddedSourceOrder(source));
+        card.Children.Add(Ui.Row(8, edit, remove));
+        return card;
     }
 
     Control AddedSourceOrder(SourceSetting source)
@@ -548,13 +662,26 @@ sealed partial class SettingsWindow : Window
         }
     }
 
-    Control SourceCard(ISpeechSource source, WalletSettings settings, Control description, Control? extras)
+    /// <summary>The wallet's own paid speech model, in one line like the others; its settings (and the key) open with the arrow.</summary>
+    Control SpeechSourceRow(ISpeechSource source, WalletSettings settings, Func<Control> description, Func<Control?> extras)
     {
         var enabled = new CheckBox { Content = "Use it", IsChecked = settings.Sources.FirstOrDefault(x => x.Id == source.Id)?.Enabled ?? true };
         AutomationProperties.SetAutomationId(enabled, "SourceEnabled-" + source.Id);
         AutomationProperties.SetName(enabled, "Use " + source.Name);
         enabled.IsCheckedChanged += (_, _) => _w.Registry.EnableSource(source.Id, enabled.IsChecked == true);
+        var stateChip = source.State switch
+        {
+            SourceState.Ready => Ui.Chip("Ready"),
+            SourceState.NoKey => Ui.Chip("No key", "outline"),
+            SourceState.Unavailable => Ui.Chip("Unavailable", "outline"),
+            _ => Ui.Chip(source.State == SourceState.Missing ? "Not found" : "Failed", "ink"),
+        };
+        return FoldRow(ModelLine(enabled, source.Name, "paid speech, your own key"), stateChip, _openSources, "speech:" + source.Id,
+            "SourceExpand-" + source.Id, source.Name, () => SpeechSourceDetails(source, description, extras));
+    }
 
+    Control SpeechSourceDetails(ISpeechSource source, Func<Control> description, Func<Control?> extras)
+    {
         var langs = source.Languages is null ? LanguageCountText(source) : string.Join(", ", source.Languages.Select(Vocabulary.LanguageName));
         var props = new WrapPanel();
         foreach (var (k, v) in new[]
@@ -575,21 +702,9 @@ sealed partial class SettingsWindow : Window
             props.Children.Add(b);
         }
 
-        var stateChip = source.State switch
-        {
-            SourceState.Ready => Ui.Chip("Ready"),
-            SourceState.NoKey => Ui.Chip("No key", "outline"),
-            SourceState.Unavailable => Ui.Chip("Unavailable", "outline"),
-            _ => Ui.Chip(source.State == SourceState.Missing ? "Not found" : "Failed", "ink"),
-        };
-        var panel = Ui.Column(6,
-            Ui.Columns("*,Auto,Auto", Ui.Text(source.Name, "h2"), stateChip, enabled),
-            description,
-            props,
-            Ui.Wrap(source.StateText, "small"));
-        enabled.Margin = new Thickness(12, 0, 0, 0);
-        if (extras is not null) panel.Children.Add(extras);
-        return Ui.Box("card", panel);
+        var panel = Ui.Column(6, description(), props, Ui.Wrap(source.StateText, "small"));
+        if (extras() is { } more) panel.Children.Add(more);
+        return panel;
     }
 
     Control KeyExtras()

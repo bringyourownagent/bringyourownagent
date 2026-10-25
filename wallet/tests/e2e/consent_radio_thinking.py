@@ -135,6 +135,7 @@ def on_sources(action, tries=8):
             w = ui.find_window("Agent wallet", 10)
             ui.select(w, "Tab-sources")
             time.sleep(1.2)
+            ui.open_row(w, "AddedSourceExpand-" + picked)               # the settings of a model show when its arrow is pressed
             return action(w)
         except Exception as e:  # noqa: BLE001
             last = e
