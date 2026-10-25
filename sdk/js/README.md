@@ -110,6 +110,20 @@ const answer = await wallet?.call('text.generate', { messages }, { maxTokens: 8,
 
 The relay keeps codes (192 random bits, 120 s, single use, rate limited per address and per page) and pairings in memory, sends nothing before a valid `hello`, echoes the manifest in `welcome`, allows 4 calls in flight per wallet (a bounded queue behind them; the wait counts from the call), gives the first call after a connect a longer wait, drops a silent or over-old connection, caps open sockets, and cuts what a wallet hands back down to what the skill defines (a receipt of two short strings, an `output` under 64 KB). `wallet.on('failing')` tells you when three calls in a row failed. The pairing is a secret of your server: keep it server-side, not in script the page can read. Behind a reverse proxy, forward the WebSocket path (Apache: `ProxyPass /byoa/ws ws://127.0.0.1:PORT/byoa/ws`).
 
+**For a visitor on a phone, or on a computer with no wallet** (`bringyourownagent/crossdevice`, no dependencies, an ES module): a phone browser does not launch the wallet's link, so offer the link for another device instead. After `POST /byoa/code` has answered `{ link, check }`:
+
+```js
+import { createCrossDeviceBlock, isMobileBrowser, CROSS_DEVICE_CSS } from 'bringyourownagent/crossdevice';
+
+if (isMobileBrowser()) {                       // nothing on a phone handles bringyourownagent://, so do not fire the link there
+  waitingArea.append(createCrossDeviceBlock({ link, check }));   // the check code, the link to copy, Share (where there is one), a QR code
+}
+// webWallet: 'https://wallet.example/'  adds a button and makes the QR code open that web wallet with the link
+// handoff:   'https://your-host/byoa/hand/<token>'  offers an https address instead of the raw link (spec/CONTRACT-PAIR.md section 2)
+```
+
+The block is built with the DOM and everything is set as text, never as markup. The QR code is made here (a small encoder, no network). See [spec/CONTRACT-PAIR.md](https://github.com/bringyourownagent/bringyourownagent/blob/main/spec/CONTRACT-PAIR.md); in the wallet the visitor opens Sites, chooses **Connect a site by link…** and pastes the link.
+
 ## Development
 
 The tests include the shared test vectors in `sdk/test-vectors/`, which the Python package must pass identically. From `sdk/js/` in the repository:
