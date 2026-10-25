@@ -536,6 +536,7 @@ public sealed class WalletRegistry
     public async Task<RegistryTestResult> TestDraftAsync(SourceDraft draft, bool visitorInitiated, string? apiKey,
         CancellationToken ct = default)
     {
+        draft = Normalize(draft);                                     // a known service has its own address, as when the source is added
         var validation = ValidateDraft(draft, visitorEntered: visitorInitiated);
         if (validation is not null) return new RegistryTestResult(false, validation);
         var skill = SkillOf(draft.Skills);
@@ -549,6 +550,9 @@ public sealed class WalletRegistry
             Label = Clean(draft.Label),
             Skills = CleanList(draft.Skills),
             Languages = CleanList(draft.Languages),
+            // A model behind a service's key cannot be built without saying which service: the test said nothing, so every such test failed
+            // with "could not create that text source".
+            Service = IsApi(draft.Kind) ? draft.Service?.Trim().ToLowerInvariant() : null,
         };
 
         if (_engine is not null && skill == Vocabulary.Transcribe)

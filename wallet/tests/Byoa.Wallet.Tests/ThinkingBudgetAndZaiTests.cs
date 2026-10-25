@@ -1,5 +1,7 @@
 using System.Text.Json.Nodes;
 using Byoa.Wallet.Activity;
+using Byoa.Wallet.Engine;
+using Byoa.Wallet.Protocol;
 using Byoa.Wallet.Providers;
 using Byoa.Wallet.Registry;
 using Byoa.Wallet.Secrets;
@@ -181,6 +183,62 @@ public class ThinkingBudgetAndZaiTests
         var sources = store.Snapshot().Sources;
         Assert.Equal("https://api.z.ai/api/coding/paas/v4", sources.Single(s => s.Id == plan.Id).Endpoint);   // a typed address is ignored for a known service
         Assert.All(sources, s => Assert.Equal("api-key:zai", s.SecretRef));
+    }
+
+    // ------------------------------------------------------------------ the Test button of "Add a model"
+
+    [Fact]
+    public async Task TheTestButtonTellsTheSourceWhichServiceItIsBehind()
+    {
+        var store = new SettingsStore(null);
+        var log = new ActivityLog(null, DateTimeOffset.UtcNow);
+        var source = new FakeTextSource("api:zai-coding:glm-5.3-flash", runs: Runs.ApiKey, costPerCall: 0.01m) { Answers = new Queue<string>(["wallet test ok"]) };
+        SourceSetting? seen = null;
+        string? seenKey = null;
+        var engine = new WalletEngine(store, [], log, new ScriptedUi(), new ManualTime(), [source]);
+        var registry = new WalletRegistry(store, new SecretStore(Path.Combine(TestFolder.New(), "secrets.dat")), log, engine: engine,
+            draftTextFactory: (setting, key) => { seen = setting; seenKey = key; return source; });
+
+        var result = await registry.TestDraftAsync(
+            new SourceDraft(ApiServices.Kind, "glm-5.3-flash", "https://elsewhere.example.org/v1", [Vocabulary.Generate], Service: "Zai-Coding"),
+            visitorInitiated: true, apiKey: "typed-key");
+
+        Assert.True(result.Ok, result.Message);
+        Assert.Equal("zai-coding", seen!.Service);                                          // without it no source behind a key could be built: every test failed
+        Assert.Equal("https://api.z.ai/api/coding/paas/v4", seen.Endpoint);                  // the service's own address, as when the model is added
+        Assert.Equal("typed-key", seenKey);
+    }
+
+    [Fact]
+    public async Task ARealTestOfAModelBehindAServiceReachesTheServiceWithTheTypedKey()
+    {
+        var home = TestFolder.New();
+        var oldHome = Environment.GetEnvironmentVariable(WalletPaths.HomeVariable);
+        Environment.SetEnvironmentVariable(WalletPaths.HomeVariable, home);
+        try
+        {
+            using var server = new FakeHttp(5391);
+            server.Respond(200, """{"choices":[{"message":{"role":"assistant","content":"wallet test ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":9,"completion_tokens":3}}""");
+            var store = new SettingsStore(null);
+            var log = new ActivityLog(null, DateTimeOffset.UtcNow);
+            using var sources = new SourceSet(store, new SecretStore(Path.Combine(home, "secrets.dat")), new HttpClient());
+            var engine = new WalletEngine(store, [], log, new ScriptedUi(), new ManualTime(), sources.Text);
+            var registry = new WalletRegistry(store, new SecretStore(Path.Combine(home, "secrets.dat")), log, sources.All, sources.Text, sources.Scanner,
+                engine: engine, textFactory: sources.CreateTextSource, draftTextFactory: sources.CreateTextSource);
+
+            var result = await registry.TestDraftAsync(
+                new SourceDraft(ApiServices.Kind, "m", server.Url + "v1", [Vocabulary.Generate], Service: "custom"), visitorInitiated: true, apiKey: "typed-key");
+
+            Assert.True(result.Ok, result.Message);
+            var call = Assert.Single(server.Requests);
+            Assert.Equal("/v1/chat/completions", call.Path);
+            Assert.Equal("Bearer typed-key", call.Headers["Authorization"]);
+            Assert.Empty(store.Snapshot().Sources);                                          // a test saves nothing
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(WalletPaths.HomeVariable, oldHome);
+        }
     }
 
     sealed class NoRuntimes : IRuntimeScanner
