@@ -122,11 +122,12 @@ public class OpenRouterAuthTests
         server.Respond(200, """{"key":"sk-or-v1-second"}""");
         using var auth = OpenRouterAuth.Start(Plain(), _ => { }, server.Url + "api/v1/auth/keys", TimeSpan.FromMinutes(1));
 
+        var wait = auth.WaitAsync();                                           // the listener only accepts while the wallet waits
         var stray = BrowserAsync($"http://127.0.0.1:{auth.EndPoint.Port}/favicon.ico");
-        var browser = BrowserAsync($"http://127.0.0.1:{auth.EndPoint.Port}/callback?code=c2&state={Uri.EscapeDataString(auth.State)}");
 
-        Assert.Equal("sk-or-v1-second", await auth.WaitAsync());
-        Assert.Contains("Not found", await stray, StringComparison.Ordinal);
+        Assert.Contains("Not found", await stray, StringComparison.Ordinal);   // the stray is answered before the callback starts
+        var browser = BrowserAsync($"http://127.0.0.1:{auth.EndPoint.Port}/callback?code=c2&state={Uri.EscapeDataString(auth.State)}");
+        Assert.Equal("sk-or-v1-second", await wait);
         await browser;
         Assert.Equal("/api/v1/auth/keys", Assert.Single(server.Requests).Path);
     }
