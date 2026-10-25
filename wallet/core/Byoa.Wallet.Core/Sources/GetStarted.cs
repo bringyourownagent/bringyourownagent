@@ -41,12 +41,22 @@ public static class GetStarted
                 var offer = new LocalModelOffer(runtime.Kind, endpoint, LocalRuntimes.Name(runtime.Kind, runtime.Endpoint),
                     model.Id, model.Name, model.SizeBytes, model.LoadedKnown && model.Loaded, model.LoadedKnown,
                     SourceIds.OpenAiCompatible(runtime.Kind, model.Id, endpoint));
-                if (!taken.Contains(offer.SourceId)) offers.Add(offer);
+                if (LooksLikeText(model.Id) && !taken.Contains(offer.SourceId)) offers.Add(offer);
             }
         }
 
         return offers;
     }
+
+    // Words in a model's id that say it does not write text (speech recognition, voices, embeddings): the card offers a first TEXT model.
+    static readonly HashSet<string> NotTextWords = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "asr", "whisper", "parakeet", "wav2vec", "stt", "tts", "speech", "embed", "embedding", "embeddings", "rerank", "reranker",
+    };
+
+    /// <summary>False for a model whose id names speech recognition, a voice, an embedding or a reranker (compared as whole words).</summary>
+    public static bool LooksLikeText(string modelId) =>
+        !System.Text.RegularExpressions.Regex.Split(modelId, "[^A-Za-z0-9]+").Any(NotTextWords.Contains);
 
     /// <summary>Has the wallet a text model at all: any added source that can answer text.generate, on or off.</summary>
     public static bool HasTextModel(WalletSettings settings) =>

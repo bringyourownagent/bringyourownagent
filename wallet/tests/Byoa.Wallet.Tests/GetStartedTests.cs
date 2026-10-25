@@ -59,6 +59,22 @@ public class GetStartedTests
         Assert.Equal(SourceIds.OpenAiCompatible(SourceKinds.Ollama, "gemma3:4b", "http://127.0.0.1:11434/v1"), offer.SourceId);
     }
 
+    [Theory]
+    [InlineData("Renesas/Qwen3-ASR-1.7B-GGUF:FP16", false)]
+    [InlineData("handy-computer/nemotron-3.5-asr-streaming-0.6b-gguf:Q8_0", false)]
+    [InlineData("handy-computer/parakeet-tdt-0.6b-v3-gguf:Q8_0", false)]
+    [InlineData("openai/whisper-large-v3", false)]
+    [InlineData("nomic-embed-text", false)]
+    [InlineData("unsloth/Qwen3.5-4B-GGUF:Q4_K_M", true)]
+    [InlineData("ggml-org/gemma-3-1b-it-GGUF:Q4_K_M", true)]
+    [InlineData("llama3.2:3b", true)]
+    public void ASpeechOrEmbeddingModelIsNotOfferedAsAFirstTextModel(string id, bool offered)
+    {
+        Assert.Equal(offered, GetStarted.LooksLikeText(id));
+        var llama = new RuntimeInfo(SourceKinds.OpenAiCompatible, LocalRuntimes.LlamaEndpoint, true, [new RuntimeModel(id, null, null, false, true)]);
+        Assert.Equal(offered ? 1 : 0, GetStarted.Local([llama], []).Count);
+    }
+
     [Fact]
     public void TheLlamaAppIsNamedAndAddedLikeAnyOpenAiCompatibleServer()
     {
