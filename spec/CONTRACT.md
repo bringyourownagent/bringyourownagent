@@ -60,6 +60,8 @@ A manifest is the requester's document as described in [rules-0.1-draft.md](rule
 }
 ```
 
+`connect` (optional): `{ "check": true }` says that the site shows the connect check code on its page while it waits for a link-connected wallet ([CONTRACT-DIRECT.md](CONTRACT-DIRECT.md) section 3a). A wallet that sees it requires the visitor to compare the code before Allow.
+
 ## 3. Skills in 0.1
 
 ### 3.1 `audio.transcribe` (speech to text)
