@@ -210,7 +210,7 @@ public class GuardJudgeSelectionTests
         var verdict = await Guard().CheckRequestAsync(Request(), CancellationToken.None);
 
         Assert.Equal(GuardOutcome.Allow, verdict.Outcome);
-        Assert.Equal(1, _jev.Asked.Count);
+        Assert.Single(_jev.Asked);
     }
 
     [Fact]
@@ -221,7 +221,7 @@ public class GuardJudgeSelectionTests
         var verdict = await Guard().CheckRequestAsync(Request(), CancellationToken.None);
 
         Assert.Equal(GuardOutcome.Allow, verdict.Outcome);
-        Assert.Equal(1, _jev.Asked.Count);
+        Assert.Single(_jev.Asked);
     }
 
     [Fact]
