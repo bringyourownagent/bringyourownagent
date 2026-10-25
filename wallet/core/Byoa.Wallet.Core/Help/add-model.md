@@ -1,5 +1,7 @@
 # Add a model
 
+If you have no model yet, the Get started card at the top of My models offers three free ways in — a local model found on this computer, a free OpenRouter account, or a public demo — and it adds them exactly as this window does. See **Get started**.
+
 The wallet holds no model. A model runs in a program on your computer, and the wallet only passes requests to it. Choose On this PC to scan the Llama app, LM Studio, Ollama, and other compatible servers, and pick the model the program offers. A program that is not running is shown as “not running”; start it before testing. If no program answers, the window points to Llama (free and open source, from the llama.cpp team and Hugging Face); Get Llama only opens llama.app in your browser, and you install it yourself.
 
 Choose Behind my API key for a provider: OpenRouter (hundreds of models with one key), OpenAI, Anthropic, Google, MiniMax, DeepSeek, xAI, Z.ai (pay per token), Z.ai Coding Plan (a GLM Coding Plan subscription, which Z.ai serves at its own address; one Z.ai key works for both), Mistral, or another service that speaks the OpenAI protocol (give its https address). The wallet keeps the key and shows only “key saved ✓”; one key serves every model behind the same provider. Search the list, tick as many models as you like, press Test (one short call with the first model, which costs a fraction of a cent), then Add. Models behind a key are paid: the wallet shows the price before a call and asks first unless you allowed the site to spend.
