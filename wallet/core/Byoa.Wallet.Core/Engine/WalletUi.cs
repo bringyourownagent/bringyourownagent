@@ -101,6 +101,7 @@ public sealed record LimitsAsk(RequestedLimits Wanted, TextLimitSet Current);
 /// <param name="FromLink">The request came from a direct link, so the browser has not vouched for the origin yet.</param>
 /// <param name="CheckCode">A link's connect check code (CONTRACT-DIRECT.md section 3a), shown for the visitor to compare with the site's page; null when there is none.</param>
 /// <param name="CheckRequired">The site says it shows the code: Allow needs the visitor's tick that the two are the same.</param>
+/// <param name="Handed">The link did not come through the browser on this computer: the visitor pasted it, or it came from another device (CONTRACT-PAIR.md section 1).</param>
 public sealed record ConsentModel(
     string Origin,
     string Host,
@@ -115,7 +116,8 @@ public sealed record ConsentModel(
     bool FromLink = false,
     LimitsAsk? Limits = null,
     string? CheckCode = null,
-    bool CheckRequired = false)
+    bool CheckRequired = false,
+    bool Handed = false)
 {
     /// <summary>A required skill no source can serve: Allow is not offered.</summary>
     public bool MissingRequired => Rows.Any(r => r.Required && !r.CanServe);

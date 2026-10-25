@@ -62,6 +62,19 @@ sealed class WalletServices : IDisposable
         }
     });
 
+    /// <summary>Acts on a link the visitor pasted into "Connect a site by link" (it did not come through the browser on this computer).</summary>
+    public void OpenHandedLink(string? text) => _ = Task.Run(async () =>
+    {
+        try
+        {
+            await Direct.HandleLinkAsync(text, handed: true).ConfigureAwait(false);
+        }
+        catch (Exception e) when (e is not OutOfMemoryException)
+        {
+            Engine.Record(new ActivityEntry { Kind = "link", Via = WalletEngine.ViaLink, Outcome = "failed", Note = e.GetType().Name });
+        }
+    });
+
     public SettingsStore Store { get; }
     public SecretStore Secrets { get; }
     public ActivityLog Activity { get; }
