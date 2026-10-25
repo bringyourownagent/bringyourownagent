@@ -73,15 +73,7 @@ sealed partial class SettingsWindow : Window
         _tabs = new ListBox { SelectionMode = SelectionMode.Single };
         _tabs.Classes.Add("sidebar");
         AutomationProperties.SetAutomationId(_tabs, "SettingsTabs");
-        foreach (var (id, name, glyph) in Pages)
-        {
-            var icon = Ui.Glyph(glyph, Ui.Brush("Ink2"), 16, 2);
-            _tabGlyphs[id] = (Avalonia.Controls.Shapes.Path)((Canvas)((Viewbox)icon).Child!).Children[0];
-            var item = new ListBoxItem { Content = Ui.Row(10, icon, Ui.Text(name)), Tag = id };
-            AutomationProperties.SetAutomationId(item, "Tab-" + id);
-            AutomationProperties.SetName(item, name);
-            _tabs.Items.Add(item);
-        }
+        FillTabs();
 
         _tabs.SelectionChanged += (_, _) =>
         {
@@ -97,7 +89,19 @@ sealed partial class SettingsWindow : Window
         _content.SizeChanged += (_, _) => ResizePageToViewport();
 
         _todayBar.Classes.Add("meter");
-        var sidebarFoot = Ui.Column(4, Ui.Text("Wallet today", "muted", "small"), _todayText, _todayBar);
+        // the switch at the bottom of the tab list: small until it is on
+        var allSettings = new CheckBox { Content = "Show all settings", IsChecked = _w.Store.Read(s => s.ShowAllSettings) };
+        AutomationProperties.SetAutomationId(allSettings, "ShowAllSettings");
+        allSettings.IsCheckedChanged += (_, _) =>
+        {
+            var on = allSettings.IsChecked == true;
+            if (on == _w.Store.Read(s => s.ShowAllSettings)) return;
+            _w.Store.Update(s => s.ShowAllSettings = on);
+            FillTabs();                                       // hiding while on a detailed page lands on Sites
+            Render();
+        };
+        var today = Ui.Column(4, Ui.Text("Wallet today", "muted", "small"), _todayText, _todayBar);
+        var sidebarFoot = Ui.Column(8, allSettings, Ui.Rule(2, 6), today);
         sidebarFoot.Margin = new Thickness(16, 12, 16, 16);
         var sidebar = new DockPanel { Background = Ui.Brush("Field") };
         var head = Ui.Row(8,
@@ -135,14 +139,57 @@ sealed partial class SettingsWindow : Window
         foreach (var (id, path) in _tabGlyphs) path.Stroke = Ui.Brush(id == _page ? "Sign" : "Ink2");
     }
 
+    // The tabs a visitor sees until "Show all settings" is switched on at the bottom of the tab list. Pages above is
+    // the one list of tabs: another tab (the Everywhere tab lives in its own file) is added there with one line, and
+    // SimplePages decides by id whether it is simple enough for the short list.
+    static readonly string[] SimplePages = ["sites", "sources", "activity", "everywhere"];
+
+    /// <summary>The tabs the list shows now: the simple ones, or all of them.</summary>
+    internal static IReadOnlyList<(string Id, string Name, string Glyph)> VisiblePages(bool showAll) => VisiblePages(showAll, Pages);
+
+    internal static IReadOnlyList<(string Id, string Name, string Glyph)> VisiblePages(bool showAll,
+        IReadOnlyList<(string Id, string Name, string Glyph)> pages) =>
+        pages.Where(p => showAll || SimplePages.Contains(p.Id)).ToList();
+
+    /// <summary>Rebuilds the tab list from the setting, keeping the open page when it stays visible (Sites when it does not).</summary>
+    void FillTabs()
+    {
+        var visible = VisiblePages(_w.Store.Read(s => s.ShowAllSettings));
+        if (!visible.Any(p => p.Id == _page)) _page = "sites";
+        _tabGlyphs.Clear();
+        _tabs.Items.Clear();
+        _tabs.SelectedIndex = -1;
+        foreach (var (id, name, glyph) in visible)
+        {
+            var icon = Ui.Glyph(glyph, Ui.Brush("Ink2"), 16, 2);
+            _tabGlyphs[id] = (Avalonia.Controls.Shapes.Path)((Canvas)((Viewbox)icon).Child!).Children[0];
+            var item = new ListBoxItem { Content = Ui.Row(10, icon, Ui.Text(name)), Tag = id };
+            AutomationProperties.SetAutomationId(item, "Tab-" + id);
+            AutomationProperties.SetName(item, name);
+            _tabs.Items.Add(item);
+        }
+
+        _tabs.SelectedIndex = visible.Select((p, i) => (p.Id, i)).FirstOrDefault(x => x.Id == _page).i;
+        PaintTabs();
+    }
+
     /// <summary>Something changed in the wallet: redraw the current page soon (not while the visitor types).</summary>
     public void Invalidate() => _dirty = true;
 
     public void Show(string? page)
     {
         if (page == "agents") page = "connect";                       // the list of managing agents is part of My MCP now
-        _page = Pages.Any(p => p.Id == page) ? page! : _page;
-        _tabs.SelectedIndex = Array.FindIndex(Pages, p => p.Id == _page);
+        var wanted = Pages.Any(p => p.Id == page) ? page! : _page;
+        if (!VisiblePages(_w.Store.Read(s => s.ShowAllSettings)).Any(p => p.Id == wanted))
+        {
+            // A notice or a button asked for a detailed page (Agent guard, Limits, a help page's neighbour…):
+            // the switch goes on so the visitor can see where he landed, and it stays on.
+            _w.Store.Update(s => s.ShowAllSettings = true);
+            FillTabs();
+        }
+
+        _page = wanted;
+        _tabs.SelectedIndex = VisiblePages(_w.Store.Read(s => s.ShowAllSettings)).Select((p, i) => (p.Id, i)).FirstOrDefault(x => x.Id == _page).i;
         PaintTabs();
         Render();
         if (_page == "sites") _w.Engine.ClearBadge();

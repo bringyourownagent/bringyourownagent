@@ -40,6 +40,12 @@ public sealed class WalletSettings
     /// </summary>
     public bool NeverStartModels { get; set; }
 
+    /// <summary>
+    /// On: the settings window shows every tab. Off (the start): only Sites, My models and Activity — plus the Everywhere tab when it is there.
+    /// Any notice or button that opens a detailed page switches it on and it stays on.
+    /// </summary>
+    public bool ShowAllSettings { get; set; }
+
     /// <summary>Random per-wallet key used to make redacted site labels opaque to agents.</summary>
     public string? SiteActivityLabelKey { get; set; }
 
