@@ -26,6 +26,9 @@ public sealed class WalletSettings
     /// <summary>The guard that looks at every request a site makes to the visitor's own agent.</summary>
     public GuardSettings Guard { get; set; } = new();
 
+    /// <summary>Dictation into any text field and the check of selected text: the wallet's own use of the visitor's models. Off by default.</summary>
+    public EverywhereSettings Everywhere { get; set; } = new();
+
     /// <summary>
     /// When a site connects, each model it will use is made to do its simplest job once for real (speech: transcribe 3 seconds of
     /// audio; text: write one short answer), and the connection waits for that, so the site's first real request does not meet a

@@ -31,6 +31,15 @@ Your own AI agent can also work for a site, not only for you: **My agents > Add 
 
 The same registry backs My models, Help, and MCP. API keys are write-only: the preferred `request_api_key_entry` tool opens a field in the wallet so the visitor enters the key himself; the agent receives only a saved confirmation.
 
+## Everywhere: dictation and a check of selected text
+
+The **Everywhere** page (Settings) lets your own models work in every program, not only on sites. It has two features with a switch each, **both off** until you turn them on, because they listen for a hotkey in every program and send keystrokes to the program you are in (the first time you turn one on, the page explains it in two sentences).
+
+- **Dictation**: press `Ctrl+Alt+Space` (changeable), speak, and the words are typed into the field that has the focus. *Hold to talk* records while the hotkey is held and types on release; *press to start, press to stop* toggles. Esc drops a recording; one recording lasts at most 60 seconds; the language is automatic or fixed. A small indicator says "Listening…", "Writing…" or what went wrong. The recording goes to your own speech model by your speech route, as a site's audio would.
+- **The check**: select text anywhere and press `Ctrl+Alt+K` (changeable). The wallet asks your own text model (never an agent) to do one *action* on the selection and shows the answer next to the cursor with **Copy**, **Replace selection** and **Close**. The actions are yours to edit (a name and an instruction; "Check facts and wording" and "Translate to English" come with the wallet). A terminal window is not read, because Ctrl+C there would stop the program running in it.
+
+These are the wallet's **own calls**: no site, no consent, but the same gate, routes, fallbacks and limits (they show in Activity as "Everywhere" and count in the day's limits), and no content in the log: never the sound, the words, the selected text or the answer. By default only models on this computer or a home server are used; **Let Everywhere use a paid source** allows a paid fallback, and the wallet asks before each paid call. A hotkey is checked before it is kept (not a shortcut Windows and most programs use, not the other feature's, not held by another program such as a second dictation program); one that clashes is reported and not listened to. The words are pasted (the clipboard is saved, kept clear of the clipboard history and put back; if it is busy the wallet types the characters instead). The keyboard hook is installed only while a feature is on. Windows only; settings under `everywhere` in `settings.json`; more in Help, Everywhere.
+
 ## Install from the ready package
 
 Needs Windows 10 or 11, 64-bit; nothing else (the package carries its own .NET runtime). Chrome or another Chromium browser only for sites that use the extension: sites that start the wallet with a `bringyourownagent://` link need no extension.
@@ -82,7 +91,7 @@ An extension request is marked verified because the browser vouches for its orig
 
 - **The notice**, above the tray, only after a click on the page: "*site* wants to use your AI" with **Show**, **Decline** and **Block this site**. A direct link's notice offers **Show**, **Not now** and **Block in Sites…** instead: a link cannot block a site, the block is made in Sites. It does not take the focus from the browser.
 - **The consent window**: the site (verified by the browser for extension requests; a direct link is marked as a link, and its Allow is kept only once the site's welcome echoes the link), its purpose in its own words, one row per skill with the source the manager suggests for each language (and **why?**), the budget per session (**change**), "Next time, decide on my own within these limits", **Decline**, **Allow** and **Detailed settings…**. It takes the focus; Tab moves through it and Esc declines. When an allowed site asks for more, only the difference is shown.
-- **Settings**, from the tray icon or **Detailed settings…**: Sites (grants, pause, revoke, block or unblock, decide on its own; a dot per site: green when it used the wallet in the last 3 minutes, yellow within a day, grey before that), My models (the models you added and the programs they run in, the paid speech key), Skills & fallbacks (the route, ask before paid, the manager's reasons), Limits (per session, per site per day in money and calls, the whole wallet per day), Activity (every request and call: time, site, skill, the source that answered, the fallback route, cost; grouped by day, today and the days before it, 50, 100 or 200 entries a page).
+- **Settings**, from the tray icon or **Detailed settings…**: Sites (grants, pause, revoke, block or unblock, decide on its own; a dot per site: green when it used the wallet in the last 3 minutes, yellow within a day, grey before that), My models (the models you added and the programs they run in, the paid speech key), Skills & fallbacks (the route, ask before paid, the manager's reasons), Everywhere (dictation into any text field and the check of selected text, both off until you turn them on), Limits (per session, per site per day in money and calls, the whole wallet per day), Activity (every request and call: time, site, skill, the source that answered, the fallback route, cost; grouped by day, today and the days before it, 50, 100 or 200 entries a page).
 - **Pause.** A site can be paused in Sites, and an allowed site that goes unused for a day (the time is set at the top of Sites: never, an hour, a day or a week) is paused by the wallet. A paused site keeps what you allowed, but nothing runs for it on its own: its open sessions end, it does not reconnect by itself, calls on its old grants are refused. Its next request, after your click, shows the notice and then the consent window with "You allowed this site before. Paused ... Resume it?" and **Resume**.
 - **Paid fallback question**: "Use Scribe v2 (OpenRouter) for this clip? About $0.0001": **Allow once**, **Always for this site**, **No**.
 - A request without a click shows nothing: the tray icon gets a quiet dot and its tooltip says a site asked without a click. A page may make 30 of them a minute; the rest are ignored and not written down.
@@ -115,9 +124,11 @@ python tests\e2e\direct_e2e.py --samples <samples> --shots <screenshots> --work 
 
 ```
 core/Byoa.Wallet.Core        protocol (framing, messages, paths), the engine, settings, DPAPI secrets, WAV, routing,
-                             the direct transport (links, address checks, the WebSocket channel, pairings)
+                             the direct transport (links, address checks, the WebSocket channel, pairings),
+                             Everywhere (hotkeys, the dictation and check state machines, the wallet's own calls)
 core/Byoa.Wallet.Providers   the sources: a model in an OpenAI-compatible program (text and speech), OpenRouter; the runtime scanner
-desktop/Byoa.Wallet.Desktop  the Avalonia tray app: notice, consent, settings, the pipe server
+desktop/Byoa.Wallet.Desktop  the Avalonia tray app: notice, consent, settings, the pipe server; Everywhere's Windows parts
+                             (keyboard hook, SendInput, clipboard, microphone, the indicator and the check window)
 host/Byoa.Wallet.Host        byoa-host.exe, the native messaging host
 mcp/Byoa.Wallet.Mcp          byoa-mcp.exe, the stdio MCP bridge for the visitor's own AI agent
 extension/                   the MV3 extension: page.js (MAIN world), bridge.js (isolated world), background.js, popup
