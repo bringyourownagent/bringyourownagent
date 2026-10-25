@@ -154,8 +154,22 @@ public sealed record RuntimeInfo(string Kind, string Endpoint, bool Running, IRe
 
 /// <summary>A model a runtime offers.</summary>
 /// <param name="Id">The runtime's own model id ("qwen/qwen3.5-4b", "llama3.2:3b").</param>
-/// <param name="Loaded">Whether it is in memory now.</param>
-public sealed record RuntimeModel(string Id, string? Name, long? SizeBytes, bool Loaded);
+/// <param name="Loaded">Whether it is in memory now (only meaningful when <paramref name="LoadedKnown"/>).</param>
+/// <param name="LoadedKnown">True when the runtime says what is in memory (LM Studio, Ollama, the Llama app); false for a plain model list that says nothing about it.</param>
+public sealed record RuntimeModel(string Id, string? Name, long? SizeBytes, bool Loaded, bool LoadedKnown = false);
+
+/// <summary>
+/// A source whose runtime can say whether its model is in memory right now, so that the wallet never has to start the model
+/// ("Never start a model for me" in Sources): a model that is not loaded is left out of the route, and nothing is sent to it.
+/// </summary>
+public interface ILoadCheck
+{
+    /// <summary>The scanner's last answer: true in memory, false not loaded, null the runtime does not say (or was not asked yet).</summary>
+    bool? Loaded { get; }
+
+    /// <summary>Asks the runtime now, with a small request that cannot start a model: true loaded (or loading), false not loaded, null unknown.</summary>
+    Task<bool?> LoadedNowAsync(CancellationToken ct);
+}
 
 /// <summary>Finds local runtimes (LM Studio, Ollama, other OpenAI-compatible servers) and the models they offer.</summary>
 public interface IRuntimeScanner

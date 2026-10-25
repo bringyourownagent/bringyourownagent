@@ -30,6 +30,13 @@ public sealed class WalletSettings
     /// </summary>
     public bool WarmUpOnConnect { get; set; } = true;
 
+    /// <summary>
+    /// True when the visitor wants to start his models himself: the wallet makes no model do a warm-up job, and sends nothing to a local model that is
+    /// not in memory (a route skips it, so no runtime starts it for a request). Only a runtime that says what is in memory can be held to it: the Llama
+    /// app, LM Studio, Ollama. Off by default: the wallet then lets a runtime start the model a site's request needs.
+    /// </summary>
+    public bool NeverStartModels { get; set; }
+
     /// <summary>Random per-wallet key used to make redacted site labels opaque to agents.</summary>
     public string? SiteActivityLabelKey { get; set; }
 

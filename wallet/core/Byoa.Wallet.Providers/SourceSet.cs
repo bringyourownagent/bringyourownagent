@@ -442,17 +442,21 @@ public sealed class SourceSet : IDisposable
             var running = info is { Running: true };
             var up = running ? true : info?.Running;
             var listed = running ? info!.Models.Any(m => m.Id == setting.Model) : (bool?)null;
+            var model = running ? info!.Models.FirstOrDefault(m => m.Id == setting.Model) : null;
+            bool? loaded = model is { LoadedKnown: true } ? model.Loaded : null;           // null: the runtime does not say what is in memory
             if (SkillOf(setting) == Vocabulary.Transcribe)
             {
                 if (_speech.FirstOrDefault(t => t.Id == sourceId || t.Id == setting.Id) is not OpenAiCompatibleSpeechSource speech) continue;
                 speech.Up = up;
                 speech.Listed = listed;
+                speech.Loaded = loaded;
             }
             else
             {
                 if (_text.FirstOrDefault(t => t.Id == sourceId || t.Id == setting.Id) is not OpenAiCompatibleSource source) continue;
                 source.Up = up;
                 source.Listed = listed;
+                source.Loaded = loaded;
             }
         }
 

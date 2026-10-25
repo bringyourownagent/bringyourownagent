@@ -14,7 +14,7 @@ namespace Byoa.Wallet.Providers;
 /// server is up and still offers the model. A local runtime answers one request at a time — the wallet keeps a
 /// second call from even starting while one runs.
 /// </summary>
-public sealed class OpenAiCompatibleSource : ITextSource, IStreamingTextSource, ILiveness, ITextSourceWarmable
+public sealed class OpenAiCompatibleSource : ITextSource, IStreamingTextSource, ILiveness, ILoadCheck, ITextSourceWarmable
 {
     /// <summary>The room a local model may use for one answer, its own hidden reasoning included.</summary>
     const int MaxLocalTokens = 32_768;
@@ -88,6 +88,12 @@ public sealed class OpenAiCompatibleSource : ITextSource, IStreamingTextSource, 
     /// <summary>Whether the runtime still offers this model: false means the source waits for a better choice.</summary>
     public bool? Listed { get; set; }
 
+    /// <summary>Whether the model is in the runtime's memory (the scanner's last look): null when the runtime does not say.</summary>
+    public bool? Loaded { get; set; }
+
+    /// <summary>Asks the runtime now whether the model is in memory, without starting it.</summary>
+    public Task<bool?> LoadedNowAsync(CancellationToken ct) => LoadState.QueryAsync(_http, _kind, _base, Model, ct);
+
     /// <summary>A use-time endpoint policy refusal, kept readable for routing and the Sources page.</summary>
     public string? UnavailableReason { get; private set; }
 
@@ -101,7 +107,7 @@ public sealed class OpenAiCompatibleSource : ITextSource, IStreamingTextSource, 
         ? string.IsNullOrWhiteSpace(Model) ? "no model chosen yet" : RuntimeName + " does not offer " + Model
         : Up == false ? (_loopback ? RuntimeName : "another computer (" + _base.IdnHost + ")") + " is not running"
         : !_loopback && Up == true ? "ready on another computer (" + _base.IdnHost + ")"
-        : Up == true ? "ready · " + RuntimeName
+        : Up == true ? "ready · " + RuntimeName + (Loaded is { } loaded ? loaded ? " · loaded" : " · not loaded" : "")
         : "ready when " + RuntimeName + " runs";
 
     internal void MarkUnavailable(string reason) => UnavailableReason = reason;

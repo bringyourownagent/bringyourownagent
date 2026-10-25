@@ -396,6 +396,15 @@ sealed partial class SettingsWindow : Window
                     "The connection waits for that (a link up to about 100 seconds), so the site's first real request does not meet a model that is still starting. " +
                     "Turn it off to skip this: the first request may then be slow.", "muted", "small"))));
 
+        // Off by default. On: the wallet never starts a model; one that is not in memory is left out of the route and gets nothing.
+        var neverStart = new CheckBox { Content = "Never start a model for me", IsChecked = settings.NeverStartModels };
+        AutomationProperties.SetAutomationId(neverStart, "NeverStartModels");
+        neverStart.IsCheckedChanged += (_, _) => _w.Store.Update(s => s.NeverStartModels = neverStart.IsChecked == true);
+        page.Children.Add(Ui.Box("card", Ui.Column(4, neverStart,
+            Ui.Wrap("You start your models yourself (in the Llama app, LM Studio or Ollama). The wallet then makes no model do a warm-up job, and sends nothing to a model that is not " +
+                    "in memory, so no program starts one because of a site: a site's question goes to the next model that is running, or the site hears that AI is unavailable. " +
+                    "It works with programs that say what is in memory: the Llama app, LM Studio and Ollama. For another server the wallet cannot tell, and it does not hold the model back.", "muted", "small"))));
+
         page.Children.Add(Section("On this PC"));
         // A model that needs no key runs in a program on this PC (or on a home server): once one is added, the wallet does not
         // offer to get such a program; it only says what is still missing (a speech model).

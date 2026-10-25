@@ -15,7 +15,7 @@ namespace Byoa.Wallet.Providers;
 /// <c>input_audio</c> and the model's answer is the text. The wallet holds no model: it only hands the clip over, and
 /// the runtime must have a speech model loaded (Qwen3-ASR on Llama is the one we recommend).
 /// </summary>
-public sealed class OpenAiCompatibleSpeechSource : ISpeechSource, ILiveness, IWarmable
+public sealed class OpenAiCompatibleSpeechSource : ISpeechSource, ILiveness, ILoadCheck, IWarmable
 {
     /// <summary>Room for the answer of one clip: a few tokens per second of speech, never unbounded.</summary>
     const int MaxAnswerTokens = 2048;
@@ -80,6 +80,12 @@ public sealed class OpenAiCompatibleSpeechSource : ISpeechSource, ILiveness, IWa
     /// <summary>Whether the runtime still offers this model: false means the source waits for a better choice.</summary>
     public bool? Listed { get; set; }
 
+    /// <summary>Whether the model is in the runtime's memory (the scanner's last look): null when the runtime does not say.</summary>
+    public bool? Loaded { get; set; }
+
+    /// <summary>Asks the runtime now whether the model is in memory, without starting it.</summary>
+    public Task<bool?> LoadedNowAsync(CancellationToken ct) => LoadState.QueryAsync(_http, _kind, _base, Model, ct);
+
     /// <summary>A use-time endpoint policy refusal, kept readable for routing and the Sources page.</summary>
     public string? UnavailableReason { get; private set; }
 
@@ -94,7 +100,7 @@ public sealed class OpenAiCompatibleSpeechSource : ISpeechSource, ILiveness, IWa
         : Up == false ? (_loopback ? RuntimeName : "another computer (" + _base.IdnHost + ")") + " is not running"
         : _lastError is not null ? "last call failed: " + _lastError
         : !_loopback && Up == true ? "ready on another computer (" + _base.IdnHost + ")"
-        : Up == true ? "ready · " + RuntimeName
+        : Up == true ? "ready · " + RuntimeName + (Loaded is { } loaded ? loaded ? " · loaded" : " · not loaded" : "")
         : "ready when " + RuntimeName + " runs";
 
     internal void MarkUnavailable(string reason) => UnavailableReason = reason;

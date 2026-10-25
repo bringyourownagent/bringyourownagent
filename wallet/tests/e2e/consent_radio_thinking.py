@@ -46,6 +46,7 @@ def check(label, ok, extra=""):
 
 # ------------------------------------------------------------------ a fake OpenAI-compatible runtime with two models
 bodies = []
+status = {"alpha": "loaded", "beta": "loaded"}              # what the runtime says about memory, like the Llama app's list (changed by the test)
 
 
 def run_runtime():
@@ -53,7 +54,7 @@ def run_runtime():
     asyncio.set_event_loop(loop)
 
     async def models(_):
-        return web.json_response({"object": "list", "data": [{"id": "alpha", "object": "model"}, {"id": "beta", "object": "model"}]})
+        return web.json_response({"object": "list", "data": [{"id": m, "object": "model", "status": {"value": status[m]}} for m in ("alpha", "beta")]})
 
     async def chat(request):
         body = await request.json()
@@ -201,6 +202,29 @@ try:
     check("the model answers at once now, though the page said nothing", bodies[-1].get("chat_template_kwargs") == {"enable_thinking": False}, str(bodies[-1].get("chat_template_kwargs")))
     r = site.call_text(params={"thinking": True})
     check("... and a page that wants thinking does not override the visitor", bodies[-1].get("chat_template_kwargs") == {"enable_thinking": False})
+
+    # "Never start a model for me": a model the runtime says is not in memory gets no request at all (a request is what starts a model)
+    settings = ui.find_window("Agent wallet", 10)                          # the page was drawn again after the last change: look the window up again
+    ui.select(settings, "Tab-sources")
+    time.sleep(1.5)
+    check("«Never start a model for me» is in Sources and off at first", auto.CheckBoxControl(AutomationId="NeverStartModels").Exists(1, 0.2)
+          and ui.control(settings, "NeverStartModels").GetPattern(auto.PatternId.TogglePattern).ToggleState == 0)
+    ui.toggle(settings, "NeverStartModels", on=True)
+    time.sleep(1.0)
+    check("ticking it is saved in the settings", json.load(open(settings_path, encoding="utf-8")).get("neverStartModels") is True)
+    asked = len(bodies)
+    status[picked.split(":", 1)[1].split("@")[0]] = "unloaded"
+    r = site.call_text()
+    check("the model is not in memory: the site gets no answer", r.get("ok") is not True, str(r)[:120])
+    check("... and not one request reached the runtime, so nothing was started", len(bodies) == asked, f"{len(bodies) - asked} requests")
+    status[picked.split(":", 1)[1].split("@")[0]] = "loaded"
+    r = site.call_text()
+    check("the model is in memory again: the answer comes", r.get("ok") is True and len(bodies) == asked + 1, str(r)[:120])
+    ui.toggle(settings, "NeverStartModels", on=False)
+    time.sleep(0.8)
+    status[picked.split(":", 1)[1].split("@")[0]] = "unloaded"
+    r = site.call_text()
+    check("with the switch off the wallet lets the runtime start it, as before", r.get("ok") is True and len(bodies) == asked + 2, str(r)[:120])
 finally:
     desk.terminate(wallet)
 

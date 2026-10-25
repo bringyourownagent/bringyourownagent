@@ -96,7 +96,7 @@ public sealed class RuntimeScanner : IRuntimeScanner
             var id = ChatCompletions.Str(item?["id"]);
             if (string.IsNullOrEmpty(id)) continue;
             models.Add(new RuntimeModel(id, ChatCompletions.Str(item?["display_name"]), null,
-                ChatCompletions.Str(item?["state"]) == "loaded"));
+                ChatCompletions.Str(item?["state"]) == "loaded", LoadedKnown: true));
         }
 
         return (models, status);
@@ -125,13 +125,13 @@ public sealed class RuntimeScanner : IRuntimeScanner
             if (string.IsNullOrEmpty(id)) continue;
             models.Add(new RuntimeModel(id, null,
                 item?["size"] is JsonValue v && v.TryGetValue<long>(out var s) ? s : null,
-                loaded.Contains(id)));
+                loaded.Contains(id), LoadedKnown: psOk));
         }
 
         return (models, status);
     }
 
-    /// <summary>Any other OpenAI-compatible server: the plain model list (nothing about memory).</summary>
+    /// <summary>Any other OpenAI-compatible server: the plain model list (nothing about memory), except that the Llama app gives each model a status.</summary>
     async Task<(IReadOnlyList<RuntimeModel> Models, int? Status)> OpenAiAsync(string endpoint, CancellationToken ct)
     {
         var (json, ok, status) = await GetAsync(endpoint + "/models", ct).ConfigureAwait(false);
@@ -146,7 +146,8 @@ public sealed class RuntimeScanner : IRuntimeScanner
         {
             var id = ChatCompletions.Str(item?["id"]);
             if (string.IsNullOrEmpty(id)) continue;
-            models.Add(new RuntimeModel(id, null, null, Loaded: false));
+            var state = LoadState.OfOpenAiEntry(item);
+            models.Add(new RuntimeModel(id, null, null, Loaded: state == true, LoadedKnown: state is not null));
         }
 
         return models;

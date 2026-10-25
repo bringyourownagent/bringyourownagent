@@ -919,7 +919,33 @@ public sealed partial class WalletEngine
                 .Select(language => (k.Id, language)));
 
     /// <summary>Whether the connection makes each model do its simplest job first (the setting is on by default).</summary>
-    bool WarmUpEnabled => _store.Read(s => s.WarmUpOnConnect);
+    bool WarmUpEnabled => _store.Read(s => s.WarmUpOnConnect && !s.NeverStartModels);
+
+    /// <summary>"Never start a model for me": the wallet sends nothing to a local model that is not in memory, so no runtime starts one for it.</summary>
+    bool NeverStartModels => _store.Read(s => s.NeverStartModels);
+
+    /// <summary>
+    /// With "Never start a model for me" on, keeps out of a route every source whose runtime says its model is not in memory (asked just now with a
+    /// request that loads nothing). A runtime that does not say what is in memory is not held back. Without the setting the steps stay as they are.
+    /// </summary>
+    async Task<List<T>> OnlyLoadedAsync<T>(IReadOnlyList<T> steps, Func<T, object> sourceOf, Action<object, string> skipped, CancellationToken ct)
+    {
+        if (!NeverStartModels) return [.. steps];
+        var kept = new List<T>();
+        foreach (var step in steps)
+        {
+            var source = sourceOf(step);
+            if (source is ILoadCheck check && await check.LoadedNowAsync(ct).ConfigureAwait(false) == false)
+            {
+                skipped(source, "not loaded (you start the model yourself)");
+                continue;
+            }
+
+            kept.Add(step);
+        }
+
+        return kept;
+    }
 
     /// <summary>
     /// Makes the first local source of each of the grant's skills do its simplest job once for real and waits for it, showing
@@ -1230,7 +1256,8 @@ public sealed partial class WalletEngine
         if (language is not null) callParams["language"] = language;
         string? stopReason = null;
 
-        foreach (var step in plan.Steps)
+        var loadedSteps = await OnlyLoadedAsync(plan.Steps, s => s.Source, (s, why) => route.Add(Index((ISpeechSource)s), ((ISpeechSource)s).Name + ": " + why), ct).ConfigureAwait(false);
+        foreach (var step in loadedSteps)
         {
             var source = step.Source;
             var estimate = source.EstimateCost(clip.Seconds);
@@ -1508,7 +1535,8 @@ public sealed partial class WalletEngine
 
         try
         {
-        foreach (var step in plan.Steps)
+        var loadedSteps = await OnlyLoadedAsync(plan.Steps, s => s.Source, (s, why) => route.Add(Index((ITextSource)s), ((ITextSource)s).Name + ": " + why), routeCt).ConfigureAwait(false);
+        foreach (var step in loadedSteps)
         {
             if (routeCt.IsCancellationRequested || (routeBudget > TimeSpan.Zero && Remaining(routeDeadline) <= TimeSpan.Zero)) break;
             var source = step.Source;
