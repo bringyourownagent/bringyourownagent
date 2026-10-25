@@ -149,6 +149,40 @@ public class ThinkingBudgetAndZaiTests
         Assert.Null(body["reasoning_effort"]);
     }
 
+    // ------------------------------------------------------------------ what the visitor reads when a service refuses
+
+    [Fact]
+    public async Task ARefusalAboutMoneyOrALimitShowsTheServicesOwnReason()
+    {
+        using var server = new FakeHttp(5388);
+        server.Respond(429, """{"error":{"code":"1113","message":"Insufficient balance or no resource package. Please recharge."}}""");
+        server.Respond(429, """{"error":{"code":"1113","message":"Insufficient balance or no resource package. Please recharge."}}""");
+        var source = Glm(server, "glm-5.3-flash");
+
+        var plain = await Assert.ThrowsAsync<HttpRequestException>(() => source.GenerateAsync(Ask(), default));
+        var streamed = await Assert.ThrowsAsync<HttpRequestException>(() => source.GenerateStreamAsync(Ask(), _ => { }, default));
+
+        Assert.Contains("HTTP 429: Insufficient balance or no resource package", plain.Message);
+        Assert.Contains("HTTP 429: Insufficient balance or no resource package", streamed.Message);
+        Assert.Contains("HTTP 429", source.StateText);                                         // and the Sources page says it too
+    }
+
+    [Fact]
+    public async Task AReasonNeverCarriesAKeyAndOtherRefusalsShowOnlyTheStatus()
+    {
+        using var server = new FakeHttp(5389);
+        server.Respond(429, """{"error":{"message":"Rate limit for key sk-proj-abcdefghijklmnopqrstuvwxyz0123456789 reached"}}""");
+        server.Respond(401, """{"error":{"message":"Incorrect API key provided: secret-value-that-must-not-be-shown"}}""");
+        var source = Glm(server, "glm-5.3-flash");
+
+        var limit = await Assert.ThrowsAsync<HttpRequestException>(() => source.GenerateAsync(Ask(), default));
+        var wrong = await Assert.ThrowsAsync<HttpRequestException>(() => source.GenerateAsync(Ask(), default));
+
+        Assert.Contains("Rate limit for key … reached", limit.Message);
+        Assert.DoesNotContain("abcdefghijklmnop", limit.Message);
+        Assert.EndsWith("answered HTTP 401", wrong.Message);                                  // a body about a wrong key is never quoted
+    }
+
     // ------------------------------------------------------------------ the Coding Plan's own address
 
     [Fact]
@@ -239,6 +273,50 @@ public class ThinkingBudgetAndZaiTests
         {
             Environment.SetEnvironmentVariable(WalletPaths.HomeVariable, oldHome);
         }
+    }
+
+    // ------------------------------------------------------------------ replacing a key that stopped working ("Edit" of a saved model)
+
+    static (WalletRegistry Registry, FakeTextSource Saved, FakeTextSource Typed, Func<string?> SeenKey, string Id) EditSetup()
+    {
+        var store = new SettingsStore(null);
+        var log = new ActivityLog(null, DateTimeOffset.UtcNow);
+        var saved = new FakeTextSource("api:zai-coding:glm-5.3-flash", runs: Runs.ApiKey, costPerCall: 0.01m);          // the saved key: the one that stopped working
+        var typed = new FakeTextSource("api:zai-coding:glm-5.3-flash", runs: Runs.ApiKey, costPerCall: 0.01m) { Answers = new Queue<string>(["wallet test ok"]) };
+        string? seen = null;
+        var engine = new WalletEngine(store, [], log, new ScriptedUi(), new ManualTime(), [saved]);
+        var registry = new WalletRegistry(store, new SecretStore(Path.Combine(TestFolder.New(), "secrets.dat")), log, [], [], new NoRuntimes(),
+            engine: engine, textFactory: _ => saved, draftTextFactory: (_, key) => { seen = key; return typed; });
+        var added = registry.AddSource(new SourceDraft(ApiServices.Kind, "glm-5.3-flash", Skills: [Vocabulary.Generate], Service: "zai-coding"));
+        Assert.True(added.Ok, added.Message);
+        return (registry, saved, typed, () => seen, added.Id!);
+    }
+
+    [Fact]
+    public async Task EditingAModelTestsTheKeyJustTypedNotTheSavedOne()
+    {
+        var (registry, saved, typed, seenKey, id) = EditSetup();
+
+        var result = await registry.TestSourceAsync(id, visitorInitiated: true, apiKey: "  new-key ");
+
+        Assert.True(result.Ok, result.Message);
+        Assert.Equal("new-key", seenKey());                                                  // the temporary source got the typed key
+        Assert.Equal(1, typed.Calls);
+        Assert.Equal(0, saved.Calls);                                                        // the saved key was not the one tested: it is the dead one
+    }
+
+    [Fact]
+    public async Task EditingWithNoKeyTypedTestsTheSavedSourceAsBefore()
+    {
+        var (registry, saved, typed, seenKey, id) = EditSetup();
+        saved.Answers.Enqueue("wallet test ok");
+
+        var result = await registry.TestSourceAsync(id, visitorInitiated: true, apiKey: null);
+
+        Assert.True(result.Ok, result.Message);
+        Assert.Equal(1, saved.Calls);
+        Assert.Equal(0, typed.Calls);
+        Assert.Null(seenKey());
     }
 
     sealed class NoRuntimes : IRuntimeScanner

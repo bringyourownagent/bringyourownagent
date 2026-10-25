@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using Byoa.Wallet.Sources;
 
 namespace Byoa.Wallet.Providers;
@@ -125,13 +126,36 @@ public sealed class CloudChatSource : ITextSource, IStreamingTextSource
             if (!response.IsSuccessStatusCode)
             {
                 var status = (int)response.StatusCode;
-                // The body may echo the request, so only the status goes into an error. It is read here, to learn what this service refuses.
+                // The body may echo the request, so only the status goes into an error (and, for a refusal about money or a limit, the
+                // service's own short reason). It is read here, to learn what this service refuses.
                 if (status == 400 && attempt < MaxAttempts && LearnFromRefusal(text, request)) continue;
-                _lastError = "HTTP " + status.ToString(CultureInfo.InvariantCulture);
+                _lastError = "HTTP " + status.ToString(CultureInfo.InvariantCulture) + Reason(status, text);
                 throw new HttpRequestException((ApiServices.Find(Service)?.Name ?? "The service") + " answered " + _lastError);
             }
 
             return Settle(text, request);
+        }
+    }
+
+    /// <summary>
+    /// For a refusal about money or a limit (402, 429) the service's own short reason ("Insufficient balance or no resource package"): it is what the
+    /// visitor needs to read, and without it a bare "HTTP 429" cannot be told from a busy service. Anything that looks like a key or a token is left
+    /// out, and nothing else is ever taken from a body.
+    /// </summary>
+    static string Reason(int status, string body)
+    {
+        if (status is not (402 or 429) || string.IsNullOrWhiteSpace(body)) return "";
+        try
+        {
+            var error = JsonNode.Parse(body)?["error"];
+            var message = error is JsonValue v && v.TryGetValue<string>(out var plain) ? plain : ChatCompletions.Str(error?["message"]);
+            if (string.IsNullOrWhiteSpace(message)) return "";
+            message = Regex.Replace(message.Trim(), @"[A-Za-z0-9_.\-]{24,}", "…");
+            return ": " + (message.Length > 160 ? message[..157] + "…" : message);
+        }
+        catch (JsonException)
+        {
+            return "";
         }
     }
 
@@ -216,9 +240,10 @@ public sealed class CloudChatSource : ITextSource, IStreamingTextSource
             if (!response.IsSuccessStatusCode)
             {
                 var status = (int)response.StatusCode;
-                var said = status == 400 && attempt < MaxAttempts ? await BoundedHttp.ReadJsonAsync(response, ct).ConfigureAwait(false) : "";
-                if (said.Length > 0 && LearnFromRefusal(said, request)) continue;
-                _lastError = "HTTP " + status.ToString(CultureInfo.InvariantCulture);
+                var said = status == 400 && attempt < MaxAttempts || status is 402 or 429
+                    ? await BoundedHttp.ReadJsonAsync(response, ct).ConfigureAwait(false) : "";
+                if (status == 400 && said.Length > 0 && LearnFromRefusal(said, request)) continue;
+                _lastError = "HTTP " + status.ToString(CultureInfo.InvariantCulture) + Reason(status, said);
                 throw new HttpRequestException((ApiServices.Find(Service)?.Name ?? "The service") + " answered " + _lastError);
             }
 

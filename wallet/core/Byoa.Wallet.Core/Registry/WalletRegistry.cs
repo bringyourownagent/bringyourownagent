@@ -476,6 +476,27 @@ public sealed class WalletRegistry
     public async Task<RegistryTestResult> TestSourceAsync(string sourceId, CancellationToken ct = default)
         => await TestSourceAsync(sourceId, visitorInitiated: false, ct).ConfigureAwait(false);
 
+    /// <summary>
+    /// Tests a saved source with a key the visitor has just typed instead of the saved one (he is replacing a key that stopped working).
+    /// The key goes only to a temporary source; saving it is a separate step. Without a key this is the plain test of the saved source.
+    /// </summary>
+    public async Task<RegistryTestResult> TestSourceAsync(string sourceId, bool visitorInitiated, string? apiKey, CancellationToken ct = default)
+    {
+        if (visitorInitiated && !string.IsNullOrWhiteSpace(apiKey) && _engine is not null && _draftTextFactory is not null
+            && KnownSourceIds().Contains(sourceId, StringComparer.Ordinal))
+        {
+            var setting = _store.Snapshot().Sources.FirstOrDefault(source => source.Id == sourceId);
+            if (setting is not null && IsPaidKind(setting.Kind) && SkillOf(setting.Skills) == Vocabulary.Generate)
+            {
+                var temporary = _draftTextFactory.Invoke(setting, apiKey.Trim());
+                if (temporary is not null)
+                    return FromEngine(await _engine.TestSourceAsync(temporary, Vocabulary.Generate, visitorInitiated: true, ct).ConfigureAwait(false));
+            }
+        }
+
+        return await TestSourceAsync(sourceId, visitorInitiated, ct).ConfigureAwait(false);
+    }
+
     /// <summary>Tests a source through the wallet engine; only a visitor pressing Test may authorize a paid call.</summary>
     public async Task<RegistryTestResult> TestSourceAsync(string sourceId, bool visitorInitiated, CancellationToken ct = default)
     {

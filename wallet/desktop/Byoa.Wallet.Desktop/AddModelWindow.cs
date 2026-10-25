@@ -563,8 +563,9 @@ sealed class AddModelWindow : Window
         {
             RegistryTestResult result;
             // One short call, with the first model chosen: it shows that the key works. It costs a fraction of a cent behind a key.
+            // Editing: a key typed here is the one to test (the saved one may be the very key that stopped working).
             result = _editingId is { } id
-                ? await _w.Registry.TestSourceAsync(id, visitorInitiated: true)
+                ? await _w.Registry.TestSourceAsync(id, visitorInitiated: true, apiKey: _local ? null : _key.Text)
                 : await _w.Registry.TestDraftAsync(Draft(), visitorInitiated: true,
                     apiKey: _local ? null : _key.Text);
             _tested = result.Ok;
@@ -591,6 +592,13 @@ sealed class AddModelWindow : Window
             var draft = Draft(_local ? _model.Text?.Trim() : Chosen().FirstOrDefault() ?? _model.Text?.Trim());
             result = _w.Registry.UpdateSource(id, new SourceUpdate(draft.Kind, draft.Model, draft.Endpoint, draft.Skills, draft.Languages, draft.Label));
             if (result.Ok) added.Add(result.Id ?? id);
+            // A key typed while editing replaces the saved one (it was tested a moment ago); it used to be dropped here.
+            if (result.Ok && !_local && !string.IsNullOrWhiteSpace(_key.Text))
+            {
+                var keyed = _w.Registry.SetApiKeyAsync(result.Id ?? id, _key.Text!).GetAwaiter().GetResult();
+                if (!keyed.Ok) result = keyed;
+                else result = RegistryOperationResult.Success("Saved. The new key is saved ✓ and replaces the old one.", result.Id ?? id);
+            }
         }
         else if (_local)
         {
