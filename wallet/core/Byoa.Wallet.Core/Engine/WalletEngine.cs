@@ -1376,7 +1376,7 @@ public sealed partial class WalletEngine
 
                 if (answer == PaidAnswer.Always)
                 {
-                    _store.Update(s => Site(s, origin).PaidAllowed = true);
+                    RememberPaid(origin);
                     site.PaidAllowed = true;
                 }
             }
@@ -1705,7 +1705,7 @@ public sealed partial class WalletEngine
 
                     if (answer == PaidAnswer.Always)
                     {
-                        _store.Update(s => Site(s, session.Origin).PaidAllowed = true);
+                        RememberPaid(session.Origin);
                         site.PaidAllowed = true;
                     }
                 }
@@ -2159,6 +2159,7 @@ public sealed partial class WalletEngine
     async Task<PaidAnswer> AskPaidAsync(GrantSession session, SiteRecord site, string sourceName, decimal estimate, IReadOnlyList<string> route, CancellationToken ct)
     {
         Origins.TryParse(site.Origin, out var host, out _);
+        if (host.Length == 0) host = site.Origin;                   // the wallet's own calls have a name, not an origin
         var why = route.Count > 0 ? "Before it: " + string.Join("; ", route) + "." : "It is the first source in your chain.";
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeout.CancelAfter(PaidQuestionTimeout);
@@ -2199,6 +2200,7 @@ public sealed partial class WalletEngine
         if (session.LimitNoticeShown) return;
         session.LimitNoticeShown = true;
         Origins.TryParse(site.Origin, out var host, out _);
+        if (host.Length == 0) host = site.Origin;
         _ui.ShowInfo(new InfoModel(host + " reached a limit", "It is limited by " + what + ". Its calls get no answer until you change the limit.", "Detailed settings…", kind == "rate" ? "sites" : "limits"));
     }
 
