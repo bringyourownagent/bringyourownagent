@@ -43,7 +43,7 @@ public class EverywhereCheckTests
         Assert.Equal("system", system.Role);
         Assert.Contains("Check the text for factual mistakes", system.Content);
         Assert.Equal("The Earth is flat.", _own.TextCalls.Single()[1].Content);
-        Assert.Equal(1, _reader.Targets.Count);             // the selection was read once, not on the second press
+        Assert.Single(_reader.Targets);                     // the selection was read once, not on the second press
     }
 
     [Fact]
