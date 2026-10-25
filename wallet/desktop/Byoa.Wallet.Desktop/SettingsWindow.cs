@@ -6,6 +6,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using Byoa.Wallet.Activity;
 using Byoa.Wallet.Engine;
 using Byoa.Wallet.Providers;
@@ -109,6 +110,9 @@ sealed partial class SettingsWindow : Window
         {
             // Sites also redraws every 30 s on its own: its activity dots change colour with time alone
             if (!_dirty && !(_page == "sites" && DateTimeOffset.UtcNow - _rendered > TimeSpan.FromSeconds(30))) return;
+            // Not while the visitor types in a box of the page: drawing it again would take the cursor (and half a number) away.
+            // The page is drawn when he leaves the box; what changed meanwhile is still marked.
+            if (FocusManager?.GetFocusedElement() is TextBox { IsReadOnly: false } typing && typing.GetVisualAncestors().Contains(_content)) return;
             _dirty = false;
             Render();
         });
@@ -163,7 +167,14 @@ sealed partial class SettingsWindow : Window
         _content.Content = page;
         _content.Tag = _page;
         ResizePageToViewport();
-        if (previous == _page) Dispatcher.UIThread.Post(() => _content.Offset = offset, DispatcherPriority.Loaded);
+        if (previous == _page)
+        {
+            // A new page starts at the top. Lay it out now and put the scroll back in the same breath, so that the window never shows
+            // the top for a frame; the post below is for a page whose height settles later.
+            UpdateLayout();
+            _content.Offset = offset;
+            Dispatcher.UIThread.Post(() => _content.Offset = offset, DispatcherPriority.Loaded);
+        }
     }
 
     void ResizePageToViewport()

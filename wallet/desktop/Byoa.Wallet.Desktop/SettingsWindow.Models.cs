@@ -219,6 +219,9 @@ sealed partial class SettingsWindow
             // Only a whole number counts; anything else is left as typed and not saved until it is one.
             if (!int.TryParse(box.Text?.Trim(), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var tokens)) return;
             var kept = Math.Clamp(tokens, 0, SourceSetting.MaxThinkingBudget);
+            // Avalonia raises TextChanged a moment after a box is made, with the text it was made with. That is no edit: saving it
+            // would redraw the page, which makes a new box, which raises it again - the page would flash twice a second.
+            if (_w.Store.Read(s => s.Sources.FirstOrDefault(x => x.Id == source.Id)?.ThinkingBudget) == kept) return;
             _w.Store.Update(s => s.Source(source.Id).ThinkingBudget = kept);
         };
         box.LostFocus += (_, _) => box.Text = _w.Store.Read(s => s.Sources.FirstOrDefault(x => x.Id == source.Id)?.ThinkingBudget ?? source.ThinkingBudget)
