@@ -12,7 +12,7 @@ public class ShowAllSettingsTests
     [Fact]
     public void ByDefaultOnlyTheSimpleTabsShow()
     {
-        Assert.Equal(["sites", "sources", "activity"], SettingsWindow.VisiblePages(showAll: false).Select(p => p.Id).ToArray());
+        Assert.Equal(["sites", "sources", "everywhere", "activity"], SettingsWindow.VisiblePages(showAll: false).Select(p => p.Id).ToArray());
         var all = SettingsWindow.VisiblePages(showAll: true).Select(p => p.Id).ToArray();
         Assert.True(all.Length >= 8);                                     // guard, Skills, Limits, My MCP, help…
         Assert.Equal(all, SettingsWindow.VisiblePages(showAll: true).Select(p => p.Id).ToArray());
