@@ -21,19 +21,16 @@ sealed partial class SettingsWindow
         Head(page, "Agent guard",
             "When a site is given your own agent, a small fast model reads every request before your agent does. It answers only yes or no to a few questions " +
             "(could this harm your computer, does it try to give the agent orders, is it what the site said it is for), and what looks wrong waits for you.");
-        var guard = _w.Store.Read(s => (s.Guard.DailyLimit, s.Guard.StopWhenUnavailable, s.Guard.Strictness));
+        var guard = _w.Store.Read(s => (s.Guard.Judge, s.Guard.DailyLimit, s.Guard.StopWhenUnavailable, s.Guard.Strictness));
         var limit = Money.Parse(guard.DailyLimit, 2.00m);
         var spent = _w.GuardLedger.SpentOn(DateOnly.FromDateTime(DateTime.UtcNow));
 
-        // its key and what it costs today
+        // who checks the requests: Jev, or one of the visitor's own models (SettingsWindow.Guard.Judge.cs)
+        page.Children.Add(Ui.Box("card", JudgeCard(guard.Judge)));
+
+        // its key (only Jev needs one) and what checking costs today
         var hasKey = _w.Secrets.Has(OpenRouterSource.SecretName);
-        var keyCard = Ui.Column(8,
-            Ui.Text(hasKey ? "Ready: it uses your OpenRouter key" : "It needs your OpenRouter key", "h2"),
-            Ui.Wrap("The guard is Jev, a decision model that runs at OpenRouter, behind your own key (the same key as for Scribe v2, kept only on this PC). " +
-                    "A request costs a few thousandths of a cent, and its text goes to OpenRouter to be checked. Spent today: " + Money.Show(spent) + " of " + Money.Show(limit) + ".", "muted", "small"));
-        keyCard.Children[0].SetValue(AutomationProperties.AutomationIdProperty, "GuardKeyState");
-        if (!hasKey) keyCard.Children.Add(KeyExtras());
-        page.Children.Add(Ui.Box("card", keyCard));
+        page.Children.Add(Ui.Box("card", JudgeKeyCard(guard.Judge, hasKey, spent, limit)));
 
         page.Children.Add(Ui.Box("card", Ui.Column(8, Ui.Text("What it may spend a day", "h2"), DailyLimitRow(limit),
             Ui.Wrap("When this is spent the guard stops for the day, and what happens then is your choice below.", "muted", "small"))));
