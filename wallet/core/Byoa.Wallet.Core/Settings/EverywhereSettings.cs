@@ -52,6 +52,15 @@ public sealed class EverywhereSettings
     /// <summary>The visitor answered "Always" to the question about a paid call: it is not asked again. Only counts while <see cref="AllowPaid"/> is on.</summary>
     public bool PaidWithoutAsking { get; set; }
 
+    /// <summary>A copy that is the caller's own: the state machines read the settings at every press, and must not hold the store's live object.</summary>
+    public EverywhereSettings Clone() => new()
+    {
+        DictationOn = DictationOn, DictationExplained = DictationExplained, DictationHotkey = DictationHotkey, DictationMode = DictationMode,
+        DictationLanguage = DictationLanguage, CheckOn = CheckOn, CheckExplained = CheckExplained, CheckHotkey = CheckHotkey,
+        Actions = Actions.Select(a => new CheckAction { Name = a.Name, Prompt = a.Prompt }).ToList(),
+        AllowPaid = AllowPaid, PaidWithoutAsking = PaidWithoutAsking,
+    };
+
     public static List<CheckAction> DefaultActions() =>
     [
         new CheckAction

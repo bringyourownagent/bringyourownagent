@@ -41,13 +41,21 @@ sealed class FakeKeyboard : IKeyboard
     public KeySet Down { get; } = new();
     public Action<HotkeyModifiers, int>? OnChord { get; set; }
 
+    /// <summary>When set, sending keys fails with this message (a program that runs as administrator).</summary>
+    public string? Refuse { get; set; }
+
     public void Chord(HotkeyModifiers modifiers, int virtualKey)
     {
+        if (Refuse is { } refuse) throw new KeyboardException(refuse);
         Sent.Add(new Hotkey(modifiers, virtualKey).ToString());
         OnChord?.Invoke(modifiers, virtualKey);
     }
 
-    public void TypeText(string text) => Sent.Add("type:" + text);
+    public void TypeText(string text)
+    {
+        if (Refuse is { } refuse) throw new KeyboardException(refuse);
+        Sent.Add("type:" + text);
+    }
 
     public bool IsDown(int virtualKey) => Down.Contains(virtualKey);
 

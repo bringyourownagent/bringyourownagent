@@ -70,6 +70,10 @@ public sealed class SelectionReader(IClipboard clipboard, IKeyboard keyboard, Se
                 return null;
             }
         }
+        catch (KeyboardException e)
+        {
+            throw new SelectionException(e.Message);
+        }
         finally
         {
             try { clipboard.Restore(saved); }

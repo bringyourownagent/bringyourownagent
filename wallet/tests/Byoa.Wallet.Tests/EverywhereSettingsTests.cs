@@ -20,6 +20,18 @@ public class EverywhereSettingsTests
     // ------------------------------------------------------------------ defaults
 
     [Fact]
+    public void ACloneIsIndependentOfTheOriginal()
+    {
+        var original = new EverywhereSettings { DictationOn = true, DictationLanguage = "ru" };
+        var clone = original.Clone();
+        clone.DictationOn = false;
+        clone.Actions[0].Name = "Changed";
+        Assert.True(original.DictationOn);
+        Assert.Equal("ru", clone.DictationLanguage);
+        Assert.Equal("Check facts and wording", original.Actions[0].Name);
+    }
+
+    [Fact]
     public void BothFeaturesAreOffByDefaultWithTheDefaultHotkeys()
     {
         var s = new WalletSettings().Everywhere;
@@ -202,19 +214,12 @@ public class EverywhereSettingsTests
 
         public Rig()
         {
-            Dictation = new DictationController(Mic, Own, Inserter, Indicator, () => Store.Read(s => Store_Copy(s.Everywhere)));
-            Check = new SelectionCheckController(Reader, Own, Inserter, new FakeClipboard(), Windows, Popup, () => Store.Read(s => Store_Copy(s.Everywhere)));
+            Dictation = new DictationController(Mic, Own, Inserter, Indicator, () => Store.Read(s => s.Everywhere.Clone()));
+            Check = new SelectionCheckController(Reader, Own, Inserter, new FakeClipboard(), Windows, Popup, () => Store.Read(s => s.Everywhere.Clone()));
             Service = new EverywhereService(Store, new HotkeyMonitor(Hook), Dictation, Check, Probe, Keyboard);
             Service.StatusChanged += () => StatusChanges++;
             Service.Start();
         }
-
-        // the controllers read the settings on every press; a copy keeps them from holding the store's lock-protected object
-        static EverywhereSettings Store_Copy(EverywhereSettings s) => new()
-        {
-            DictationOn = s.DictationOn, DictationMode = s.DictationMode, DictationLanguage = s.DictationLanguage, DictationHotkey = s.DictationHotkey,
-            CheckOn = s.CheckOn, CheckHotkey = s.CheckHotkey, Actions = s.Actions,
-        };
 
         public void Chord(int key, params int[] modifiers)
         {
@@ -252,10 +257,8 @@ public class EverywhereSettingsTests
         Assert.Equal(FeatureState.Off, rig.Service.Status.Check.State);
 
         rig.Chord(K, Ctrl, Alt);                            // the check's chord is not taken while the check is off
-        Assert.Equal(CheckPhaseOrNull(rig), null);
+        Assert.Null(rig.Check.Current);
     }
-
-    static CheckPhase? CheckPhaseOrNull(Rig rig) => rig.Check.Current;
 
     [Fact]
     public async Task TheHotkeyDrivesDictationEndToEndThroughTheHookAndHoldToTalk()

@@ -2,6 +2,7 @@ using System.Runtime.Versioning;
 using Byoa.Wallet.Activity;
 using Byoa.Wallet.Direct;
 using Byoa.Wallet.Engine;
+using Byoa.Wallet.Everywhere;
 using Byoa.Wallet.Guard;
 using Byoa.Wallet.Protocol;
 using Byoa.Wallet.Providers;
@@ -47,6 +48,26 @@ sealed class WalletServices : IDisposable
         Direct = new DirectTransport(Engine, Pairings, new DirectOptions { DevLocal = DirectLink.DevLocalFromEnvironment });
         Pipe = new PipeServer(Engine, OpenLink);
         AgentPipe = new AgentPipeServer(this, Ui);
+        Everywhere = CreateEverywhere();
+    }
+
+    /// <summary>
+    /// Dictation and the check of selected text (the Everywhere page): the native parts, the state machines over them, and the service that listens for
+    /// the hotkeys once the visitor has turned a feature on. Nothing is installed or listened to until then.
+    /// </summary>
+    EverywhereService CreateEverywhere()
+    {
+        var keyboard = new WinKeyboard();
+        var clipboard = new WinClipboard();
+        HotkeyProbe = new WinHotkeyProbe();
+        Func<EverywhereSettings> settings = () => Store.Read(s => s.Everywhere.Clone());
+        Action<Exception> log = e => ErrorLog.Write(WalletPaths.Home, e);
+        var inserter = new FallbackInserter(new ClipboardInserter(clipboard, keyboard), new TypingInserter(keyboard));
+        var dictation = new DictationController(new WinMicrophone(), Engine.Own, inserter, new EverywhereIndicator(), settings, onError: log);
+        var popup = new CheckPopup();
+        var check = new SelectionCheckController(new SelectionReader(clipboard, keyboard), Engine.Own, inserter, clipboard, new WinTargetWindow(), popup, settings, log);
+        popup.Controller = check;
+        return new EverywhereService(Store, new HotkeyMonitor(new WinKeyboardHook()), dictation, check, HotkeyProbe, keyboard);
     }
 
     /// <summary>Acts on a bringyourownagent:// link (from the command line or handed over by a second instance).</summary>
@@ -78,8 +99,15 @@ sealed class WalletServices : IDisposable
     public PipeServer Pipe { get; }
     public AgentPipeServer AgentPipe { get; }
 
+    /// <summary>Dictation and the check of selected text: listens for their hotkeys while the visitor has them on.</summary>
+    public EverywhereService Everywhere { get; }
+
+    /// <summary>Asks Windows whether another program already holds a hotkey (the Everywhere page checks a hotkey before it keeps it).</summary>
+    public IHotkeyProbe HotkeyProbe { get; private set; } = null!;
+
     public void Dispose()
     {
+        Everywhere.Dispose();
         Direct.Dispose();
         Pipe.Dispose();
         AgentPipe.Dispose();

@@ -1,12 +1,17 @@
 namespace Byoa.Wallet.Everywhere;
 
+/// <summary>Windows would not take the keystrokes (a program that runs as administrator takes none from a program that does not); the message is for the visitor.</summary>
+public sealed class KeyboardException(string message) : Exception(message);
+
 /// <summary>Keystrokes sent to the program that has the focus (<c>SendInput</c>), and what is held down now.</summary>
 public interface IKeyboard
 {
     /// <summary>Presses the modifiers and the key together, then lets them go: Ctrl+V.</summary>
+    /// <exception cref="KeyboardException"/>
     void Chord(HotkeyModifiers modifiers, int virtualKey);
 
     /// <summary>Types the text as characters (Unicode key events), whatever the keyboard layout is.</summary>
+    /// <exception cref="KeyboardException"/>
     void TypeText(string text);
 
     /// <summary>True while the visitor holds the key down.</summary>

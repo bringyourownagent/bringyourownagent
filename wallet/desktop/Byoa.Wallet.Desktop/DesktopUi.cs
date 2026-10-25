@@ -69,6 +69,7 @@ sealed class DesktopUi : IWalletUi, IAgentConsentUi, IEndpointConfirmationUi, IS
         _w.Secrets.Changed += () => PostSafe(() => _settings?.Invalidate());
         _w.Direct.Changed += () => PostSafe(() => _settings?.Invalidate());
         _w.Registry.Changed += _ => PostSafe(() => _settings?.Invalidate());
+        _w.Everywhere.StatusChanged += () => PostSafe(() => _settings?.Invalidate());
         UpdateBadge();
     }
 

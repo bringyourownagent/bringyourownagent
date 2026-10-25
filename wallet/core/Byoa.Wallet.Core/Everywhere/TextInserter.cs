@@ -64,6 +64,10 @@ public sealed class ClipboardInserter(IClipboard clipboard, IKeyboard keyboard, 
             keyboard.Chord(HotkeyModifiers.Ctrl, VkV);
             await Task.Delay(_options.PasteSettle, CancellationToken.None).ConfigureAwait(false);
         }
+        catch (KeyboardException e)
+        {
+            throw new InsertException(e.Message);
+        }
         finally
         {
             // If another program wrote to the clipboard meanwhile (the visitor copied something), that is newer than what was saved: leave it.
@@ -88,7 +92,14 @@ public sealed class TypingInserter(IKeyboard keyboard, InsertOptions? options = 
     {
         if (text.Length == 0) return;
         await keyboard.WaitForModifiersReleasedAsync(_options.ModifierWait, _options.ModifierStep, ct).ConfigureAwait(false);
-        keyboard.TypeText(text);
+        try
+        {
+            keyboard.TypeText(text);
+        }
+        catch (KeyboardException e)
+        {
+            throw new InsertException(e.Message);
+        }
     }
 }
 

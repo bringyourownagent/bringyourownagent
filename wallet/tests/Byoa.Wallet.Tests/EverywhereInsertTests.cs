@@ -101,6 +101,37 @@ public class EverywhereInsertTests
         Assert.Equal(["Ctrl+V"], _keyboard.Sent);
     }
 
+    [Fact]
+    public async Task AProgramThatWindowsWillNotTypeIntoIsAnInsertErrorAndTheClipboardIsPutBack()
+    {
+        _clipboard.Text = "mine";
+        _keyboard.Refuse = "Windows would not let the wallet type into that program (it may run as administrator).";
+        var inserter = new ClipboardInserter(_clipboard, _keyboard, Quick);
+        var e = await Assert.ThrowsAsync<InsertException>(() => inserter.InsertAsync("words", CancellationToken.None));
+        Assert.IsNotType<ClipboardUnavailableException>(e);        // typing would be refused as well: no fallback
+        Assert.Contains("administrator", e.Message);
+        Assert.Equal("mine", _clipboard.Text);
+    }
+
+    [Fact]
+    public async Task TypingThatWindowsRefusesIsAnInsertError()
+    {
+        _keyboard.Refuse = "refused";
+        var inserter = new TypingInserter(_keyboard, Quick);
+        await Assert.ThrowsAsync<InsertException>(() => inserter.InsertAsync("words", CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task ACopyThatWindowsRefusesIsASelectionError()
+    {
+        _clipboard.Text = "mine";
+        _keyboard.Refuse = "refused";
+        var reader = new SelectionReader(_clipboard, _keyboard, QuickCopy);
+        var e = await Assert.ThrowsAsync<SelectionException>(() => reader.ReadAsync(null, CancellationToken.None));
+        Assert.Equal("refused", e.Message);
+        Assert.Equal("mine", _clipboard.Text);
+    }
+
     // ------------------------------------------------------------------ the hotkey's own keys
 
     [Fact]

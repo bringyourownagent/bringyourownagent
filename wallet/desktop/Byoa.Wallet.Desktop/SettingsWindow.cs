@@ -27,6 +27,7 @@ sealed partial class SettingsWindow : Window
     [
         ("sites", "Sites", Ui.Globe),
         ("sources", "My models", Ui.Screen),
+        ("everywhere", "Everywhere", MicrophoneGlyph),
         ("myagents", "My agents", Ui.Arrow),
         ("guard", "Agent guard", Ui.Check),
         ("skills", "Skills & fallbacks", Ui.Arrow),
@@ -163,6 +164,7 @@ sealed partial class SettingsWindow : Window
         {
             case "sites": SitesPage(page); break;
             case "sources": SourcesPage(page); break;
+            case "everywhere": EverywherePage(page); break;
             case "myagents": MyAgentsPage(page); break;
             case "guard": GuardPage(page); break;
             case "skills": SkillsPage(page); break;
