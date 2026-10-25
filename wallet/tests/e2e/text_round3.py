@@ -167,11 +167,7 @@ try:
 
     link_site = FakeSite("text-link", TEXT_MANIFEST).start()
     link_process = subprocess.Popen([a.app, "--url", link_site.new_link()], env=env)
-    notice = ui.find_window("Agent wallet notice", 20)
-    if notice is None:
-        raise RuntimeError("the direct text link did not show a notice")
-    ui.invoke(notice, "NoticeShow")
-    consent = ui.find_window("Agent wallet consent", 10)
+    consent = ui.to_consent(20)
     if consent is None:
         raise RuntimeError("the direct text link did not show consent")
     shot(consent, os.path.join(a.shots, "consent-text-link-round3.png"))

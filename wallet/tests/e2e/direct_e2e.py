@@ -147,15 +147,11 @@ seed_speech_source()
 # ---------------------------------------------------------------------------------------------- pair: link, notice, consent, hello
 t0 = time.time()
 open_link(main.new_link())
-notice = ui.find_window("Agent wallet notice", 40)
-check("a link starts the wallet, which shows the same notice", notice is not None, f"{time.time() - t0:.1f} s from the link")
-check("the notice is up and the site has had no request at all (the manifest came in the link)", main.requests == 0, f"{main.requests} requests")
+consent = ui.to_consent(40)
+check("a link starts the wallet, which shows the consent window at once (no notice before it)", consent is not None, f"{time.time() - t0:.1f} s from the link")
+check("the window is up and the site has had no request at all (the manifest came in the link)", main.requests == 0, f"{main.requests} requests")
 check("the wallet that the link started uses this test's data folder (it inherited the environment)",
       wait(lambda: os.path.exists(os.path.join(HOME, "settings.json")), 5))
-time.sleep(0.8)
-ui.shot(notice, os.path.join(a.shots, "20-link-notice.png"))
-ui.click(notice, "NoticeShow")
-consent = ui.find_window("Agent wallet consent", 10)
 time.sleep(0.8)
 ui.shot(consent, os.path.join(a.shots, "21-link-consent.png"))
 check("nothing reaches the site before Allow", main.requests == 0 and main.upgrades == 0)
@@ -230,9 +226,7 @@ check("after a restart the site's welcome asks for more: the wallet says bye and
       got_bye and main.live is None and len(main.hellos) == 3 and asked_more and ui.find_window("Agent wallet notice", 0.5) is None,
       asked_more[-1].get("note") if asked_more else "")
 open_link(main.new_link())
-w = ui.find_window("Agent wallet notice", 20)
-ui.invoke(w, "NoticeShow")
-c = ui.find_window("Agent wallet consent", 10)
+c = ui.to_consent(20)
 time.sleep(0.8)
 only_new = c.TextControl(Name="Only what is new", searchDepth=30).Exists(2, 0.2)
 ui.shot(c, os.path.join(a.shots, "26-link-difference.png"))
@@ -243,9 +237,7 @@ check("a new link then shows only the difference, and Allow connects again", onl
 # ---------------------------------------------------------------------------------------------- a site whose welcome does not echo its link's manifest
 open_link(liar.new_link())
 liar.echo = liar.manifest64[:-4] + "AAAA"                     # its server says another manifest than the link showed
-w = ui.find_window("Agent wallet notice", 20)
-ui.invoke(w, "NoticeShow")
-c = ui.find_window("Agent wallet consent", 10)
+c = ui.to_consent(20)
 ui.invoke(c, "ConsentAllow")
 got_bye = wait(lambda: liar.byes == 1, 45)
 time.sleep(1)
@@ -256,26 +248,26 @@ check("a welcome whose manifest differs from the link's: bye, and nothing is sto
 
 # ---------------------------------------------------------------------------------------------- decline (the link goes to the running wallet)
 open_link(dec.new_link())
-w = ui.find_window("Agent wallet notice", 20)
-check("a second link reaches the running wallet (handed over the pipe): its notice", w is not None)
-ui.invoke(w, "NoticeDecline")
+w = ui.to_consent(20)
+check("a second link reaches the running wallet (handed over the pipe): its consent window", w is not None)
+ui.invoke(w, "ConsentDecline")
 time.sleep(4)
 check("decline: the site never hears from the wallet (no request of any kind)", dec.requests == 0)
 
-# ---------------------------------------------------------------------------------------------- "Block in Sites…" on a link's notice
+# ---------------------------------------------------------------------------------------------- Decline in a link's consent window
 open_link(blk.new_link())
-w = ui.find_window("Agent wallet notice", 20)
-ui.invoke(w, "NoticeBlock")                                  # a link's notice has no block: this opens Sites, and the answer is "not now"
+w = ui.to_consent(20)
+ui.invoke(w, "ConsentDecline")                               # the answer is "not now": nothing is stored for a link
 time.sleep(2)
 open_link(blk.new_link())
-w2 = ui.find_window("Agent wallet notice", 20)               # nothing was stored: the site is asked again
+w2 = ui.to_consent(20)                                       # nothing was stored: the site is asked again
 seen = w2 is not None
 if w2 is not None:
-    ui.invoke(w2, "NoticeBlock")
+    ui.invoke(w2, "ConsentDecline")
 time.sleep(1)
 not_now = [e for e in activity() if e.get("origin") == blk.origin and e.get("kind") == "request" and e.get("outcome") == "declined"
            and e.get("note") == "declined from a link: nothing stored"]
-check("\"Block in Sites…\" on a link's notice: no connection to the site, nothing stored (declined, never blocked), so a later link asks again",
+check("Decline in a link's consent window: no connection to the site, nothing stored (declined, never blocked), so a later link asks again",
       blk.requests == 0 and seen and len(not_now) == 2
       and not any(e.get("origin") == blk.origin and e.get("outcome") == "blocked" for e in activity()), f"{len(not_now)} entries")
 
@@ -283,13 +275,10 @@ check("\"Block in Sites…\" on a link's notice: no connection to the site, noth
 # A link always asks, also for a paired site that decides on its own: the visitor shows and allows it, then the site answers error.
 upgrades, errors = main.upgrades, main.errors_sent
 open_link(main.new_link(code="a-code-this-site-never-made-0123456789"))
-w = ui.find_window("Agent wallet notice", 20)
-check("a link to a paired site that decides on its own still shows a notice (no silent grant)", w is not None)
-if w is not None:
-    ui.invoke(w, "NoticeShow")
-    c = ui.find_window("Agent wallet consent", 10)
-    if c is not None:
-        ui.invoke(c, "ConsentAllow")
+c = ui.to_consent(20)
+check("a link to a paired site that decides on its own still shows the consent window (no silent grant)", c is not None)
+if c is not None:
+    ui.invoke(c, "ConsentAllow")
 got_error = wait(lambda: main.errors_sent == errors + 1, 20)
 time.sleep(4)
 refused = [e for e in activity() if e.get("kind") == "link" and e.get("outcome") == "error"]
@@ -337,11 +326,9 @@ if not a.no_browser:
             ui.shot(prompt[0], os.path.join(a.shots, "25-chromium-prompt.png"))
             time.sleep(1.0)                                  # Chromium ignores a press right after its dialog appears
             prompt[1].GetPattern(ui.auto.PatternId.InvokePattern).Invoke()
-            w = ui.find_window("Agent wallet notice", 20)
-            check("... then the wallet's notice (the link came over the pipe from the second process)", w is not None)
-            if w is not None:
-                ui.invoke(w, "NoticeShow")
-                c = ui.find_window("Agent wallet consent", 10)
+            c = ui.to_consent(20)
+            check("... then the wallet's consent window (the link came over the pipe from the second process)", c is not None)
+            if c is not None:
                 ui.invoke(c, "ConsentAllow")
                 check("... Allow, and the site gets the wallet's hello", web_site.wait_hello(45))
                 r = web_site.call(open(os.path.join(a.samples, words["sk"][4]["file"]), "rb").read(), "sk")

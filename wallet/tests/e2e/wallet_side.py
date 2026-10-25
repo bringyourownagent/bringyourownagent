@@ -92,12 +92,7 @@ def texts(window, ident):
     return c.Name if c.Exists(0.5, 0.1) else None
 
 
-notice = ui.find_window("Agent wallet notice", 40)
-if notice is None:
-    fail("no notice window")
-shot(notice, "1-notice")
-ui.click(notice, "NoticeShow")
-consent = ui.find_window("Agent wallet consent", 20)
+consent = ui.to_consent(40)
 if consent is None:
     fail("no consent window")
 time.sleep(1.5)
@@ -138,6 +133,10 @@ if a.decline:
     ui.invoke(consent, "ConsentDecline")
     say("DECLINED")
 else:
+    if ui.control(consent, "ConsentCheckSame", 1) is not None:        # the site shows the check code: the visitor compares it, then ticks
+        say("INFO check code=" + str(texts(consent, "ConsentCheckCode")))
+        ui.toggle(consent, "ConsentCheckSame", True)
+        time.sleep(0.8)
     allow = ui.control(consent, "ConsentAllow")
     if not allow.IsEnabled:
         fail("Allow is disabled")
