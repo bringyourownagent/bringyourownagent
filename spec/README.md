@@ -33,6 +33,7 @@ A first draft of the machine-checkable rules (manifest checks and the call gate)
 - [rules-0.1-draft.md](rules-0.1-draft.md): the machine-checkable rules (manifest checks and the call gate).
 - [CONTRACT.md](CONTRACT.md): how a web page, a browser extension and a desktop wallet talk (`window.byoa`, the skills `audio.transcribe` and `text.generate`, the extension and native host messages).
 - [CONTRACT-DIRECT.md](CONTRACT-DIRECT.md): the second way, without an extension: a `bringyourownagent://` link that starts the wallet, then a channel from the wallet to the site's server.
+- [CONTRACT-PAIR.md](CONTRACT-PAIR.md): other devices and the web wallet: a link handed to the wallet by hand, a hand-off URL, a second screen that shares a live pairing, and a wallet that runs in a browser tab.
 
 ## Which text binds
 
