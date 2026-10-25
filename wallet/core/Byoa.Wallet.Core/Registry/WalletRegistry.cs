@@ -27,6 +27,9 @@ public sealed class WalletRegistry
     static bool IsPaidKind(string? kind) =>
         kind?.Trim().ToLowerInvariant() is SourceKinds.OpenRouter or ApiServices.Kind;
 
+    /// <summary>Whether a source costs the visitor money: OpenRouter and the keyed services, but not a free demo service.</summary>
+    static bool CostsMoney(string? kind, string? service) => IsPaidKind(kind) && !ApiServices.IsDemo(service);
+
     /// <summary>A known service has its own address; the one a visitor typed for it is ignored. Only a service he names himself keeps his.</summary>
     static SourceDraft Normalize(SourceDraft draft)
     {
@@ -255,7 +258,7 @@ public sealed class WalletRegistry
                     SecretRef = IsApi(draft.Kind) ? ApiServices.SecretName(draft.Service, endpointOfDraft)
                         : draft.Kind.Trim().Equals(SourceKinds.OpenRouter, StringComparison.OrdinalIgnoreCase) ? "openrouter" : null,
                 });
-                AddStop(s, id, skill, IsPaidKind(draft.Kind));
+                AddStop(s, id, skill, CostsMoney(draft.Kind, draft.Service));
             });
         }
 
@@ -377,7 +380,7 @@ public sealed class WalletRegistry
             if (oldSkill != newSkill)
                 foreach (var chain in s.Chains.Where(c => c.Skill == (oldSkill)))
                     chain.Stops.RemoveAll(stop => stop.SourceId == newId);
-            AddStop(s, newId, newSkill, IsPaidKind(kind));
+            AddStop(s, newId, newSkill, CostsMoney(kind, setting.Service));
         });
         Change("source-updated", newId, actor, "Updated source " + DisplayId(newId));
         return RegistryOperationResult.Success("Source updated: " + newId + ".", newId);
@@ -715,17 +718,21 @@ public sealed class WalletRegistry
     {
         var kind = source.Kind!.ToLowerInvariant();
         var skills = source.Skills.Count == 0 ? [Vocabulary.Generate] : source.Skills.ToArray();
-        var paid = IsPaidKind(kind);
+        var demo = ApiServices.IsDemo(source.Service);
+        var paid = IsPaidKind(kind) && !demo;
         var validEndpoint = Uri.TryCreate(source.Endpoint, UriKind.Absolute, out var endpoint)
             && endpoint.Scheme is "http" or "https";
             var loopback = validEndpoint && (OpenAiLoopback(endpoint!.Host) || endpoint.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase));
-        var runs = paid ? Runs.ApiKey : loopback ? Runs.ThisDevice : "another computer (" + (endpoint?.IdnHost ?? "unknown host") + ")";
+        // A free demo service is still cloud: the gate must be able to refuse it for a site that asked for local-only.
+        var cloud = paid || demo;
+        var runs = cloud ? Runs.ApiKey : loopback ? Runs.ThisDevice : "another computer (" + (endpoint?.IdnHost ?? "unknown host") + ")";
         var state = paid && !HasKey(source.Id, source) ? SourceState.NoKey : validEndpoint ? SourceState.Ready : SourceState.Broken;
         var name = DisplayName(source);
         var shownEndpoint = kind == SourceKinds.OpenRouter ? "https://openrouter.ai/api/v1" : source.Endpoint;
         return new RegistrySourceInfo(source.Id, name, kind, source.Model, shownEndpoint, skills, source.Languages.ToArray(), runs,
-            paid ? "api-key" : loopback ? "local-model" : "home-server", paid, source.Enabled, false, HasKey(source.Id, source), state.ToString().ToLowerInvariant(),
-            paid && !HasKey(source.Id, source) ? "no API key added" : validEndpoint ? "configured; test before use" : "invalid endpoint: use a complete http or https URL");
+            cloud ? "api-key" : loopback ? "local-model" : "home-server", paid, source.Enabled, false, HasKey(source.Id, source), state.ToString().ToLowerInvariant(),
+            demo ? "Free demo model (public service): may keep what you send; slow and limited; not for private text"
+                : paid && !HasKey(source.Id, source) ? "no API key added" : validEndpoint ? "configured; test before use" : "invalid endpoint: use a complete http or https URL");
     }
 
     bool HasKey(string id, SourceSetting? setting)
@@ -769,7 +776,7 @@ public sealed class WalletRegistry
         {
             var service = draft.Service?.Trim().ToLowerInvariant();
             if (service != ApiServices.Custom && ApiServices.Find(service) is null)
-                return "Unknown service. Use one of: " + string.Join(", ", ApiServices.All.Select(s => s.Id)) + ", or custom with its https address.";
+                return "Unknown service. Use one of: " + string.Join(", ", ApiServices.All.Concat(ApiServices.Demo).Select(s => s.Id)) + ", or custom with its https address.";
             if (!Uri.TryCreate(Endpoint(kind, draft.Endpoint), UriKind.Absolute, out var service1)
                 || !(service1.Scheme == Uri.UriSchemeHttps || service1.Scheme == Uri.UriSchemeHttp && OpenAiLoopback(service1.Host)))
                 return "A model behind an API key needs a complete https address: the key is never sent in the clear.";

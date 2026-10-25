@@ -2,7 +2,7 @@
 
 The wallet gives a website or your own AI agent carefully limited access to AI that you choose. The wallet stays on your computer, checks every request, follows your source order, applies your limits, and records a short activity entry. A site receives an answer or “AI unavailable”; it does not receive your API key or the name of the source that answered.
 
-The wallet holds no model: it is a go-between. A site's request goes, after your yes, to a program on your computer that runs a model (the Llama app, LM Studio, Ollama, or any OpenAI-compatible server), or to your own paid key. The wallet serves speech to text and text generation; each needs a model added in My models. Pictures and video are planned for later.
+The wallet holds no model: it is a go-between. A site's request goes, after your yes, to a program on your computer that runs a model (the Llama app, LM Studio, Ollama, or any OpenAI-compatible server), or to your own paid key. The wallet serves speech to text and text generation; each needs a model added in My models — and if you have none yet, the Get started card there offers three free ways in. Pictures and video are planned for later.
 
 ## For your AI agent
 
