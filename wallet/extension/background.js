@@ -137,6 +137,7 @@ function shapeModels(models) {
         name: m.name.slice(0, 120),
         id: isString(m.id) ? m.id.slice(0, 120) : null,
         runs: ["local", "home-server", "api-key"].includes(m.runs) ? m.runs : "api-key",
+        kind: m.kind === "agent" ? "agent" : "model",
       }));
   }
   return Object.keys(out).length ? out : undefined;

@@ -297,6 +297,8 @@ public class ModelRequestTests
         Assert.Equal("openai/gpt-5-mini", list[0]!["id"]!.GetValue<string>());
         Assert.Equal("api-key", list[0]!["runs"]!.GetValue<string>());
         Assert.Equal("local", list[1]!["runs"]!.GetValue<string>());
+        Assert.Equal("model", list[0]!["kind"]!.GetValue<string>());
+        Assert.Equal("model", list[1]!["kind"]!.GetValue<string>());
         Assert.Equal(60_000, granted["limits"]!["maxTextChars"]!.GetValue<int>());      // the site's own, lower than the visitor's 100 000
         Assert.Equal(20_000, granted["limits"]!["maxAnswerTokens"]!.GetValue<int>());
         Assert.Equal(8, granted["limits"]!["maxParallelCalls"]!.GetValue<int>());

@@ -143,6 +143,55 @@ public class AgentCliSourceTests
         Assert.Equal(folder, Assert.Single(runner.Runs).WorkFolder);
     }
 
+    [Fact]
+    public async Task TheVisitorsModelIsPassedAsOneOptionAndNoneIsPassedWithoutIt()
+    {
+        var runner = new FakeRunner(_ => new AgentRunResult(0, Json, ""));
+        var withModel = new AgentCliSource(new AgentCliSource.SourceSettingView("agent:o", "o", "Opus", AgentFlavors.ClaudeCode, Program, "opus"), TestFolder.New(), runner);
+        var without = Make(runner);
+
+        await withModel.GenerateAsync(Ask(), CancellationToken.None);
+        await without.GenerateAsync(Ask(), CancellationToken.None);
+
+        var chosen = runner.Runs[0].Arguments.ToList();
+        Assert.Equal("opus", chosen[chosen.IndexOf("--model") + 1]);
+        Assert.Equal(1, chosen.Count(a => a == "--model"));
+        Assert.DoesNotContain("--model", runner.Runs[1].Arguments);
+        Assert.Contains("--strict-mcp-config", chosen);                     // the rest of the run is as locked down as without a model
+        Assert.Equal("WebSearch,WebFetch", chosen[chosen.IndexOf("--tools") + 1]);
+    }
+
+    [Theory]
+    [InlineData("opus", true)]
+    [InlineData("claude-opus-5-5", true)]
+    [InlineData("glm-5.3-flash", true)]
+    [InlineData("z-ai/glm-5.3:free", true)]
+    [InlineData("", false)]
+    [InlineData("--dangerously-skip-permissions", false)]       // never read as another option
+    [InlineData("-p", false)]
+    [InlineData("opus sonnet", false)]
+    [InlineData("opus&calc", false)]
+    [InlineData("opus|x", false)]
+    [InlineData("op\"us", false)]
+    [InlineData("%PATH%", false)]
+    [InlineData("opus[1m]", false)]
+    [InlineData("o\nx", false)]
+    public void OnlyAPlainModelNameIsHandedToTheProgram(string name, bool plain)
+    {
+        Assert.Equal(plain, AgentPrograms.IsModelName(name));
+        if (plain) return;
+        var failure = Assert.Throws<ArgumentException>(() =>
+            new AgentCliSource(new AgentCliSource.SourceSettingView("agent:o", "o", null, AgentFlavors.ClaudeCode, Program, name), TestFolder.New(), new FakeRunner(_ => new AgentRunResult(0, Json, ""))));
+        Assert.Contains("model name", failure.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AModelNameOfSixtyFiveCharactersIsTooLong()
+    {
+        Assert.True(AgentPrograms.IsModelName(new string('a', 64)));
+        Assert.False(AgentPrograms.IsModelName(new string('a', 65)));
+    }
+
     [Theory]
     [InlineData("")]
     [InlineData("no json here")]
@@ -341,7 +390,8 @@ public class AgentEngineTests
         Assert.Equal("agent/fake", section.Choices.Single(c => c.Key == "agent:fake").ModelId);
         Assert.Equal((Site, Goal), Assert.Single(_guard.Purposes));
         Assert.Equal(Goal, _store.Read(s => s.Site(Site)!.AgentPurposeOk));
-        Assert.Single(granted["models"]!["text.generate"]!.AsArray());
+        var entry = Assert.Single(granted["models"]!["text.generate"]!.AsArray());
+        Assert.Equal("agent", entry!["kind"]!.GetValue<string>());                  // the site can tell which entry may investigate, names shown or not
     }
 
     [Fact]
@@ -669,6 +719,39 @@ public class AgentRegistryTests
 
         Assert.False(result.Ok);
         Assert.Contains(reason, result.Message, StringComparison.Ordinal);
+        Assert.Empty(store.Snapshot().Sources);
+    }
+
+    [Fact]
+    public void TheVisitorSModelIsKeptWithTheAgentAndTheSameProgramCanBeAddedTwice()
+    {
+        var store = new SettingsStore(null);
+        var registry = Make(store);
+
+        var opus = registry.AddAgentSource("Claude Opus", AgentFlavors.ClaudeCode, Program, " opus ");
+        var sonnet = registry.AddAgentSource("Claude Sonnet", AgentFlavors.ClaudeCode, Program, "sonnet");
+        var plain = registry.AddAgentSource("Claude default", AgentFlavors.ClaudeCode, Program);
+
+        Assert.True(opus.Ok && sonnet.Ok && plain.Ok, opus.Message + sonnet.Message + plain.Message);
+        var sources = store.Snapshot().Sources;
+        Assert.Equal("opus", sources.Single(s => s.Id == "agent:claude-opus").AgentModel);
+        Assert.Equal("sonnet", sources.Single(s => s.Id == "agent:claude-sonnet").AgentModel);
+        Assert.Null(sources.Single(s => s.Id == "agent:claude-default").AgentModel);
+    }
+
+    [Theory]
+    [InlineData("--max-turns")]
+    [InlineData("opus sonnet")]
+    [InlineData("opus&calc")]
+    [InlineData("%PATH%")]
+    public void ABadModelNameIsRefusedAndNothingIsSaved(string model)
+    {
+        var store = new SettingsStore(null);
+
+        var result = Make(store).AddAgentSource("Agent", AgentFlavors.ClaudeCode, Program, model);
+
+        Assert.False(result.Ok);
+        Assert.Contains("model name", result.Message, StringComparison.Ordinal);
         Assert.Empty(store.Snapshot().Sources);
     }
 

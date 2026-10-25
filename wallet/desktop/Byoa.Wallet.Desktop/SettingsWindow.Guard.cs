@@ -165,7 +165,8 @@ sealed partial class SettingsWindow
             Ui.Wrap(info?.Name ?? source.Label ?? source.Id, "strong"),
             Ui.Wrap(source.Id, "mono", "small"),
             Ui.Wrap(info?.StateText ?? "configured", "muted"),
-            Ui.Wrap("Runs " + (source.AgentCommand ?? "?") + " · " + AgentFlavors.Name(source.AgentFlavor), "mono", "small"),
+            Ui.Wrap("Runs " + (source.AgentCommand ?? "?") + " · " + AgentFlavors.Name(source.AgentFlavor)
+                + (string.IsNullOrWhiteSpace(source.AgentModel) ? "" : " · model " + source.AgentModel), "mono", "small"),
             Ui.Wrap("One question at a time, with web search and page reading only. A site gets it only when you tick it in that site's window (or in Sites), and every request goes through the guard. " + given, "muted", "small"),
             Ui.Row(8, test, remove));
     }

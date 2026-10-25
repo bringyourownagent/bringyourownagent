@@ -158,13 +158,16 @@ public sealed class WalletRegistry
     /// Adds the visitor's own AI agent as a source of answers (docs/agent-source.md). Only the visitor does this, in the wallet's window: the
     /// program it runs is code the wallet starts, so the MCP bridge has no way to name one (its source kinds do not include <c>agent</c>).
     /// </summary>
-    public RegistryOperationResult AddAgentSource(string? label, string flavor, string command, string actor = "you in the window")
+    public RegistryOperationResult AddAgentSource(string? label, string flavor, string command, string? model = null, string actor = "you in the window")
     {
         if (!AgentFlavors.Known(flavor)) return RegistryOperationResult.Failure("The wallet can talk to Claude Code and the launchers built on it so far.");
         command = command?.Trim() ?? "";
         if (command.Length == 0) return RegistryOperationResult.Failure("Tell the wallet which program runs your agent.");
         if (!AgentPrograms.IsPlain(command)) return RegistryOperationResult.Failure("The wallet will not run a program whose name has quotes, percent signs or | < > in it.");
         if (AgentPrograms.Resolve(command) is null) return RegistryOperationResult.Failure("The wallet did not find the program " + command + ".");
+        model = string.IsNullOrWhiteSpace(model) ? null : model.Trim();
+        if (model is not null && !AgentPrograms.IsModelName(model))
+            return RegistryOperationResult.Failure("The model name may have letters, digits and . _ : / - only, and must start with a letter or a digit.");
         var name = CleanLabel(label) ?? AgentFlavors.Name(flavor);
         var slug = AgentPrograms.Slug(name);
         var id = AgentPrograms.IdOf(name);
@@ -175,7 +178,7 @@ public sealed class WalletRegistry
             _store.Update(s => s.Sources.Add(new SourceSetting
             {
                 Id = id, Kind = SourceKinds.Agent, Model = slug, Label = name, Skills = [Vocabulary.Generate],
-                AgentCommand = command, AgentFlavor = flavor, Offer = false, EndpointConfirmed = true,
+                AgentCommand = command, AgentFlavor = flavor, AgentModel = model, Offer = false, EndpointConfirmed = true,
             }));
         }
 

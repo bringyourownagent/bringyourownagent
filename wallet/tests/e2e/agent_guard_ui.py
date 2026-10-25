@@ -259,6 +259,7 @@ try:
     shot(add, "3-add-agent")
     set_value(add, "AddAgentName", "Fake agent")
     set_value(add, "AddAgentProgram", agent_cmd)
+    set_value(add, "AddAgentModel", "sonnet")
     time.sleep(1.0)
     ui.invoke(add, "AddAgentTest")
     end = time.time() + 60
@@ -271,12 +272,13 @@ try:
     check("the test asks the agent a question and shows its answer", "the agent found news" in status, status)
     check("the program was started once, with only the two web tools and no MCP server",
           runs() == 1 and "--tools WebSearch,WebFetch" in open(args_file, encoding="utf-8").read() and "--strict-mcp-config" in open(args_file, encoding="utf-8").read())
+    check("and with the model the visitor wrote", "--model sonnet" in open(args_file, encoding="utf-8").read())
     ui.invoke(add, "AddAgentSave")
     check("saving closes the window", ui.window_gone("Add your agent", 10))
     time.sleep(1.5)
     source = next((s for s in saved()["sources"] if s["id"] == "agent:fake-agent"), None)
     check("the agent is a source of its own kind, out of the wallet's route",
-          source is not None and source["kind"] == "agent" and source["agentCommand"] == agent_cmd and source["offer"] is False
+          source is not None and source["kind"] == "agent" and source["agentCommand"] == agent_cmd and source.get("agentModel") == "sonnet" and source["offer"] is False
           and not any(stop["sourceId"] == "agent:fake-agent" for chain in saved().get("chains", []) for stop in chain["stops"]), str(source))
 
     def agent_row(w):

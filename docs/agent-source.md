@@ -9,6 +9,7 @@ An **agent source** is a program on the visitor's computer that runs his AI agen
 - the only tools are web search and page reading (`--tools WebSearch,WebFetch`); no files, no commands;
 - no MCP server of the visitor's is loaded (`--strict-mcp-config`), the wallet's own among them, and no session is saved;
 - it starts in an empty folder of the wallet's own, for at most 12 turns, and the whole call lasts at most the site's call time (300 s unless the visitor or the site set another);
+- if the visitor named a model when he added the agent (Opus, Sonnet, a model's name), the program also gets `--model <name>`: the name is the visitor's own, restricted to letters, digits and `. _ : / -` and never starting with a hyphen, so it cannot be read as another option; the same program can be added twice with two models;
 - the prompt goes in by standard input, never on the command line; what the site wrote sits between two lines with a random fence and is named as the site's question, not an order.
 
 The agent runs on the visitor's own subscription: the wallet counts its cost as 0 and reports provider kind `subscription` to the gate. A site that asks for `local-only` privacy never gets it.

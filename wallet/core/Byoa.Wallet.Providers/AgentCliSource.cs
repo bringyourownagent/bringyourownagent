@@ -118,12 +118,14 @@ public sealed class AgentCliSource : IAgentTextSource
     string? _lastError;
 
     /// <summary>What the source needs of its setting.</summary>
-    public sealed record SourceSettingView(string Id, string Model, string? Label, string Flavor, string Command);
+    public sealed record SourceSettingView(string Id, string Model, string? Label, string Flavor, string Command, string? AgentModel = null);
 
     public AgentCliSource(SourceSettingView setting, string workFolder, IAgentRunner? runner = null)
     {
         if (!AgentFlavors.Known(setting.Flavor)) throw new ArgumentException("The wallet cannot talk to this kind of agent yet.");
         if (!AgentPrograms.IsPlain(setting.Command)) throw new ArgumentException("The agent's program has a name the wallet will not run.");
+        if (setting.AgentModel is not null && !AgentPrograms.IsModelName(setting.AgentModel))
+            throw new ArgumentException("The model name has characters the wallet will not hand to the agent's program.");
         _setting = setting;
         _workFolder = workFolder;
         _runner = runner ?? new ProcessAgentRunner();
@@ -152,7 +154,7 @@ public sealed class AgentCliSource : IAgentTextSource
     {
         var program = AgentPrograms.Resolve(_setting.Command)
             ?? throw new TextSourceException("the program " + _setting.Command + " was not found", providerCalled: false);
-        var run = new AgentRun(program, Arguments(), Prompt(request), _workFolder);
+        var run = new AgentRun(program, Arguments(_setting.AgentModel), Prompt(request), _workFolder);
         AgentRunResult result;
         try
         {
@@ -186,15 +188,21 @@ public sealed class AgentCliSource : IAgentTextSource
     // how Claude Code is asked
 
     /// <summary>
-    /// Only the two web tools exist for the run; no MCP server is loaded; nothing is saved; a run ends after a few turns. The prompt goes in by
+    /// Only the two web tools exist for the run (and the visitor's model, if he named one); no MCP server is loaded; nothing is saved; a run ends after a few turns. The prompt goes in by
     /// standard input, so nothing the site wrote is ever part of a command line.
     /// </summary>
-    internal static IReadOnlyList<string> Arguments() =>
-    [
-        "-p", "--output-format", "json", "--no-session-persistence", "--strict-mcp-config",
-        "--tools", "WebSearch,WebFetch", "--allowedTools", "WebSearch,WebFetch",
-        "--max-turns", MaxTurns.ToString(CultureInfo.InvariantCulture),
-    ];
+    internal static IReadOnlyList<string> Arguments(string? model = null)
+    {
+        List<string> arguments =
+        [
+            "-p", "--output-format", "json", "--no-session-persistence", "--strict-mcp-config",
+            "--tools", "WebSearch,WebFetch", "--allowedTools", "WebSearch,WebFetch",
+            "--max-turns", MaxTurns.ToString(CultureInfo.InvariantCulture),
+        ];
+        // The visitor's choice of model (opus, sonnet, ...), checked as a plain name when the source is made: never a word of the site's.
+        if (!string.IsNullOrEmpty(model) && AgentPrograms.IsModelName(model)) arguments.AddRange(["--model", model]);
+        return arguments;
+    }
 
     /// <summary>The question for the agent: what the site wrote is fenced off and named as the site's, not the owner's.</summary>
     internal static string Prompt(TextRequest request)

@@ -8,6 +8,14 @@ public static class AgentPrograms
         !string.IsNullOrWhiteSpace(command) && command.Length <= 260
         && command.All(c => !char.IsControl(c) && c is not ('"' or '%' or '<' or '>' or '|'));
 
+    /// <summary>
+    /// A model name the wallet will pass to the agent's program as <c>--model name</c>: letters, digits and <c>. _ : / -</c>, starting with a letter or digit
+    /// (so it can never be read as another option), at most 64 characters. It goes into a command line, so nothing else is allowed.
+    /// </summary>
+    public static bool IsModelName(string? name) =>
+        !string.IsNullOrEmpty(name) && name.Length <= 64 && char.IsAsciiLetterOrDigit(name[0])
+        && name.All(c => char.IsAsciiLetterOrDigit(c) || c is '.' or '_' or ':' or '/' or '-');
+
     /// <summary>The full path of the program: the path itself when it is one, else the first match on PATH (.exe, .cmd, .bat). Null when there is none.</summary>
     public static string? Resolve(string? command)
     {

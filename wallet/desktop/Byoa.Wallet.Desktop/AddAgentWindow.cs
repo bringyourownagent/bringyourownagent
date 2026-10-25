@@ -18,6 +18,7 @@ sealed class AddAgentWindow : Window
     readonly WalletServices _w;
     readonly TextBox _name = new() { Watermark = "A name you will know it by, for example My Claude", MinWidth = 380 };
     readonly TextBox _program = new() { Watermark = @"ccodeglm.cmd, claude, or C:\path\to\claude.exe", MinWidth = 300 };
+    readonly TextBox _model = new() { Watermark = "Optional: opus, sonnet, haiku, or a model's name", MinWidth = 300 };
     readonly TextBlock _status = new() { TextWrapping = TextWrapping.Wrap };
     readonly Button _test;
     readonly Button _save;
@@ -38,10 +39,13 @@ sealed class AddAgentWindow : Window
         AutomationProperties.SetName(_name, "Name of the agent");
         AutomationProperties.SetAutomationId(_program, "AddAgentProgram");
         AutomationProperties.SetName(_program, "Program that runs the agent");
+        AutomationProperties.SetAutomationId(_model, "AddAgentModel");
+        AutomationProperties.SetName(_model, "Model the agent is asked to use");
         AutomationProperties.SetAutomationId(_status, "AddAgentStatus");
         _status.Classes.Add("small");
         _name.TextChanged += (_, _) => Refresh();
         _program.TextChanged += (_, _) => Refresh();
+        _model.TextChanged += (_, _) => Refresh();
 
         var browse = Ui.Button("Find…", "deny", "AddAgentBrowse", async () =>
         {
@@ -63,6 +67,8 @@ sealed class AddAgentWindow : Window
                     "A site gets it only if you give it that site, and only if the site says what it will ask. Claude Code and the launchers built on it work so far.", "muted"),
             Ui.Column(4, Ui.Text("Name", "label"), _name),
             Ui.Column(4, Ui.Text("Program that runs it", "label"), Ui.Row(8, _program, browse)),
+            Ui.Column(4, Ui.Text("Model (optional)", "label"), _model,
+                Ui.Wrap("Passed to the program as --model. Leave it empty for the program's own choice. Add the same program twice with different models, say Opus and Sonnet, to have both.", "muted", "small")),
             Ui.Box("field", Ui.Column(4,
                 Ui.Text("What the wallet lets it do", "strong"),
                 Ui.Wrap("One question at a time. It may search the web and read web pages, and nothing else: no files, no commands, none of your other tools, and not this wallet. " +
@@ -84,15 +90,20 @@ sealed class AddAgentWindow : Window
         return new SourceSetting
         {
             Id = AgentPrograms.IdOf(name), Kind = SourceKinds.Agent, Model = AgentPrograms.Slug(name), Label = name, Skills = [Vocabulary.Generate],
-            AgentCommand = program, AgentFlavor = AgentFlavors.ClaudeCode, Offer = false, EndpointConfirmed = true,
+            AgentCommand = program, AgentFlavor = AgentFlavors.ClaudeCode, AgentModel = ModelText(), Offer = false, EndpointConfirmed = true,
         };
     }
 
+    string? ModelText() => string.IsNullOrWhiteSpace(_model.Text) ? null : _model.Text.Trim();
+
     void Refresh()
     {
-        var ready = !_busy && Draft() is not null && !string.IsNullOrWhiteSpace(_name.Text);
+        var modelOk = ModelText() is null || AgentPrograms.IsModelName(ModelText());
+        if (!modelOk) Say("The model name may have letters, digits and . _ : / - only, and must start with a letter or a digit.", bad: true);
+        else if (_status.Text is { Length: > 0 } && _status.Text.StartsWith("The model name", StringComparison.Ordinal)) Say("");
+        var ready = !_busy && modelOk && Draft() is not null && !string.IsNullOrWhiteSpace(_name.Text);
         _save.IsEnabled = ready;
-        _test.IsEnabled = !_busy && Draft() is not null;
+        _test.IsEnabled = !_busy && modelOk && Draft() is not null;
     }
 
     void Say(string text, bool bad = false)
@@ -103,7 +114,7 @@ sealed class AddAgentWindow : Window
 
     void Save()
     {
-        var result = _w.Registry.AddAgentSource(_name.Text, AgentFlavors.ClaudeCode, _program.Text ?? "");
+        var result = _w.Registry.AddAgentSource(_name.Text, AgentFlavors.ClaudeCode, _program.Text ?? "", ModelText());
         if (!result.Ok)
         {
             Say(result.Message, bad: true);

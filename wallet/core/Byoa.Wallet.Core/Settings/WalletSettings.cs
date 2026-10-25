@@ -242,6 +242,9 @@ public sealed class SourceSetting
 
     /// <summary>For an agent source: how to talk to the program, one of <c>AgentFlavors</c>.</summary>
     public string? AgentFlavor { get; set; }
+
+    /// <summary>For an agent source: the model the program is asked to use (<c>--model opus</c>), or null for the program's own choice. Only the visitor sets it.</summary>
+    public string? AgentModel { get; set; }
 }
 
 /// <summary>

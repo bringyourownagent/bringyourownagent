@@ -309,7 +309,8 @@ public sealed class SourceSet : IDisposable
         if (kind == SourceKinds.Agent)
         {
             return string.IsNullOrWhiteSpace(setting.AgentCommand) ? null
-                : new AgentCliSource(new AgentCliSource.SourceSettingView(setting.Id, setting.Model.Trim(), setting.Label, setting.AgentFlavor ?? "", setting.AgentCommand.Trim()),
+                : new AgentCliSource(new AgentCliSource.SourceSettingView(setting.Id, setting.Model.Trim(), setting.Label, setting.AgentFlavor ?? "", setting.AgentCommand.Trim(),
+                        string.IsNullOrWhiteSpace(setting.AgentModel) ? null : setting.AgentModel.Trim()),
                     Path.Combine(WalletPaths.Home, "agent-work"));
         }
 

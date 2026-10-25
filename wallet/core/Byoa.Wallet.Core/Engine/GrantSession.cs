@@ -10,7 +10,12 @@ namespace Byoa.Wallet.Engine;
 /// <paramref name="SourceIds"/> are the roads to the same model (the visitor's choice first), tried in order.
 /// </summary>
 /// <param name="ModelId">The canonical name; shown to the site only when it asked and the visitor allows.</param>
-public sealed record GrantedModel(string Ref, IReadOnlyList<string> SourceIds, string Name, string ModelId, string Runs, bool Paid);
+public sealed record GrantedModel(string Ref, IReadOnlyList<string> SourceIds, string Name, string ModelId, string Runs, bool Paid)
+{
+    /// <summary>"agent" when the visitor's own AI agent answers for this entry (it may search the web and takes longer), else "model".
+    /// The site is told even when the names are hidden: it shows the visitor which of his entries can investigate.</summary>
+    public string Kind => SourceIds.Any(id => id.StartsWith("agent:", StringComparison.Ordinal)) ? "agent" : "model";
+}
 
 /// <summary>
 /// One granted session: what a page got from <c>byoa.request</c>. It lives in memory only (a restart of the wallet
@@ -120,7 +125,7 @@ public sealed class GrantSession
         };
     }
 
-    /// <summary>The models of every skill that has some, as <c>{ "text.generate": [ { ref, name, id, runs } ] }</c>; null when no skill has any.</summary>
+    /// <summary>The models of every skill that has some, as <c>{ "text.generate": [ { ref, name, id, runs, kind } ] }</c>; null when no skill has any.</summary>
     public JsonObject? ModelsJson()
     {
         if (Models.Count == 0 || Models.All(m => m.Value.Count == 0)) return null;
@@ -138,6 +143,7 @@ public sealed class GrantSession
                     ["name"] = ShowNames ? m.Name : "Model " + (char)('A' + i % 26) + (i >= 26 ? (i / 26 + 1).ToString(CultureInfo.InvariantCulture) : ""),
                     ["id"] = ShowNames ? m.ModelId : null,
                     ["runs"] = m.Runs,
+                    ["kind"] = m.Kind,
                 });
             }
 

@@ -15,4 +15,4 @@ Every request goes through the guard first (see Agent guard). What the guard hol
 
 This is not the same as letting an agent manage the wallet (the page "My MCP"): that is an agent working for you on the wallet's settings. Here the agent works for a site, so it is kept on a short leash.
 
-Add an agent with the program that runs it: a launcher such as `ccodeglm.cmd`, or `claude.exe`. Press Test to ask it one question before you add it. Only you can add or change an agent: no agent can do it through the MCP bridge, because the program you name is one the wallet starts.
+Add an agent with the program that runs it: a launcher such as `ccodeglm.cmd`, or `claude.exe`. The Model field is optional: write `opus`, `sonnet`, `haiku` or a model's name, and the wallet starts the program with `--model` and that name. To have the same agent in two sizes, add it twice, with two names and two models. Press Test to ask it one question before you add it. Only you can add or change an agent: no agent can do it through the MCP bridge, because the program you name is one the wallet starts.

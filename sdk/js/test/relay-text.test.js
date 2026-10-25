@@ -30,8 +30,8 @@ test('the hello tells the limits and the models, and a connection keeps only wha
   });
   assert.deepEqual(wallet.grant.limits, { maxTextChars: 100000, maxParallelCalls: 5 });
   assert.deepEqual(wallet.grant.models, [
-    { ref: 'm1', name: 'Claude Opus', id: 'anthropic/claude-opus-4.6', runs: 'api-key' },
-    { ref: 'm2', name: 'Model B', id: null, runs: 'local' },
+    { ref: 'm1', name: 'Claude Opus', id: 'anthropic/claude-opus-4.6', runs: 'api-key', kind: 'model' },
+    { ref: 'm2', name: 'Model B', id: null, runs: 'local', kind: 'model' },
   ]);
 });
 
