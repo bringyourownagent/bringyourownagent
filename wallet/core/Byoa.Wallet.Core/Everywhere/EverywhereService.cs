@@ -40,6 +40,10 @@ public sealed class EverywhereService : IDisposable
     EverywhereStatus _status = EverywhereStatus.Off;
     bool _started;
 
+    // What is bound now. The hook's thread reads it on every hotkey, so it is replaced as a whole and read without a lock (or the settings' lock,
+    // which a write to disk can hold for a moment).
+    volatile IReadOnlyDictionary<EverywhereFeature, Hotkey> _bound = new Dictionary<EverywhereFeature, Hotkey>();
+
     public EverywhereService(SettingsStore store, HotkeyMonitor monitor, DictationController dictation, SelectionCheckController check,
         IHotkeyProbe? probe = null, IKeyboard? keyboard = null)
     {
@@ -90,6 +94,7 @@ public sealed class EverywhereService : IDisposable
             _status = status;
         }
 
+        _bound = bindings;
         _monitor.SetBindings(bindings);
         if (!dictationOn) _ = _dictation.CancelAsync();
         if (!checkOn) _ = _check.CloseAsync();
@@ -110,19 +115,13 @@ public sealed class EverywhereService : IDisposable
         // The hook's thread: only hand the work on.
         if (feature == EverywhereFeature.Dictation) _ = _dictation.PressAsync();
         else _ = _check.HotkeyAsync();
-        if (_keyboard is not null && HotkeyOf(feature) is { } hotkey && hotkey.Modifiers.HasFlag(HotkeyModifiers.Alt))
+        if (_keyboard is not null && _bound.TryGetValue(feature, out var hotkey) && hotkey.Modifiers.HasFlag(HotkeyModifiers.Alt))
             ThreadPool.QueueUserWorkItem(_ => _keyboard.MaskMenuKey());
     }
 
     void OnReleased(EverywhereFeature feature)
     {
         if (feature == EverywhereFeature.Dictation) _ = _dictation.ReleaseAsync();
-    }
-
-    Hotkey? HotkeyOf(EverywhereFeature feature)
-    {
-        var text = _store.Read(s => feature == EverywhereFeature.Dictation ? s.Everywhere.DictationHotkey : s.Everywhere.CheckHotkey);
-        return Hotkey.TryParse(text, out var hotkey, out _) ? hotkey : null;
     }
 
     public void Dispose()

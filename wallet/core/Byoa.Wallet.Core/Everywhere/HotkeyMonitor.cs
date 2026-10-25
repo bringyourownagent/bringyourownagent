@@ -14,7 +14,7 @@ public sealed class HotkeyMonitor : IDisposable
     Dictionary<EverywhereFeature, Hotkey> _bindings = [];
     EverywhereFeature? _active;       // the chord held now
     Hotkey _activeKey;
-    int _swallowUp = -1;              // a key whose "down" was kept from the programs: its "up" is kept too
+    readonly HashSet<int> _swallowUps = [];   // keys whose "down" was kept from the programs: their "up" is kept too
     bool _started;
 
     public HotkeyMonitor(IKeyboardHook hook) => _hook = hook;
@@ -46,7 +46,7 @@ public sealed class HotkeyMonitor : IDisposable
         {
             _bindings = new Dictionary<EverywhereFeature, Hotkey>(bindings);
             _active = null;
-            _swallowUp = -1;
+            _swallowUps.Clear();
             _down.Clear();
             start = _bindings.Count > 0 && !_started;
             stop = _bindings.Count == 0 && _started;
@@ -81,7 +81,7 @@ public sealed class HotkeyMonitor : IDisposable
                         if (key.VirtualKey != e.VirtualKey || key.Modifiers != held) continue;
                         _active = feature;
                         _activeKey = key;
-                        _swallowUp = e.VirtualKey;
+                        _swallowUps.Add(e.VirtualKey);
                         swallow = true;
                         raise = () => Pressed?.Invoke(feature);
                         break;
@@ -91,7 +91,7 @@ public sealed class HotkeyMonitor : IDisposable
                 // Esc cancels, also while the chord is still held (hold to talk: Ctrl+Alt are down); with other modifiers it is the program's.
                 if (!swallow && e.VirtualKey == HotkeyKeys.Escape && (held == HotkeyModifiers.None || _active is not null) && WantsEscape?.Invoke() == true)
                 {
-                    _swallowUp = e.VirtualKey;
+                    _swallowUps.Add(e.VirtualKey);
                     swallow = true;
                     raise = () => EscapePressed?.Invoke();
                 }
@@ -105,11 +105,7 @@ public sealed class HotkeyMonitor : IDisposable
                     raise = () => Released?.Invoke(feature);
                 }
 
-                if (e.VirtualKey == _swallowUp)
-                {
-                    _swallowUp = -1;
-                    swallow = true;
-                }
+                if (_swallowUps.Remove(e.VirtualKey)) swallow = true;
             }
         }
 

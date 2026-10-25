@@ -152,8 +152,8 @@ public class EverywhereMonitorTests
         Assert.True(_hook.Send(0x1B, false));
         Assert.Equal(["press:Dictation", "esc"], _events);
 
-        _hook.Send(Space, false);                           // and letting go afterwards is still a release (the machine ignores it)
-        Assert.Equal(["press:Dictation", "esc", "release:Dictation"], _events);
+        Assert.True(_hook.Send(Space, false));              // the chord key's own "up" is still kept: its "down" was
+        Assert.Equal(["press:Dictation", "esc", "release:Dictation"], _events);   // and letting go afterwards is still a release (the machine ignores it)
     }
 
     [Fact]
