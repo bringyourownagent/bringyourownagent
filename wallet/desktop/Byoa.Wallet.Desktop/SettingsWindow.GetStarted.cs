@@ -305,9 +305,10 @@ sealed partial class SettingsWindow
         var result = _w.Registry.AddSource(new SourceDraft(ApiServices.Kind, GetStarted.DemoModel(preset.Id), null, [Vocabulary.Generate], null, null, preset.Id));
         if (result.Ok)
         {
-            // Free but not private: it waits out of the sites' default set until the visitor ticks it for a site.
+            // Free but not private: it is not offered in a site's set of models (the visitor ticks it for a site), but it is in the wallet's own route
+            // after his own models, so the Everywhere check and a site with no choice of models work out of the box.
             _w.Store.Update(s => { var one = s.Source(result.Id!); if (one is not null) one.Offer = false; });
-            _getStartedNote = "The demo model is on My models. It answers for free; switch it on for a site in the site's window.";
+            _getStartedNote = "The demo model is on My models. It answers for free when none of your own models does; you can also tick it for a site in the site's window.";
         }
         else
         {

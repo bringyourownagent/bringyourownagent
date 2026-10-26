@@ -24,7 +24,7 @@ Select text anywhere, press the second hotkey (Ctrl+Alt+K to begin with). The wa
 
 ## Models, limits and money
 
-Everywhere uses your routes and your limits like a site does. Its calls are in the Activity page under the name **Everywhere**, and count in the wallet's limits for the day. By default it uses only models on this computer or on a home server. If you tick **Let Everywhere use a paid source**, a paid source of your route may answer when no model of yours does, and the wallet asks before each paid call.
+Everywhere uses your routes and your limits like a site does. Its calls are in the Activity page under the name **Everywhere**, and count in the wallet's limits for the day. It tries the models on this computer or on a home server first; sound never leaves them. If none of them answers, the text check may use a free demo service on the internet (LLM7, OVHcloud), which may keep the text it is sent; untick **Let the check use a free demo model** to stop that. If you tick **Let Everywhere use a paid source**, a paid source of your route may answer when no model of yours does, and the wallet asks before each paid call.
 
 If no speech model or no text model is set up, the window says so in plain words: add one in My models.
 

@@ -24,7 +24,8 @@ sealed partial class SettingsWindow
 
     const string CheckExplained =
         "While the check is on, the wallet watches for its hotkey in every program, and only when you press it does it copy the text you selected. " +
-        "It asks your own text model to act on that text and shows the answer next to your cursor, and it changes your selection only if you press Replace selection.";
+        "It asks your own text model to act on that text and shows the answer next to your cursor, and it changes your selection only if you press Replace selection. " +
+        "If none of your models answers, it may ask a free demo service on the internet instead; such a service may keep the text, and you can switch that off below.";
 
     /// <summary>The feature whose first-time explanation is open now (not yet turned on).</summary>
     readonly HashSet<EverywhereFeature> _explaining = [];
@@ -194,7 +195,18 @@ sealed partial class SettingsWindow
     {
         var card = Ui.Column(8);
         card.Children.Add(Ui.Wrap("Everywhere uses your own routes and your limits, like a site does. Its calls are in Activity under the name Everywhere and count in the wallet's limits for the day. " +
-                                  "By default it uses only models on this computer or on a home server, so no sound and no text goes to a paid service.", "muted"));
+                                  "It tries the models on this computer or on a home server first. Sound never leaves them, and nothing goes to a paid service unless you allow it below.", "muted"));
+        var free = new CheckBox
+        {
+            Content = "Let the check use a free demo model (LLM7, OVHcloud) when no model of mine answers. These public services may keep the text they are sent: it is not for private text",
+            IsChecked = settings.AllowFreeCloud,
+        };
+        AutomationProperties.SetAutomationId(free, "EverywhereAllowFreeCloud");
+        free.IsCheckedChanged += (_, _) =>
+        {
+            if (_w.Store.Read(s => s.Everywhere.AllowFreeCloud) != (free.IsChecked == true)) _w.Store.Update(s => s.Everywhere.AllowFreeCloud = free.IsChecked == true);
+        };
+        card.Children.Add(free);
         var allow = new CheckBox { Content = "Let Everywhere use a paid source when no model of mine answers (the wallet asks before each paid call)", IsChecked = settings.AllowPaid };
         AutomationProperties.SetAutomationId(allow, "EverywhereAllowPaid");
         allow.IsCheckedChanged += (_, _) =>

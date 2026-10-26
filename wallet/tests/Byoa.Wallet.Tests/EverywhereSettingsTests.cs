@@ -44,7 +44,21 @@ public class EverywhereSettingsTests
         Assert.Equal(EverywhereSettings.HoldToTalk, s.DictationMode);
         Assert.Null(s.DictationLanguage);                   // automatic
         Assert.False(s.AllowPaid);
+        Assert.True(s.AllowFreeCloud);                      // the check works out of the box on a free demo service after his own models
         Assert.False(s.PaidWithoutAsking);
+    }
+
+    [Fact]
+    public void AFreeCloudChoiceSurvivesTheRoundTripAndAnOldFileGetsTheDefault()
+    {
+        var store = new SettingsStore(null);
+        store.Update(s => s.Everywhere.AllowFreeCloud = false);
+        Assert.False(store.Snapshot().Everywhere.AllowFreeCloud);
+        Assert.False(store.Read(s => s.Everywhere.Clone().AllowFreeCloud));
+
+        var path = Path.Combine(TestFolder.New(), "settings.json");
+        File.WriteAllText(path, """{ "version": 1, "everywhere": { "checkOn": true } }""");
+        Assert.True(new SettingsStore(path).Read(s => s.Everywhere.AllowFreeCloud));
     }
 
     [Fact]

@@ -65,6 +65,9 @@ public sealed record DecisionAnswer(IReadOnlyDictionary<string, double> Yes, dec
 public sealed class DecisionException(string message, decimal cost = 0, Exception? inner = null) : Exception(message, inner)
 {
     public decimal Cost { get; } = cost;
+
+    /// <summary>The judge was not asked to read the input because it is longer than the judge can take in: the guard holds it for the visitor.</summary>
+    public bool TooLong { get; init; }
 }
 
 /// <summary>A model that answers true-or-false statements about a state with a probability (OpenRouter's Decisions API).</summary>
@@ -84,6 +87,9 @@ public static class GuardQuestions
     public const string Harm = "harm";
     public const string Redirect = "redirect";
     public const string PurposeRisk = "purpose_risk";
+
+    /// <summary>Not a statement the judge is asked: the finding of an input too long for the judge to read in full.</summary>
+    public const string TooLong = "too_long";
 
     public static readonly string[] ForRequest = [OnPurpose, Harm, Redirect];
     public static readonly string[] All = [OnPurpose, Harm, Redirect, PurposeRisk];
@@ -128,6 +134,7 @@ public static class GuardQuestions
         Harm => "it could harm your computer, your data or your accounts",
         Redirect => "it tries to give your agent orders",
         PurposeRisk => "the goal the site states looks risky for your agent",
+        TooLong => "it is too long for the guard's model to read in full",
         _ => name,
     };
 }
@@ -152,7 +159,7 @@ public sealed record GuardThresholds(double HarmAbove, double RedirectAbove, dou
         GuardQuestions.Harm => probability > HarmAbove,
         GuardQuestions.Redirect => probability > RedirectAbove,
         GuardQuestions.PurposeRisk => probability > PurposeRiskAbove,
-        _ => true,
+        _ => true,                                          // too_long and anything unknown: the visitor decides
     };
 }
 
@@ -234,7 +241,10 @@ public sealed class GuardLedger
 /// </summary>
 public sealed class GuardService(SettingsStore store, GuardLedger ledger, IDecisionClient client, TimeProvider? time = null, Func<string, int, IDecisionClient?>? judgeClient = null) : IGuard
 {
-    /// <summary>A long request is sent whole up to this many characters; more than that keeps its start and its end (where an order is hidden).</summary>
+    /// <summary>
+    /// Jev takes one call: a request longer than this many characters is sent as its start and its end (where an order is hidden). A judge of the visitor's own
+    /// reads a long request whole, window by window (see <c>ModelDecisionClient</c>).
+    /// </summary>
     const int HeadChars = 20_000;
 
     const int TailChars = 10_000;
@@ -246,7 +256,7 @@ public sealed class GuardService(SettingsStore store, GuardLedger ledger, IDecis
         var state = new JsonObject
         {
             ["site"] = new JsonObject { ["origin"] = request.Origin, ["declared_purpose"] = request.Purpose },
-            ["request"] = new JsonObject { ["text"] = Shorten(request.Text) },
+            ["request"] = new JsonObject { ["text"] = request.Text },
             ["agent"] = new JsonObject { ["abilities"] = request.Abilities },
         };
         return AskAsync(state, GuardQuestions.ForRequest, ct);
@@ -256,7 +266,7 @@ public sealed class GuardService(SettingsStore store, GuardLedger ledger, IDecis
     {
         var state = new JsonObject
         {
-            ["site"] = new JsonObject { ["origin"] = origin, ["declared_purpose"] = Shorten(purpose) },
+            ["site"] = new JsonObject { ["origin"] = origin, ["declared_purpose"] = purpose },
             ["agent"] = new JsonObject { ["abilities"] = abilities },
         };
         return AskAsync(state, [GuardQuestions.PurposeRisk], ct);
@@ -277,7 +287,14 @@ public sealed class GuardService(SettingsStore store, GuardLedger ledger, IDecis
         DecisionAnswer answer;
         try
         {
-            answer = await judge.AskAsync(state, statements, ct).ConfigureAwait(false);
+            answer = await judge.AskAsync(isJev ? ShortenedForJev(state) : state, statements, ct).ConfigureAwait(false);
+        }
+        catch (DecisionException e) when (e.TooLong)
+        {
+            // Not "unavailable": the guard is there, it just cannot read this much. What it cannot read is the visitor's to decide.
+            ledger.Add(day, e.Cost);
+            return new GuardVerdict(GuardOutcome.Hold,
+                [new GuardFinding(GuardQuestions.TooLong, GuardQuestions.Label(GuardQuestions.TooLong), 1, true)], e.Cost);
         }
         catch (DecisionException e)
         {
@@ -287,7 +304,7 @@ public sealed class GuardService(SettingsStore store, GuardLedger ledger, IDecis
 
         ledger.Add(day, answer.Cost);
         var thresholds = GuardThresholds.For(settings.Strictness);
-        var findings = new List<GuardFinding>();
+        var findings = new List<GuardFinding>();                // too_long is not here: it comes only with the exception above
         foreach (var name in names)
         {
             if (!answer.Yes.TryGetValue(name, out var probability) || double.IsNaN(probability) || probability is < 0 or > 1)
@@ -313,6 +330,17 @@ public sealed class GuardService(SettingsStore store, GuardLedger ledger, IDecis
 
         isJev = false;
         return judgeClient?.Invoke(name, settings.MaxInputChars);
+    }
+
+    /// <summary>Jev reads one call: the state with its long text (the request, or a site's goal) cut to its start and its end.</summary>
+    static JsonObject ShortenedForJev(JsonObject state)
+    {
+        var copy = (JsonObject)state.DeepClone();
+        if (copy["request"] is JsonObject request && request["text"] is JsonValue text && text.TryGetValue<string>(out var body))
+            request["text"] = Shorten(body);
+        if (copy["site"] is JsonObject site && site["declared_purpose"] is JsonValue goal && goal.TryGetValue<string>(out var purpose))
+            site["declared_purpose"] = Shorten(purpose);
+        return copy;
     }
 
     static string Shorten(string text) =>

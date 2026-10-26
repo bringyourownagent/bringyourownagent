@@ -45,9 +45,16 @@ public sealed class EverywhereSettings
 
     /// <summary>
     /// True: when no model on this computer answers, a paid source of his route may be used (the wallet asks before each paid call, as it does for
-    /// a site). False, the default: Everywhere runs only on models on this computer and home servers, so no audio and no text leaves them.
+    /// a site). False, the default: Everywhere never uses a paid source, so no audio goes to one and no text goes to one (the free demo services are
+    /// <see cref="AllowFreeCloud"/>'s business).
     /// </summary>
     public bool AllowPaid { get; set; }
+
+    /// <summary>
+    /// True, the default: the text check may use a free demo service (LLM7, OVHcloud: cloud, no key, no cost) after the models on this computer, so it
+    /// works out of the box. The service may keep what is sent; the page says so next to this switch. Sound is never sent to a service because of it.
+    /// </summary>
+    public bool AllowFreeCloud { get; set; } = true;
 
     /// <summary>The visitor answered "Always" to the question about a paid call: it is not asked again. Only counts while <see cref="AllowPaid"/> is on.</summary>
     public bool PaidWithoutAsking { get; set; }
@@ -58,7 +65,7 @@ public sealed class EverywhereSettings
         DictationOn = DictationOn, DictationExplained = DictationExplained, DictationHotkey = DictationHotkey, DictationMode = DictationMode,
         DictationLanguage = DictationLanguage, CheckOn = CheckOn, CheckExplained = CheckExplained, CheckHotkey = CheckHotkey,
         Actions = Actions.Select(a => new CheckAction { Name = a.Name, Prompt = a.Prompt }).ToList(),
-        AllowPaid = AllowPaid, PaidWithoutAsking = PaidWithoutAsking,
+        AllowPaid = AllowPaid, AllowFreeCloud = AllowFreeCloud, PaidWithoutAsking = PaidWithoutAsking,
     };
 
     public static List<CheckAction> DefaultActions() =>

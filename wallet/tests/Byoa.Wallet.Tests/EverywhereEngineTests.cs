@@ -308,6 +308,36 @@ public class EverywhereEngineTests
     }
 
     [Fact]
+    public async Task AFreeDemoModelAnswersTheCheckWhenNoModelOfTheVisitorsDoesAndNothingIsAsked()
+    {
+        _model.Fail = true;
+        var demo = new FakeTextSource("t-demo", Runs.ApiKey) { Answers = new Queue<string>(["From the demo."]) };
+        var engine = Engine(text: [_model, demo, _paidModel]);
+
+        var result = await engine.GenerateOwnAsync([new ChatMessage("user", "hi")]);
+
+        Assert.True(result.Ok);
+        Assert.Equal("From the demo.", result.Text);
+        Assert.Equal(1, demo.Calls);
+        Assert.Equal(0, _paidModel.Calls);                  // a free demo is not a paid source
+        Assert.Equal(0, _ui.PaidQuestions);
+    }
+
+    [Fact]
+    public async Task WithFreeCloudSwitchedOffAFreeDemoModelIsNotReached()
+    {
+        _model.Fail = true;
+        var demo = new FakeTextSource("t-demo", Runs.ApiKey) { Answers = new Queue<string>(["From the demo."]) };
+        _store.Update(s => s.Everywhere.AllowFreeCloud = false);
+        var engine = Engine(text: [_model, demo]);
+
+        var result = await engine.GenerateOwnAsync([new ChatMessage("user", "hi")]);
+
+        Assert.False(result.Ok);
+        Assert.Equal(0, demo.Calls);
+    }
+
+    [Fact]
     public async Task NoTextModelAtAllIsAPlainMessage()
     {
         var engine = Engine(text: []);

@@ -72,5 +72,5 @@ public static class GetStarted
     /// <summary>The one plain confirmation before a demo preset is added: it names the risks of a public service.</summary>
     public const string DemoWarning =
         "A free demo model answers on a public service, with no key and no sign-up: that service may keep what you send, it is slow and limited, "
-        + "and it is not for private text. Nothing you allow for sites changes until you switch it on for a site. Add it?";
+        + "and it is not for private text. It answers only when none of your own models does, and never for a site that asks for local-only privacy. Add it?";
 }

@@ -5,6 +5,7 @@ using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Byoa.Wallet.Engine;
+using Byoa.Wallet.Guard;
 
 namespace Byoa.Wallet.Desktop;
 
@@ -38,7 +39,7 @@ sealed class GuardWindow : Window
         var noticed = Ui.Column(3, Ui.Text("What the guard noticed:", "strong"));
         foreach (var finding in model.Findings)
         {
-            var line = Ui.Wrap("• " + finding.Label + " (" + finding.Percent + ")", "small");
+            var line = Ui.Wrap("• " + finding.Label + (finding.Question == GuardQuestions.TooLong ? "" : " (" + finding.Percent + ")"), "small");
             AutomationProperties.SetAutomationId(line, "GuardFinding-" + finding.Question);
             noticed.Children.Add(line);
         }

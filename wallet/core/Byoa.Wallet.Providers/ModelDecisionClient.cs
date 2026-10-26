@@ -11,7 +11,8 @@ namespace Byoa.Wallet.Providers;
 /// Ollama), or a paid one behind his key. Unlike Jev it writes text, so it gets the guard's statements in one prompt and
 /// must answer strict JSON with a chance per statement; anything else — reasoning around the JSON, code fences, words —
 /// is a failure the guard treats as "unavailable", never a pass, and none of the model's own text leaks anywhere.
-/// An input longer than <c>maxInputChars</c> is judged in three chunks (start, middle, end) combined conservatively.
+/// An input longer than <c>maxInputChars</c> is read in overlapping windows, one call each, combined conservatively; too long for
+/// <see cref="MaxWindows"/> windows it is held for the visitor.
 /// A local model costs nothing; a paid source's own cost comes back and is counted like Jev's.
 /// </summary>
 public sealed class ModelDecisionClient(ITextSource source, int maxInputChars) : IDecisionClient
@@ -36,30 +37,57 @@ public sealed class ModelDecisionClient(ITextSource source, int maxInputChars) :
         if (field is null || text.Length <= MaxInputChars)
             return await AskOnce(state, statements, ct).ConfigureAwait(false);
 
-        // Beyond one window the model sees only pieces: judge start, middle and end (orders hide at the ends), and take the
-        // worse side of each statement, so no piece can quietly let the request through.
-        var chars = MaxInputChars;
-        var middle = (text.Length - chars) / 2;
-        var pieces = new[] { text[..chars], text.Substring(middle, chars), text[^chars..] }.Distinct().ToList();
-        var asked = new Dictionary<string, DecisionAnswer>(StringComparer.Ordinal);
-        foreach (var piece in pieces)
+        // Beyond one window the model reads the text window by window, the windows overlapping so that an order cut in two by a
+        // border is whole in one of them, and takes the worse side of each statement, so no window can quietly let the request through.
+        // A text that would need more windows than the judge is given is not guessed at: the guard holds it for the visitor.
+        var windows = Windows(text, MaxInputChars);
+        if (windows.Count > MaxWindows)
+            throw new DecisionException("the request is too long for the guard to read in full") { TooLong = true };
+
+        var parts = field.Split('.');
+        var answers = new List<DecisionAnswer>(windows.Count);
+        for (var i = 0; i < windows.Count; i++)
         {
             var one = (JsonObject)state.DeepClone();
-            var parts = field.Split('.');
-            ((JsonObject)one[parts[0]]!)[parts[1]] = piece;
-            asked[piece] = await AskOnce(one, statements, ct).ConfigureAwait(false);
+            ((JsonObject)one[parts[0]]!)[parts[1]] = windows[i];
+            answers.Add(await AskOnce(one, statements, ct, windows.Count > 1 ? PartNote(field, i + 1, windows.Count) : null).ConfigureAwait(false));
         }
 
-        var cost = asked.Values.Sum(a => a.Cost);
         var combined = new Dictionary<string, double>(StringComparer.Ordinal);
         foreach (var name in statements.Keys)
         {
-            var chances = pieces.Select(piece => asked[piece].Yes[name]);
+            var chances = answers.Select(a => a.Yes[name]);
             combined[name] = name == GuardQuestions.OnPurpose ? chances.Min() : chances.Max();
         }
 
-        return new DecisionAnswer(combined, cost);
+        return new DecisionAnswer(combined, answers.Sum(a => a.Cost));
     }
+
+    /// <summary>The most windows one input is read in: more than this is held for the visitor instead of taking minutes of the judge's time.</summary>
+    public const int MaxWindows = 12;
+
+    /// <summary>
+    /// How much of the end of one window is read again at the start of the next: a tenth of the window, so a judge that reads a lot gets up to 500
+    /// characters twice and one that reads little (a window of 500) still gets 50, never fewer than 30.
+    /// </summary>
+    internal static int Overlap(int window) => Math.Clamp(window / 10, 30, 500);
+
+    /// <summary>The text cut into windows of at most <paramref name="window"/> characters, each starting <see cref="Overlap"/> characters before the last one ended.</summary>
+    internal static IReadOnlyList<string> Windows(string text, int window)
+    {
+        var windows = new List<string>();
+        var step = window - Overlap(window);
+        for (var start = 0; ; start += step)
+        {
+            var end = Math.Min(start + window, text.Length);
+            windows.Add(text[start..end]);
+            if (end == text.Length) return windows;
+        }
+    }
+
+    static string PartNote(string field, int part, int of) =>
+        "`" + field + "` is long, so you see part " + part + " of " + of + " of it; the parts overlap a little and the others are judged on their own. " +
+        "Judge only what you see.";
 
     /// <summary>
     /// The field the input is judged by, when it alone is longer than one window: the request's text, else a site's goal.
@@ -75,7 +103,7 @@ public sealed class ModelDecisionClient(ITextSource source, int maxInputChars) :
 
     int MaxInputChars => Math.Max(MinInputChars, maxInputChars);
 
-    async Task<DecisionAnswer> AskOnce(JsonObject state, IReadOnlyDictionary<string, string> statements, CancellationToken ct)
+    async Task<DecisionAnswer> AskOnce(JsonObject state, IReadOnlyDictionary<string, string> statements, CancellationToken ct, string? partNote = null)
     {
         using var limit = CancellationTokenSource.CreateLinkedTokenSource(ct);
         limit.CancelAfter(Timeout);
@@ -85,7 +113,7 @@ public sealed class ModelDecisionClient(ITextSource source, int maxInputChars) :
             answer = await source.GenerateAsync(new TextRequest(
             [
                 new ChatMessage("system", SystemPrompt),
-                new ChatMessage("user", Prompt(state, statements)),
+                new ChatMessage("user", Prompt(state, statements, partNote)),
             ], MaxAnswerTokens, 0, null, null, Thinking: false), limit.Token).ConfigureAwait(false);
         }
         catch (TextSourceException e)
@@ -105,7 +133,7 @@ public sealed class ModelDecisionClient(ITextSource source, int maxInputChars) :
     }
 
     /// <summary>The prompt, the same shape for every source: the call as JSON, then the statements, then the JSON-only answer.</summary>
-    internal static string Prompt(JsonObject state, IReadOnlyDictionary<string, string> statements)
+    internal static string Prompt(JsonObject state, IReadOnlyDictionary<string, string> statements, string? partNote = null)
     {
         var purpose = state["request"] is null;
         var lines = new List<string>
@@ -116,12 +144,14 @@ public sealed class ModelDecisionClient(ITextSource source, int maxInputChars) :
             "",
             "The facts of the call, as JSON:",
             "<<<STATE",
+            // The JSON writer escapes < and >, so a text that holds the closing marker cannot end the block early.
             state.ToJsonString(),
             "STATE>>>",
             "",
             "For each statement below, give the chance (a number from 0 to 1) that it is TRUE of " +
                 (purpose ? "`site.declared_purpose`" : "`request.text`") + ".",
         };
+        if (partNote is not null) lines.Insert(lines.Count - 1, partNote);
         foreach (var (name, text) in statements) lines.Add("- " + name + ": " + text);
         lines.Add("");
         lines.Add("Answer with one strict JSON object and nothing else: {" +

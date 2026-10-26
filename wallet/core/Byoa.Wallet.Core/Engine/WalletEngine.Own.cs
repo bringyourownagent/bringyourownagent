@@ -14,8 +14,10 @@ namespace Byoa.Wallet.Engine;
 /// is no consent, no grant and no site record; but the call goes through exactly what a site's call goes through after its grant: the gate, the daily
 /// limits (it counts as a site called "Everywhere": its calls and its money are in the totals and in the Activity page), the visitor's routes with
 /// their fallbacks, "never start a model for me", and one entry in the activity log. The entry never holds the audio or any text.
-/// By default it runs only on models on this computer or a home server (the manifest says <c>local-only</c> and no paid source is in the route); the
-/// visitor can allow a paid fallback on the Everywhere page, and then the wallet asks before each paid call, as it does for a site.
+/// By default it runs on models on this computer or a home server, and the text check may also use a free demo service (cloud, no key, no cost) after
+/// them while "free cloud" is on; it never uses a paid source unless the visitor allowed a paid fallback on the Everywhere page, and then the wallet asks
+/// before each paid call, as it does for a site. Dictation (sound) never leaves the computer unless a paid fallback is allowed. With "free cloud" off
+/// and no paid fallback the manifest says <c>local-only</c>.
 /// The text route never holds an agent: <c>PlainTextSources</c> leaves them out.
 /// </summary>
 public sealed partial class WalletEngine
@@ -94,7 +96,9 @@ public sealed partial class WalletEngine
         var own = OwnLimits(settings, Vocabulary.Generate, maxClipSeconds: null, maxTextChars: chars);
         var limits = own.Session.Limits ?? TextLimits.Defaults;
         if (chars > limits.InputChars) return OwnFailure(entry, Vocabulary.Generate, "invalid", "text too long for the wallet: at most " + limits.InputChars + " characters");
-        var sources = settings.Everywhere.AllowPaid ? PlainTextSources : PlainTextSources.Where(s => !s.Paid).ToList();
+        // Never a paid source unless he allowed it; a free demo service (cloud, no key, no cost) only while "free cloud" is on.
+        var sources = settings.Everywhere.AllowPaid ? PlainTextSources
+            : PlainTextSources.Where(s => !s.Paid && (settings.Everywhere.AllowFreeCloud || s.Runs != Byoa.Wallet.Sources.Runs.ApiKey)).ToList();
         var hold = new DailyHold(OwnOrigin);
         if (!HoldCall(hold, own.CallsPerDay)) return OwnFailure(entry, Vocabulary.Generate, "limit", "calls per day");
         try
@@ -125,7 +129,8 @@ public sealed partial class WalletEngine
     {
         var sitePerDay = Money.Parse(settings.Limits.SitePerDay, 0.20m);
         var walletPerDay = Money.Parse(settings.Limits.WalletPerDay, 1.00m);
-        var localOnly = !settings.Everywhere.AllowPaid;
+        // Sound never goes to a service on the quiet; a text may go to a free demo service while "free cloud" is on (it never goes to a paid one unasked).
+        var localOnly = skill == Vocabulary.Generate ? !(settings.Everywhere.AllowPaid || settings.Everywhere.AllowFreeCloud) : !settings.Everywhere.AllowPaid;
         var manifest = new JsonObject
         {
             ["byoa"] = "0.1-draft",
