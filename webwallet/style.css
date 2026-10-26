@@ -11,3 +11,6 @@ button.allow { font-weight: 600; }
 .models { max-height: 16rem; overflow: auto; border: 1px solid #8888; padding: .5rem; }
 .models label { display: block; padding: .15rem 0; }
 .problems, .notes, .activity { padding-left: 1.2rem; }
+.price { opacity: .75; }
+.price.free { color: #0a6b2d; opacity: 1; }
+.budget input, input[type="search"] { font: inherit; }

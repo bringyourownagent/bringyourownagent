@@ -218,7 +218,7 @@ site page (on S) ──opens──▶ https://wallet.<domain>/#link=…        (
 ### 5.2 Sign-in and where the key lives
 
 - **OpenRouter OAuth PKCE** (read from OpenRouter's documentation, not exercised tonight). The page makes a random `code_verifier`, keeps it in `sessionStorage`, and sends the visitor to `https://openrouter.ai/auth?callback_url=<the wallet's own page>&code_challenge=<base64url SHA-256>&code_challenge_method=S256&state=<random>`. OpenRouter returns to the callback with `code`; the page checks `state`, then `POST https://openrouter.ai/api/v1/auth/keys` with `{code, code_verifier, code_challenge_method}` and receives `{key}`. A free account is enough. The documentation does not describe a spending limit for keys made this way, so the wallet uses **only `:free` models unless the visitor ticks a paid one**, and tells him he can set a credit limit on the key at OpenRouter.
-- **The key** is stored in `localStorage` of the wallet's origin (IndexedDB would not be safer: any script of the origin can read both). It is read only at the moment of a request, never put in the DOM, a URL, a log or a message. "Sign out" removes it from the browser; revoking it at OpenRouter ends it everywhere.
+- **The key** is kept in the tab's `sessionStorage` of the wallet's origin, so it is gone when the tab is closed; only when the visitor ticks "Remember my key in this browser" is it also written to `localStorage` (IndexedDB would not be safer: any script of the origin can read both). It is read only at the moment of a request, never put in the DOM, a URL, a log or a message. "Sign out" removes it from the browser; revoking it at OpenRouter ends it everywhere.
 - **What it cannot be**: a native wallet's DPAPI file. The key is as exposed as the page's script. That is why section 5.3 matters.
 - **Free-tier limits** (OpenRouter's documentation, 25 October 2026): 20 requests a minute and 50 a day with fewer than 10 credits ever bought, 1,000 a day with at least 10. The wallet shows an HTTP 429 as "the free quota is used up" and answers the site's call with `ok:false`.
 
@@ -283,8 +283,8 @@ Not specified yet, only designed here: the rendezvous (B) and the relay (C). Bot
 ## 8. Questions for the owner
 
 1. **Refuse a handed-over link whose site shows no check code?** This draft only warns, more strongly. Refusing is safer and would make `connect.check` the price of being reachable from another device. It breaks nothing that works today (such a site cannot offer another-device links in practice). Recommended for the next version of the wallet.
-2. **A domain for the web wallet.** It needs its own origin. `wallet.bringyourownagent.org` would do if that host serves nothing else and sets no cookies; a separate registrable domain is safer.
-3. **A web wallet's name.** The wallet's brand is "Agent wallet". The tab should be "Agent wallet (web)" so a site and a visitor can tell it from the native one.
+2. **A domain for the web wallet.** *Decided by the owner on 26 October 2026: `wallet.bringyourownagent.org`* (that host serves nothing else and sets no cookies; a separate registrable domain would be safer still).
+3. **A web wallet's name.** *Decided by the owner on 26 October 2026: "Agent wallet (web)"*, so a site and a visitor can tell it from the native one.
 4. **Who maintains the free-model list.** The web wallet reads OpenRouter's public model list at run time; nothing is shipped.
 
 ## 9. What was built tonight

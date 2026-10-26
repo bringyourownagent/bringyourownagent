@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import {
-  checkCodeOf, createCrossDeviceBlock, DEFAULT_LABELS, isMobileBrowser, planCrossDevice, sessionOfLink, webWalletUrl,
+  checkCodeOf, createCrossDeviceBlock, DEFAULT_LABELS, DEFAULT_WEB_WALLET, isMobileBrowser, planCrossDevice, sessionOfLink, webWalletUrl,
 } from '../src/site/crossdevice.js';
 import { encodeQr, qrPath } from '../src/site/qr.js';
 
@@ -55,7 +55,7 @@ const phone = (extra = {}) => ({ userAgent: 'Mozilla/5.0 (Linux; Android 15; Pix
 
 function block(options, nav = desktop()) {
   const document = fakeDocument();
-  const root = createCrossDeviceBlock({ link: LINK, check: 'K7MQ', ...options, document, navigator: nav });
+  const root = createCrossDeviceBlock({ link: LINK, check: 'K7MQ', webWallet: null, ...options, document, navigator: nav });
   return { root, document };
 }
 
@@ -175,6 +175,20 @@ describe('the block', () => {
     const path = all(role(root, 'qr'), (n) => n.tag === 'path')[0];
     assert.equal(path.attrs.d, qrPath(encodeQr(WALLET + '#link=' + LINK, 'L'), 4));
     assert.ok(text(role(root, 'qr')).includes(DEFAULT_LABELS.qrWebWallet));
+  });
+
+  test('with no choice made the project\'s web wallet is offered and opens from the QR code (a phone camera does not open a bringyourownagent link)', () => {
+    const { root } = block({ webWallet: undefined });
+    const a = role(root, 'webwallet');
+    assert.equal(DEFAULT_WEB_WALLET, 'https://wallet.bringyourownagent.org/');
+    assert.equal(a.attrs.href, DEFAULT_WEB_WALLET + '#link=' + LINK);
+    const path = all(role(root, 'qr'), (n) => n.tag === 'path')[0];
+    assert.equal(path.attrs.d, qrPath(encodeQr(DEFAULT_WEB_WALLET + '#link=' + LINK, 'L'), 4));
+  });
+
+  test('a site that wants no web wallet says null, and its own address replaces the default', () => {
+    assert.equal(role(block({ webWallet: null }).root, 'webwallet'), null);
+    assert.equal(role(block({ webWallet: WALLET }).root, 'webwallet').attrs.href, WALLET + '#link=' + LINK);
   });
 
   test('a text too long for any QR code gets no QR code and no error', () => {

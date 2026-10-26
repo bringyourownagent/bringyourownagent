@@ -25,7 +25,35 @@ export const CEILINGS = Object.freeze({
   maxCallsPerMinute: 60,
 });
 
+/** What one connection may spend on paid models, in US dollars: the start of the field, and the most the wallet lets the visitor give. */
+export const BUDGET = Object.freeze({ start: 0.25, min: 0.01, max: 5 });
+
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+
+/**
+ * The budget the consent screen starts with for paid models: what the visitor gave this site last time, else what the site says it expects to
+ * spend in a session, else a small start. Never above the most the wallet allows.
+ */
+export function startBudget(manifest, remembered = 0) {
+  if (Number.isFinite(remembered) && remembered > 0) return Math.min(remembered, BUDGET.max);
+  const text = manifest?.expectedCost?.perSession;
+  const match = typeof text === 'string' ? /^(\d+(?:\.\d{1,6})?)\s*USD$/.exec(text.trim()) : null;
+  const asked = match ? Number(match[1]) : 0;
+  return Math.min(asked > 0 ? Math.max(asked, BUDGET.min) : BUDGET.start, BUDGET.max);
+}
+
+/** The text of a budget box as dollars, or null when it is not an amount the wallet accepts (from 0.01 up to the most it allows). */
+export function parseBudget(text) {
+  const value = Number(String(text).trim().replace(',', '.'));
+  return Number.isFinite(value) && value >= BUDGET.min && value <= BUDGET.max ? Math.round(value * 1e6) / 1e6 : null;
+}
+
+/** What a model costs, for the list: "free", or the dollars per million tokens in and out. */
+export function priceText(model) {
+  if (model.free) return 'free';
+  const dollars = (n) => (n < 0.01 ? '<$0.01' : `$${n.toFixed(2)}`);
+  return `${dollars(model.pricePerMillion.prompt)} in / ${dollars(model.pricePerMillion.completion)} out per million tokens`;
+}
 
 /** A model name in OpenRouter's style, compared as CONTRACT.md section 3.3 says: case, dots, underscores, a date suffix and a `:variant` do not matter. */
 export function normalizeModelName(name) {
@@ -97,8 +125,10 @@ const label = (skill) => (skill === 'text.generate' ? 'Text answers' : skill);
  * @param {string} input.check        The check code of the link's session.
  * @param {boolean} input.hasKey      The visitor has signed in.
  * @param {string[]} input.pickedIds  The OpenRouter ids of the models he has ticked.
+ * @param {boolean} [input.paid]      At least one of the ticked models costs money: a budget is then needed.
+ * @param {number|null} [input.budgetUsd]  The budget in the box (null when it is not an amount).
  */
-export function buildConsent({ host, manifest, check, hasKey, pickedIds }) {
+export function buildConsent({ host, manifest, check, hasKey, pickedIds, paid = false, budgetUsd = 0 }) {
   const skills = Object.entries(isObject(manifest?.skills) ? manifest.skills : {}).map(([id, entry]) => ({
     id, name: label(id), required: isObject(entry) && entry.required === true, served: SERVED_SKILLS.includes(id),
   }));
@@ -116,6 +146,9 @@ export function buildConsent({ host, manifest, check, hasKey, pickedIds }) {
     warnings.push('This site says its data is personal. Your answers go to a cloud model.');
   }
   if (pickedIds.length === 0) blockers.push('Tick at least one model to give this site.');
+  if (paid && !(Number.isFinite(budgetUsd) && budgetUsd >= BUDGET.min && budgetUsd <= BUDGET.max)) {
+    blockers.push(`Set a budget for the paid models you ticked: from ${BUDGET.min} up to ${BUDGET.max} USD.`);
+  }
   if (spec) {
     if (pickedIds.length < spec.min) blockers.push(`This site works with at least ${spec.min} different models; you have ticked ${pickedIds.length}.`);
     for (const entry of unmetRequirements(spec, pickedIds)) {
@@ -133,8 +166,10 @@ export function buildConsent({ host, manifest, check, hasKey, pickedIds }) {
     check: { code: check, required: manifest?.connect?.check === true },
     blockers,
     warnings,
+    paid,
     notes: [
       'Your prompts go to OpenRouter and on to the company that runs the model. Free models may keep them and use them for training.',
+      ...(paid ? ['The paid models you ticked are billed to your OpenRouter account. This connection stops at the budget you set; a new connection starts a new budget.'] : []),
       'This tab is the wallet. Keep it open while the site is using it.',
     ],
     limits: effectiveLimits(manifest),

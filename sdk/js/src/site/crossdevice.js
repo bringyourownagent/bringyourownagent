@@ -11,6 +11,12 @@
 import { capacityBytes, encodeQr, qrPath } from './qr.js';
 
 const SCHEME = 'bringyourownagent://connect?';
+
+/**
+ * The web wallet of the project ("Agent wallet (web)"): the block offers it, and the QR code opens it, unless the site passes its own address
+ * or `webWallet: null`. A phone's camera does not open a `bringyourownagent://` link, but it opens this.
+ */
+export const DEFAULT_WEB_WALLET = 'https://wallet.bringyourownagent.org/';
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const CHECK_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 
@@ -157,7 +163,7 @@ function qrElement(doc, qr, label, pixels) {
  * @param {string} options.link         The `bringyourownagent://connect?...` link the server made for this page.
  * @param {string} [options.check]      The check code the server sent next to the link; shown large, with the line that tells the visitor to compare it.
  * @param {string} [options.handoff]    An https address the site made for this link (CONTRACT-PAIR section 2); offered instead of the raw link.
- * @param {string} [options.webWallet]  The address of a web wallet the site recommends; adds a button and makes the QR code open it.
+ * @param {string|null} [options.webWallet=DEFAULT_WEB_WALLET]  The address of a web wallet the site recommends; adds a button and makes the QR code open it. `null` offers none.
  * @param {boolean|'auto'} [options.showQr='auto']  'auto' hides the QR code on a phone (a phone cannot scan itself).
  * @param {'L'|'M'|'Q'|'H'} [options.qrEcl='L']
  * @param {number} [options.qrPixels=240]
@@ -170,7 +176,7 @@ export function createCrossDeviceBlock(options) {
   const doc = options.document ?? globalThis.document;
   const nav = options.navigator ?? globalThis.navigator;
   const labels = { ...DEFAULT_LABELS, ...options.labels };
-  const plan = planCrossDevice(options);
+  const plan = planCrossDevice({ ...options, webWallet: options.webWallet === undefined ? DEFAULT_WEB_WALLET : options.webWallet });
   if (options.check != null && !/^[ABCDEFGHJKMNPQRSTUVWXYZ2-9]{4}$/.test(options.check)) throw new TypeError('check must be four characters of the check alphabet');
 
   const root = el(doc, 'section', { class: 'byoa-crossdevice', 'aria-label': labels.title });

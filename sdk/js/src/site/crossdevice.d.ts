@@ -22,6 +22,8 @@ export interface CrossDeviceLabels {
 }
 
 export const DEFAULT_LABELS: Readonly<CrossDeviceLabels>;
+/** The project's web wallet, "Agent wallet (web)": `https://wallet.bringyourownagent.org/`. */
+export const DEFAULT_WEB_WALLET: string;
 /** A little CSS for the block; add it to the site's own style sheet. */
 export const CROSS_DEVICE_CSS: string;
 
@@ -54,8 +56,8 @@ export interface CrossDeviceOptions {
   check?: string;
   /** An https address the site made for this link; offered instead of the raw link. */
   handoff?: string;
-  /** The address of a web wallet the site recommends. */
-  webWallet?: string;
+  /** The address of a web wallet the site recommends. Left out, it is the project's own (`DEFAULT_WEB_WALLET`); `null` offers none. */
+  webWallet?: string | null;
   /** 'auto' (the default) hides the QR code on a phone, which cannot scan itself. */
   showQr?: boolean | 'auto';
   qrEcl?: 'L' | 'M' | 'Q' | 'H';

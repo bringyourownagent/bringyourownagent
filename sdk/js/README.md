@@ -118,7 +118,8 @@ import { createCrossDeviceBlock, isMobileBrowser, CROSS_DEVICE_CSS } from 'bring
 if (isMobileBrowser()) {                       // nothing on a phone handles bringyourownagent://, so do not fire the link there
   waitingArea.append(createCrossDeviceBlock({ link, check }));   // the check code, the link to copy, Share (where there is one), a QR code
 }
-// webWallet: 'https://wallet.example/'  adds a button and makes the QR code open that web wallet with the link
+// webWallet: 'https://wallet.example/'  your own web wallet instead of the project's (https://wallet.bringyourownagent.org/, "Agent wallet (web)"),
+//                                       which the block offers by default: a button, and the QR code opens it with the link. `webWallet: null` offers none.
 // handoff:   'https://your-host/byoa/hand/<token>'  offers an https address instead of the raw link (spec/CONTRACT-PAIR.md section 2)
 ```
 
