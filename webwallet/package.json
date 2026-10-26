@@ -1,0 +1,9 @@
+{
+  "name": "byoa-web-wallet",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Prototype of a web wallet for BYOA: static files, no build step, no dependencies.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "scripts": { "test": "node --test" }
+}
