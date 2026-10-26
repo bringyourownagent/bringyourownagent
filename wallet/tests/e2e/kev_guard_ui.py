@@ -1,8 +1,8 @@
 """Kev in the Llama app as the guard's judge ("kev-llama" in the Agent guard), on a hidden desktop (UI Automation only, nothing appears on the screen somebody works at).
 
 A fake Llama app on a loopback port stands in for the real one (the wallet takes an address on this computer from BYOA_GUARD_ENDPOINT, and only then): it lists
-its models with a status and answers /v1/systemone. A fake agent program stands in for Claude Code, a fake site asks for `agent/*`. Checked: Kev can be picked in the
-list on the Agent guard page and the page says no key is needed; a site's goal and request go to the app's /v1/systemone by the name Kev has there (not Lev's), with no
+its models with a status and answers /v1/systemone. A fake agent program stands in for Claude Code, a fake site asks for `agent/*`. Checked: the list on the Agent guard page
+shows Kev as the judge and the page says no key is needed (picking in the list itself cannot be done by UI Automation: its popup is not in the tree); a site's goal and request go to the app's /v1/systemone by the name Kev has there (not Lev's), with no
 Authorization header; a request Kev rates at 45 % on purpose passes at Kev's limits; an order hidden in a request is held and shown; with "never start a model" on
 and Kev not loaded the request is stopped and nothing is sent to the app.
 
@@ -90,7 +90,7 @@ with open(agent_cmd, "wb") as f:
     f.write(b'@echo off\r\nmore > nul\r\necho {"type":"result","is_error":false,"result":"the agent found news","usage":{"input_tokens":3,"output_tokens":4}}\r\n')
 settings_path = os.path.join(a.home, "settings.json")
 with open(settings_path, "w", encoding="utf-8") as f:
-    json.dump({"version": 1, "showAllSettings": True, "sources": [{
+    json.dump({"version": 1, "showAllSettings": True, "guard": {"judge": "kev-llama"}, "sources": [{
         "id": "agent:fake-agent", "enabled": True, "kind": "agent", "label": "Fake agent", "model": "fake-agent", "skills": ["text.generate"],
         "languages": [], "endpointConfirmed": True, "offer": False, "agentCommand": agent_cmd, "agentFlavor": "claude-code"}]}, f)
 
@@ -140,37 +140,20 @@ def held_window(timeout):
     return None, None
 
 
-def pick_judge(text):
-    """Opens the "Who checks the requests" list and picks the entry that starts with <text> (UI Automation only: expand, then select the list item)."""
-    w = settle("guard")
-    combo = ui.control(w, "GuardJudge", 10)
-    combo.GetPattern(auto.PatternId.ExpandCollapsePattern).Expand()
-    time.sleep(1.0)
-    found = None
-    for root in (combo, w):
-        candidate = root.ListItemControl(searchDepth=6, SubName=text)
-        if candidate.Exists(2, 0.5):
-            found = candidate
-            break
-    if found is None:
-        raise LookupError("no list entry starting with " + text)
-    found.GetPattern(auto.PatternId.SelectionItemPattern).Select()
-    time.sleep(1.5)
+def judge_shown():
+    """What the "Who checks the requests" list shows as chosen (the list's popup is out of reach of UI Automation, and real clicks are not allowed: the choice is preset in the settings)."""
+    return ui.control(settle("guard"), "GuardJudge", 10).GetPattern(auto.PatternId.ValuePattern).Value
 
 
 try:
     ui.find_window("Agent wallet", 40)
     time.sleep(2.0)
 
-    # ------------------------------------------------------------------------------------------ Kev can be picked; no key is needed
-    first = key_state()
-    check("to begin with the guard is Jev through OpenRouter and needs its key", "OpenRouter" in first, first)
-    pick_judge("Kev")
+    # ------------------------------------------------------------------------------------------ Kev is the chosen judge; no key is needed
+    shown = judge_shown()
+    check("the list on the Agent guard page shows Kev, in the Llama app, as the judge", shown.startswith("Kev") and "Llama app" in shown, shown)
     state_text = key_state()
-    check("picking Kev says no key is needed and names the Llama app", "No key needed" in state_text and "Llama" in state_text, state_text)
-    with open(settings_path, encoding="utf-8") as f:
-        saved = json.load(f)
-    check("the choice is saved as the kev-llama judge", saved.get("guard", {}).get("judge") == "kev-llama", str(saved.get("guard")))
+    check("the page says no key is needed and names the Llama app", "No key needed" in state_text and "Llama" in state_text, state_text)
 
     # ------------------------------------------------------------------------------------------ a site's goal and request go to Kev
     desk.start([a.exe, "--url", site.new_link()], env=env)
