@@ -1,0 +1,13 @@
+:root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+body { margin: 0; }
+main { max-width: 38rem; margin: 0 auto; padding: 1rem; line-height: 1.45; }
+textarea { width: 100%; box-sizing: border-box; font: inherit; }
+button { font: inherit; padding: .5rem 1rem; }
+button.allow { font-weight: 600; }
+.code { font-size: 2rem; letter-spacing: .25em; font-family: ui-monospace, monospace; }
+.blocker { color: #b00020; }
+.warning { color: #8a5a00; }
+.note { border-left: 4px solid currentColor; padding-left: .75rem; }
+.models { max-height: 16rem; overflow: auto; border: 1px solid #8888; padding: .5rem; }
+.models label { display: block; padding: .15rem 0; }
+.problems, .notes, .activity { padding-left: 1.2rem; }
