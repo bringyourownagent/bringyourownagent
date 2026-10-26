@@ -77,8 +77,19 @@ sealed class WalletServices : IDisposable
     }
 
     /// <summary>The text source the visitor picked as the guard's judge, wrapped; null when the id is not one of his text models (his agents never judge).</summary>
-    IDecisionClient? JudgeClient(string id, int maxInputChars) =>
-        Sources.FindText(id) is { } judge && judge is not IAgentTextSource ? new ModelDecisionClient(judge, maxInputChars) : null;
+    IDecisionClient? JudgeClient(string id, int maxInputChars)
+    {
+        if (id.Equals(GuardSettings.KevJudge, StringComparison.OrdinalIgnoreCase))
+        {
+            // Kev is no text source of the visitor's: a decision model the Llama app serves at its own /v1/systemone. (A test run's BYOA_GUARD_ENDPOINT,
+            // a loopback address, stands in for the app's address.)
+            var address = Environment.GetEnvironmentVariable("BYOA_GUARD_ENDPOINT") is { Length: > 0 } given
+                && Uri.TryCreate(given, UriKind.Absolute, out var uri) && uri.IsLoopback ? new Uri(uri, "/v1/") : null;
+            return new LlamaDecisionClient(Sources.TextHttp, maxInputChars, () => Store.Read(s => s.NeverStartModels), address);
+        }
+
+        return Sources.FindText(id) is { } judge && judge is not IAgentTextSource ? new ModelDecisionClient(judge, maxInputChars) : null;
+    }
 
     /// <summary>Acts on a bringyourownagent:// link (from the command line or handed over by a second instance).</summary>
     public void OpenLink(string? url, bool userActivation = true) => _ = Task.Run(async () =>

@@ -93,7 +93,8 @@ public sealed class JevDecisionClient(HttpClient http, Func<string?> key, Uri? e
         }
     }
 
-    static DecisionAnswer Parse(string text, IEnumerable<string> names)
+    /// <param name="free">True for a model on this computer: the answer costs nothing, whatever its usage says.</param>
+    internal static DecisionAnswer Parse(string text, IEnumerable<string> names, bool free = false)
     {
         JsonNode? root;
         try
@@ -105,7 +106,7 @@ public sealed class JevDecisionClient(HttpClient http, Func<string?> key, Uri? e
             throw new DecisionException("the guard's answer was not understood", 0, e);
         }
 
-        var cost = CostOf(root?["usage"]);
+        var cost = free ? 0m : CostOf(root?["usage"]);
         var yes = new Dictionary<string, double>(StringComparer.Ordinal);
         foreach (var name in names)
         {
@@ -128,7 +129,7 @@ public sealed class JevDecisionClient(HttpClient http, Func<string?> key, Uri? e
             : 0.0001m;
     }
 
-    static string Refusal(string provider, int status, string body)
+    internal static string Refusal(string provider, int status, string body)
     {
         string? message = null;
         try

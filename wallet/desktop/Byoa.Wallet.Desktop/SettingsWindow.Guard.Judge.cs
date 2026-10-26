@@ -26,10 +26,11 @@ sealed partial class SettingsWindow
         var combo = new ComboBox { MinWidth = 360 };
         combo.Items.Add(new ComboBoxItem { Content = "Jev, a decision model (through your OpenRouter key)", Tag = GuardSettings.DefaultJudge });
         combo.Items.Add(new ComboBoxItem { Content = "Jev, a decision model (straight at TypeSafe, with your TypeSafe key)", Tag = GuardSettings.TypeSafeJudge });
+        combo.Items.Add(new ComboBoxItem { Content = "Kev, a decision model in your Llama app — stays on this computer, free", Tag = GuardSettings.KevJudge });
         foreach (var model in Judges())
             combo.Items.Add(new ComboBoxItem { Content = model.Name + (model.Runs == Runs.ThisDevice ? " — stays on this computer" : " — behind a key, paid"), Tag = model.Id });
         AutomationProperties.SetAutomationId(combo, "GuardJudge");
-        var current = IsJev(judge) || Judges().Any(m => m.Id == judge) ? judge : GuardSettings.DefaultJudge;
+        var current = IsJev(judge) || judge == GuardSettings.KevJudge || Judges().Any(m => m.Id == judge) ? judge : GuardSettings.DefaultJudge;
         combo.SelectedIndex = current == GuardSettings.DefaultJudge
             ? 0
             : combo.Items.OfType<ComboBoxItem>().Select((item, i) => (item, i)).First(x => x.item.Tag as string == current).i;
@@ -62,6 +63,11 @@ sealed partial class SettingsWindow
             return "Jev writes no text: it only says how likely each statement is. The text of requests goes to OpenRouter to be checked.";
         if (judge == GuardSettings.TypeSafeJudge)
             return "Jev writes no text: it only says how likely each statement is. The text of requests goes straight to TypeSafe, who make Jev, to be checked.";
+        if (judge == GuardSettings.KevJudge)
+            return "Kev is a small decision model that runs in the Llama app on this computer: the text of requests never leaves it, no key is needed and checking costs nothing. " +
+                   "It does not write text either, it only says how likely each statement is, and a little less sharply than Jev: on a test of 200 requests it held 16 ordinary ones by mistake " +
+                   "against Jev's 8 and held every bad one. Add ggml-org/Kev-4B-GGUF in the Llama app and keep it loaded; if it is not there the guard cannot be asked, " +
+                   "and what happens is your choice below.";
         var model = Judges().FirstOrDefault(m => m.Id == judge);
         if (model is null) return "The model picked here is not in your models any more: until you pick another, requests are not checked.";
         return model.Runs == Runs.ThisDevice
@@ -105,6 +111,12 @@ sealed partial class SettingsWindow
                 Ui.Text(hasKey ? "Ready: it uses your OpenRouter key" : "It needs your OpenRouter key", "h2"),
                 Ui.Wrap("The guard is Jev, a decision model that runs at OpenRouter, behind your own key (the same key as for Scribe v2, kept only on this PC). " +
                         "A request costs a few thousandths of a cent, and its text goes to OpenRouter to be checked. Spent today: " + Money.Show(spent) + " of " + Money.Show(limit) + ".", "muted", "small"));
+        }
+        else if (judge == GuardSettings.KevJudge)
+        {
+            card = Ui.Column(8,
+                Ui.Text("No key needed: Kev runs in your Llama app", "h2"),
+                Ui.Wrap(JudgeNote(judge) + " Spent today on checking: " + Money.Show(spent) + ".", "muted", "small"));
         }
         else
         {

@@ -31,16 +31,26 @@ public sealed class ModelDecisionClient(ITextSource source, int maxInputChars) :
 
     public bool HasKey => true;                          // a text source needs no key; a missing key is Jev's affair
 
-    public async Task<DecisionAnswer> AskAsync(JsonObject state, IReadOnlyDictionary<string, string> statements, CancellationToken ct)
+    public Task<DecisionAnswer> AskAsync(JsonObject state, IReadOnlyDictionary<string, string> statements, CancellationToken ct) =>
+        AskInWindows(state, statements, maxInputChars, (one, note) => AskOnce(one, statements, ct, note));
+
+    /// <summary>
+    /// Asks <paramref name="askOnce"/> about the state, once when its long text fits one window, else once per window with the answers combined.
+    /// Shared by every judge that has a small context of its own (a text model, Kev); <paramref name="askOnce"/> gets the state with one window's
+    /// text in it and a note for a model that reads prose (null when the text is not cut).
+    /// </summary>
+    internal static async Task<DecisionAnswer> AskInWindows(JsonObject state, IReadOnlyDictionary<string, string> statements, int maxInputChars,
+        Func<JsonObject, string?, Task<DecisionAnswer>> askOnce)
     {
+        var window = Math.Max(MinInputChars, maxInputChars);
         var (field, text) = LongField(state);
-        if (field is null || text.Length <= MaxInputChars)
-            return await AskOnce(state, statements, ct).ConfigureAwait(false);
+        if (field is null || text.Length <= window)
+            return await askOnce(state, null).ConfigureAwait(false);
 
         // Beyond one window the model reads the text window by window, the windows overlapping so that an order cut in two by a
         // border is whole in one of them, and takes the worse side of each statement, so no window can quietly let the request through.
         // A text that would need more windows than the judge is given is not guessed at: the guard holds it for the visitor.
-        var windows = Windows(text, MaxInputChars);
+        var windows = Windows(text, window);
         if (windows.Count > MaxWindows)
             throw new DecisionException("the request is too long for the guard to read in full") { TooLong = true };
 
@@ -50,7 +60,7 @@ public sealed class ModelDecisionClient(ITextSource source, int maxInputChars) :
         {
             var one = (JsonObject)state.DeepClone();
             ((JsonObject)one[parts[0]]!)[parts[1]] = windows[i];
-            answers.Add(await AskOnce(one, statements, ct, windows.Count > 1 ? PartNote(field, i + 1, windows.Count) : null).ConfigureAwait(false));
+            answers.Add(await askOnce(one, windows.Count > 1 ? PartNote(field, i + 1, windows.Count) : null).ConfigureAwait(false));
         }
 
         var combined = new Dictionary<string, double>(StringComparer.Ordinal);
@@ -100,8 +110,6 @@ public sealed class ModelDecisionClient(ITextSource source, int maxInputChars) :
         var purpose = (state["site"]?["declared_purpose"] as JsonValue)?.GetValue<string>();
         return (purpose is null ? null : "site.declared_purpose", purpose ?? "");
     }
-
-    int MaxInputChars => Math.Max(MinInputChars, maxInputChars);
 
     async Task<DecisionAnswer> AskOnce(JsonObject state, IReadOnlyDictionary<string, string> statements, CancellationToken ct, string? partNote = null)
     {

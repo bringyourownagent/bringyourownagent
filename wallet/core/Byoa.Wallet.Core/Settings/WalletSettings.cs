@@ -273,7 +273,8 @@ public sealed class GuardSettings
 
     /// <summary>
     /// Who checks the requests: "jev", the default (TypeSafe's decision model, through the visitor's OpenRouter key), "jev-typesafe"
-    /// (the same model, asked at TypeSafe itself with the visitor's TypeSafe key), or the
+    /// (the same model, asked at TypeSafe itself with the visitor's TypeSafe key), "kev-llama" (Kev, a small decision model that
+    /// runs in the Llama app on this computer: no key, no cost), or the
     /// id of one of the visitor's text sources — a model on this computer keeps the requests home and costs nothing, a paid
     /// one is counted by what it really costs. The visitor picks one in Agent guard; an agent source never judges.
     /// </summary>
@@ -283,6 +284,9 @@ public sealed class GuardSettings
 
     /// <summary>Jev asked at TypeSafe itself, with a TypeSafe key, instead of through OpenRouter.</summary>
     public const string TypeSafeJudge = "jev-typesafe";
+
+    /// <summary>Kev, a decision model of the Llama app on this computer (the same questions and answers as Jev's; it has limits of its own, see <c>GuardThresholds</c>).</summary>
+    public const string KevJudge = "kev-llama";
 
     /// <summary>
     /// The longest input one call to a text-source judge sees, in characters. More than this is judged in three chunks (the

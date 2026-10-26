@@ -153,6 +153,22 @@ public sealed record GuardThresholds(double HarmAbove, double RedirectAbove, dou
         _ => new(0.30, 0.30, 0.60, 0.30),
     };
 
+    /// <summary>
+    /// The limits for the judge in use. Kev's chances are squeezed toward the middle (his authors scale them with a temperature), so a request that is
+    /// plainly what the site is for scores 0.4 where Jev says 0.9, and a harmless one is never below 0.1; with Jev's limits he would hold a third of the
+    /// ordinary requests. His own limits come from 200 requests labelled by Jev (every bad one held at Normal, 16 of 100 ordinary ones held by mistake instead
+    /// of 33) and from 24 goals (the risky ones lie from 0.48, the harmless ones up to 0.18).
+    /// </summary>
+    public static GuardThresholds For(string? strictness, string? judge) =>
+        string.Equals(judge?.Trim(), GuardSettings.KevJudge, StringComparison.OrdinalIgnoreCase)
+            ? strictness switch
+            {
+                GuardSettings.Strict => new(0.25, 0.25, 0.55, 0.22),
+                GuardSettings.Relaxed => new(0.40, 0.40, 0.35, 0.40),
+                _ => new(0.30, 0.30, 0.40, 0.30),
+            }
+            : For(strictness);
+
     public bool Trips(string question, double probability) => question switch
     {
         GuardQuestions.OnPurpose => probability < FitsBelow,
@@ -234,7 +250,7 @@ public sealed class GuardLedger
 }
 
 /// <summary>
-/// Asks the guard's judge — Jev by default, or the visitor's own text source he picked — the statements about a request and
+/// Asks the guard's judge — Jev by default, Kev in the Llama app, or the visitor's own text source he picked — the statements about a request and
 /// weighs the answers against the visitor's strictness and limit. A local judge costs nothing and is not counted; a paid
 /// one is counted through its own cost. A judge that is gone or cannot answer is "unavailable": the visitor's
 /// stop-when-unavailable setting then decides, and an answer is never guessed.
@@ -306,7 +322,7 @@ public sealed class GuardService(SettingsStore store, GuardLedger ledger, IDecis
         }
 
         ledger.Add(day, answer.Cost);
-        var thresholds = GuardThresholds.For(settings.Strictness);
+        var thresholds = GuardThresholds.For(settings.Strictness, settings.Judge);
         var findings = new List<GuardFinding>();                // too_long is not here: it comes only with the exception above
         foreach (var name in names)
         {
