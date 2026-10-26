@@ -39,8 +39,11 @@ sealed class WalletServices : IDisposable
         // (BYOA_GUARD_ENDPOINT points a test run at a fake decision server; only an address on this computer is taken, so that the key can go nowhere else)
         var guardAddress = Environment.GetEnvironmentVariable("BYOA_GUARD_ENDPOINT") is { Length: > 0 } given
             && Uri.TryCreate(given, UriKind.Absolute, out var uri) && uri.IsLoopback ? uri : null;
+        // (Jev has two doors: OpenRouter with the OpenRouter key, or TypeSafe's own API with a TypeSafe key; the visitor picks one in Agent guard)
         Engine.Guard = new GuardService(Store, GuardLedger, new JevDecisionClient(Sources.TextHttp, () => Secrets.Get(OpenRouterSource.SecretName), guardAddress),
-            judgeClient: JudgeClient);
+            judgeClient: JudgeClient,
+            typeSafeClient: new JevDecisionClient(Sources.TextHttp, () => Secrets.Get(JevDecisionClient.TypeSafeSecretName),
+                guardAddress ?? JevDecisionClient.TypeSafeEndpoint, JevDecisionClient.TypeSafeModel, JevDecisionClient.TypeSafeName));
         Registry = new WalletRegistry(Store, Secrets, Activity, Sources.All, Sources.Text,
             Sources.Scanner, engine: Engine, textFactory: Sources.CreateTextSource,
             draftTextFactory: Sources.CreateTextSource, speechFactory: Sources.CreateSpeechSource);

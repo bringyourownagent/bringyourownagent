@@ -362,6 +362,81 @@ public class JevDecisionClientTests
         Assert.Empty(stub.Seen);
     }
 
+    // ---- straight at TypeSafe: the same questions and answers at api.typesafe.ai, with the visitor's TypeSafe key ----
+
+    const string TypeSafeGood = """{"model":"jev-1.14.0","answers":{"harm":{"type":"noul","noul":0.04},"redirect":{"type":"noul","noul":0.9}},"usage":{"input_tokens":300,"output_tokens":20}}""";
+
+    static (JevDecisionClient Client, Stub Stub) MakeTypeSafe(Func<HttpRequestMessage, string, (HttpStatusCode, string)> reply, string? key = "apikey_test_key")
+    {
+        var stub = new Stub(reply);
+        return (new JevDecisionClient(new HttpClient(stub), () => key, JevDecisionClient.TypeSafeEndpoint, JevDecisionClient.TypeSafeModel, JevDecisionClient.TypeSafeName), stub);
+    }
+
+    [Fact]
+    public async Task AtTypeSafeItAsksItsOwnAddressWithTheLatestJevAndTheTypeSafeKey()
+    {
+        var (client, stub) = MakeTypeSafe((_, _) => (HttpStatusCode.OK, TypeSafeGood));
+
+        var answer = await client.AskAsync(State(), Statements, CancellationToken.None);
+
+        var seen = Assert.Single(stub.Seen);
+        Assert.Equal("https://api.typesafe.ai/v1/systemone", seen.Url!.ToString());
+        Assert.Equal("Bearer apikey_test_key", seen.Authorization);
+        var body = JsonNode.Parse(seen.Body)!;
+        Assert.Equal("jev-latest", body["model"]!.GetValue<string>());
+        Assert.Equal("noul", body["questions"]!["harm"]!["type"]!.GetValue<string>());
+        Assert.Equal(0.04, answer.Yes["harm"], 3);
+        Assert.Equal(0.9, answer.Yes["redirect"], 3);
+    }
+
+    [Fact]
+    public async Task TypeSafeSaysNothingOfCostSoTheInputTokensAtJevsPriceAreCounted()
+    {
+        var (client, _) = MakeTypeSafe((_, _) => (HttpStatusCode.OK, TypeSafeGood));
+
+        var answer = await client.AskAsync(State(), Statements, CancellationToken.None);
+
+        Assert.Equal(300 * 0.00000005m, answer.Cost);
+    }
+
+    [Theory]
+    [InlineData(401, "TypeSafe did not accept your key")]
+    [InlineData(429, "TypeSafe asked to slow down")]
+    [InlineData(529, "TypeSafe is overloaded")]
+    [InlineData(500, "TypeSafe answered 500")]
+    public async Task ARefusalFromTypeSafeNamesTypeSafeAndReadsItsMessage(int status, string expected)
+    {
+        var (client, _) = MakeTypeSafe((_, _) => ((HttpStatusCode)status, """{"detail":{"error_type":"api_usage_error","message":"Cannot authenticate with the server."}}"""));
+
+        var failure = await Assert.ThrowsAsync<DecisionException>(() => client.AskAsync(State(), Statements, CancellationToken.None));
+
+        Assert.Contains(expected, failure.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("OpenRouter", failure.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AMalformedRequestAnswerOfTypeSafeIsAFailureNotACrash()
+    {
+        // 422: "detail" is a list of problems, not an object with a message
+        var (client, _) = MakeTypeSafe((_, _) => ((HttpStatusCode)422, """{"detail":[{"type":"missing","loc":["body","questions"],"msg":"Field required"}]}"""));
+
+        var failure = await Assert.ThrowsAsync<DecisionException>(() => client.AskAsync(State(), Statements, CancellationToken.None));
+
+        Assert.Contains("TypeSafe answered 422", failure.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task WithoutATypeSafeKeyTheMessageNamesTheTypeSafeKeyAndNothingIsSent()
+    {
+        var (client, stub) = MakeTypeSafe((_, _) => (HttpStatusCode.OK, TypeSafeGood), key: null);
+
+        Assert.False(client.HasKey);
+        var failure = await Assert.ThrowsAsync<DecisionException>(() => client.AskAsync(State(), Statements, CancellationToken.None));
+
+        Assert.Contains("TypeSafe key", failure.Message, StringComparison.Ordinal);
+        Assert.Empty(stub.Seen);
+    }
+
     [Fact]
     public async Task AnUnreachableOpenRouterIsAFailureWithAReason()
     {

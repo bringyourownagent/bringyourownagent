@@ -239,7 +239,10 @@ public sealed class GuardLedger
 /// one is counted through its own cost. A judge that is gone or cannot answer is "unavailable": the visitor's
 /// stop-when-unavailable setting then decides, and an answer is never guessed.
 /// </summary>
-public sealed class GuardService(SettingsStore store, GuardLedger ledger, IDecisionClient client, TimeProvider? time = null, Func<string, int, IDecisionClient?>? judgeClient = null) : IGuard
+/// <param name="client">Jev through OpenRouter, the default judge.</param>
+/// <param name="typeSafeClient">Jev asked at TypeSafe itself (the judge <see cref="GuardSettings.TypeSafeJudge"/>); without one that judge is "not ready".</param>
+public sealed class GuardService(SettingsStore store, GuardLedger ledger, IDecisionClient client, TimeProvider? time = null, Func<string, int, IDecisionClient?>? judgeClient = null,
+    IDecisionClient? typeSafeClient = null) : IGuard
 {
     /// <summary>
     /// Jev takes one call: a request longer than this many characters is sent as its start and its end (where an order is hidden). A judge of the visitor's own
@@ -275,10 +278,10 @@ public sealed class GuardService(SettingsStore store, GuardLedger ledger, IDecis
     async Task<GuardVerdict> AskAsync(JsonObject state, string[] names, CancellationToken ct)
     {
         var (settings, limit) = store.Read(s => (s.Guard, Money.Parse(s.Guard.DailyLimit, 2.00m)));
-        var judge = Judge(settings, out var isJev);
+        var judge = Judge(settings, out var isJev, out var keyOf);
         if (judge is null) return GuardVerdict.Unavailable("the model chosen to check the requests is not among your sources; pick one in Agent guard");
         if (!judge.HasKey)
-            return GuardVerdict.Unavailable(isJev ? "the guard needs your OpenRouter key" : "the model chosen to check the requests is not ready");
+            return GuardVerdict.Unavailable(isJev ? "the guard needs your " + keyOf + " key" : "the model chosen to check the requests is not ready");
         var day = DateOnly.FromDateTime(_time.GetUtcNow().UtcDateTime);
         var spent = ledger.SpentOn(day);
         if (spent >= limit) return GuardVerdict.Unavailable("the guard's limit of " + Money.Show(limit) + " a day is spent");
@@ -319,13 +322,21 @@ public sealed class GuardService(SettingsStore store, GuardLedger ledger, IDecis
     /// Who checks the requests: Jev, or the visitor's text source named by his setting. A source that is not there (or one
     /// of his agents, which never judge) comes back null and the guard says so in words instead of guessing an answer.
     /// </summary>
-    IDecisionClient? Judge(GuardSettings settings, out bool isJev)
+    IDecisionClient? Judge(GuardSettings settings, out bool isJev, out string keyOf)
     {
         var name = settings.Judge?.Trim();
+        keyOf = "OpenRouter";
         if (string.IsNullOrEmpty(name) || name.Equals(GuardSettings.DefaultJudge, StringComparison.OrdinalIgnoreCase))
         {
             isJev = true;
             return client;
+        }
+
+        if (name.Equals(GuardSettings.TypeSafeJudge, StringComparison.OrdinalIgnoreCase))
+        {
+            isJev = true;
+            keyOf = "TypeSafe";
+            return typeSafeClient ?? new NoKey();
         }
 
         isJev = false;
@@ -347,4 +358,13 @@ public sealed class GuardService(SettingsStore store, GuardLedger ledger, IDecis
         text.Length <= HeadChars + TailChars
             ? text
             : text[..HeadChars] + "\n[" + (text.Length - HeadChars - TailChars).ToString(CultureInfo.InvariantCulture) + " characters left out]\n" + text[^TailChars..];
+
+    /// <summary>The judge picked when no client for it was given: it has no key, so the guard says so in words.</summary>
+    sealed class NoKey : IDecisionClient
+    {
+        public bool HasKey => false;
+
+        public Task<DecisionAnswer> AskAsync(JsonObject state, IReadOnlyDictionary<string, string> statements, CancellationToken ct) =>
+            throw new DecisionException("the guard needs your TypeSafe key");
+    }
 }

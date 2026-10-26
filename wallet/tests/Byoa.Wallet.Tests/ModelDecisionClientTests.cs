@@ -266,10 +266,72 @@ public class GuardJudgeSelectionTests
     readonly GuardLedger _ledger = new(null);
     readonly FakeDecisionClient _jev = new();
 
-    GuardService Guard(Func<string, int, IDecisionClient?>? judgeClient = null) => new(_store, _ledger, _jev, _time, judgeClient);
+    GuardService Guard(Func<string, int, IDecisionClient?>? judgeClient = null, IDecisionClient? typeSafe = null) => new(_store, _ledger, _jev, _time, judgeClient, typeSafe);
 
     static GuardRequest Request(string text = "What is the latest news about Cabo Verde?") =>
         new("https://news.example.org", "A geography game", text, "It can search the web and read web pages, and nothing else.");
+
+    [Fact]
+    public async Task TheTypeSafeJudgeAsksTypeSafeAndNotOpenRouter()
+    {
+        var typeSafe = new FakeDecisionClient();
+        _store.Update(s => s.Guard.Judge = GuardSettings.TypeSafeJudge);
+
+        var verdict = await Guard(typeSafe: typeSafe).CheckRequestAsync(Request(), CancellationToken.None);
+
+        Assert.Equal(GuardOutcome.Allow, verdict.Outcome);
+        Assert.Single(typeSafe.Asked);
+        Assert.Empty(_jev.Asked);
+        Assert.Equal(0.00002m, _ledger.SpentOn(DateOnly.FromDateTime(_time.GetUtcNow().UtcDateTime)));    // paid like Jev: counted against the daily limit
+    }
+
+    [Fact]
+    public async Task TheTypeSafeJudgeWithoutAKeyIsUnavailableAndSaysWhichKey()
+    {
+        var typeSafe = new FakeDecisionClient { HasKey = false };
+        _store.Update(s => s.Guard.Judge = GuardSettings.TypeSafeJudge);
+
+        var verdict = await Guard(typeSafe: typeSafe).CheckRequestAsync(Request(), CancellationToken.None);
+
+        Assert.Equal(GuardOutcome.Unavailable, verdict.Outcome);
+        Assert.Contains("TypeSafe key", verdict.Why, StringComparison.Ordinal);
+        Assert.Empty(typeSafe.Asked);
+        Assert.Empty(_jev.Asked);
+    }
+
+    [Fact]
+    public async Task TheTypeSafeJudgeWithNoClientAtAllIsUnavailableToo()
+    {
+        _store.Update(s => s.Guard.Judge = GuardSettings.TypeSafeJudge);
+
+        var verdict = await Guard().CheckRequestAsync(Request(), CancellationToken.None);
+
+        Assert.Equal(GuardOutcome.Unavailable, verdict.Outcome);
+        Assert.Contains("TypeSafe key", verdict.Why, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task TheTypeSafeJudgeIsJevSoALongRequestIsSentAsItsStartAndEndInOneCall()
+    {
+        var typeSafe = new FakeDecisionClient();
+        _store.Update(s => s.Guard.Judge = GuardSettings.TypeSafeJudge);
+
+        await Guard(typeSafe: typeSafe).CheckRequestAsync(Request(new string('a', 100_000)), CancellationToken.None);
+
+        var sent = Assert.Single(typeSafe.Asked).State["request"]!["text"]!.GetValue<string>();
+        Assert.True(sent.Length < 31_000);
+        Assert.Contains("characters left out", sent, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task TheOpenRouterJudgeStillSaysOpenRouterWhenItHasNoKey()
+    {
+        _jev.HasKey = false;
+
+        var verdict = await Guard().CheckRequestAsync(Request(), CancellationToken.None);
+
+        Assert.Contains("OpenRouter key", verdict.Why, StringComparison.Ordinal);
+    }
 
     [Fact]
     public async Task ByDefaultJevChecksAndNothingChanges()

@@ -25,10 +25,11 @@ sealed partial class SettingsWindow
         var column = Ui.Column(6, Ui.Text("Who checks the requests", "h2"));
         var combo = new ComboBox { MinWidth = 360 };
         combo.Items.Add(new ComboBoxItem { Content = "Jev, a decision model (through your OpenRouter key)", Tag = GuardSettings.DefaultJudge });
+        combo.Items.Add(new ComboBoxItem { Content = "Jev, a decision model (straight at TypeSafe, with your TypeSafe key)", Tag = GuardSettings.TypeSafeJudge });
         foreach (var model in Judges())
             combo.Items.Add(new ComboBoxItem { Content = model.Name + (model.Runs == Runs.ThisDevice ? " — stays on this computer" : " — behind a key, paid"), Tag = model.Id });
         AutomationProperties.SetAutomationId(combo, "GuardJudge");
-        var current = Judges().Any(m => m.Id == judge) ? judge : GuardSettings.DefaultJudge;
+        var current = IsJev(judge) || Judges().Any(m => m.Id == judge) ? judge : GuardSettings.DefaultJudge;
         combo.SelectedIndex = current == GuardSettings.DefaultJudge
             ? 0
             : combo.Items.OfType<ComboBoxItem>().Select((item, i) => (item, i)).First(x => x.item.Tag as string == current).i;
@@ -41,9 +42,12 @@ sealed partial class SettingsWindow
         };
         column.Children.Add(combo);
         column.Children.Add(Ui.Wrap(JudgeNote(current), "muted", "small"));
-        if (current != GuardSettings.DefaultJudge) column.Children.Add(MaxInputRow());
+        if (!IsJev(current)) column.Children.Add(MaxInputRow());
         return column;
     }
+
+    /// <summary>Jev, through OpenRouter or straight at TypeSafe: a judge that is no model of the visitor's and needs a key of its own.</summary>
+    static bool IsJev(string judge) => judge == GuardSettings.DefaultJudge || judge == GuardSettings.TypeSafeJudge;
 
     /// <summary>The visitor's text models that may judge: no built-in speech, and never one of his agents.</summary>
     IReadOnlyList<RegistrySourceInfo> Judges() =>
@@ -56,6 +60,8 @@ sealed partial class SettingsWindow
     {
         if (judge == GuardSettings.DefaultJudge)
             return "Jev writes no text: it only says how likely each statement is. The text of requests goes to OpenRouter to be checked.";
+        if (judge == GuardSettings.TypeSafeJudge)
+            return "Jev writes no text: it only says how likely each statement is. The text of requests goes straight to TypeSafe, who make Jev, to be checked.";
         var model = Judges().FirstOrDefault(m => m.Id == judge);
         if (model is null) return "The model picked here is not in your models any more: until you pick another, requests are not checked.";
         return model.Runs == Runs.ThisDevice
@@ -86,7 +92,14 @@ sealed partial class SettingsWindow
     Control JudgeKeyCard(string judge, bool hasKey, decimal spent, decimal limit)
     {
         StackPanel card;
-        if (judge == GuardSettings.DefaultJudge)
+        if (judge == GuardSettings.TypeSafeJudge)
+        {
+            card = Ui.Column(8,
+                Ui.Text(hasKey ? "Ready: it uses your TypeSafe key" : "It needs your TypeSafe key", "h2"),
+                Ui.Wrap("The guard is Jev, asked at TypeSafe's own service (api.typesafe.ai), behind your own TypeSafe key (kept only on this PC; get one in the console at typesafe.ai). " +
+                        "A request costs a few thousandths of a cent, and its text goes to TypeSafe to be checked. Spent today: " + Money.Show(spent) + " of " + Money.Show(limit) + ".", "muted", "small"));
+        }
+        else if (judge == GuardSettings.DefaultJudge)
         {
             card = Ui.Column(8,
                 Ui.Text(hasKey ? "Ready: it uses your OpenRouter key" : "It needs your OpenRouter key", "h2"),
@@ -105,6 +118,30 @@ sealed partial class SettingsWindow
 
         card.Children[0].SetValue(AutomationProperties.AutomationIdProperty, "GuardKeyState");
         if (judge == GuardSettings.DefaultJudge && !hasKey) card.Children.Add(KeyExtras());
+        if (judge == GuardSettings.TypeSafeJudge) card.Children.Add(TypeSafeKeyExtras(hasKey));
         return card;
+    }
+
+    /// <summary>Where the TypeSafe key is entered, replaced or removed: only here and only on this PC (the secret store keeps it, Windows-protected).</summary>
+    Control TypeSafeKeyExtras(bool has)
+    {
+        var box = new TextBox { PasswordChar = '•', Watermark = "apikey_…", MinWidth = 300 };
+        AutomationProperties.SetAutomationId(box, "TypeSafeKeyInput");
+        var save = Ui.Button(has ? "Replace the key" : "Add the key", "deny", "TypeSafeKeySave", () =>
+        {
+            if (string.IsNullOrWhiteSpace(box.Text)) return;
+            _w.Secrets.Set(JevDecisionClient.TypeSafeSecretName, box.Text);
+            box.Text = "";
+            Render();
+        }, "small");
+        var panel = new StackPanel { Spacing = 8 };
+        panel.Children.Add(Ui.Row(8, box, save));
+        if (has)
+            panel.Children.Add(Ui.Button("Remove the key", "deny", "TypeSafeKeyRemove", () =>
+            {
+                _w.Secrets.Remove(JevDecisionClient.TypeSafeSecretName);
+                Render();
+            }, "small"));
+        return panel;
     }
 }

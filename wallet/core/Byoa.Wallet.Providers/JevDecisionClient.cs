@@ -7,15 +7,28 @@ using Byoa.Wallet.Guard;
 namespace Byoa.Wallet.Providers;
 
 /// <summary>
-/// Jev (TypeSafe), a decision model, through OpenRouter's Decisions API, with the visitor's own OpenRouter key. It writes no text: each statement
+/// Jev (TypeSafe), a decision model, through OpenRouter's Decisions API with the visitor's own OpenRouter key, or straight at TypeSafe's own API
+/// (<see cref="TypeSafeEndpoint"/>) with a TypeSafe key: the request and the answer have the same shape at both. It writes no text: each statement
 /// comes back as the chance that it is true. It costs about 4 cents for a thousand requests; the key and the daily limit are the visitor's.
 /// The Decisions API is marked alpha by OpenRouter, so every answer is checked before it is believed.
 /// </summary>
-public sealed class JevDecisionClient(HttpClient http, Func<string?> key, Uri? endpoint = null, string? model = null) : IDecisionClient
+/// <param name="provider">Who is asked, as the visitor's messages name it: "OpenRouter" or "TypeSafe".</param>
+public sealed class JevDecisionClient(HttpClient http, Func<string?> key, Uri? endpoint = null, string? model = null, string provider = "OpenRouter") : IDecisionClient
 {
     public const string DefaultModel = "typesafe/jev-1.14";
 
     public static readonly Uri DefaultEndpoint = new("https://openrouter.ai/api/alpha/decisions");
+
+    /// <summary>TypeSafe's own API: the same questions and answers, with the key of an account at TypeSafe (docs.typesafe.ai).</summary>
+    public static readonly Uri TypeSafeEndpoint = new("https://api.typesafe.ai/v1/systemone");
+
+    /// <summary>TypeSafe's name for its newest stable Jev; a versioned name (<c>jev-1.14.0</c>) would pin one.</summary>
+    public const string TypeSafeModel = "jev-latest";
+
+    public const string TypeSafeName = "TypeSafe";
+
+    /// <summary>The name of the TypeSafe key in the wallet's secret store.</summary>
+    public const string TypeSafeSecretName = "typesafe";
 
     /// <summary>The price of an input token when a response does not say what it cost: 0.042 dollars a million, rounded up.</summary>
     const decimal InputTokenPrice = 0.00000005m;
@@ -31,7 +44,7 @@ public sealed class JevDecisionClient(HttpClient http, Func<string?> key, Uri? e
     public async Task<DecisionAnswer> AskAsync(JsonObject state, IReadOnlyDictionary<string, string> statements, CancellationToken ct)
     {
         var apiKey = key();
-        if (string.IsNullOrWhiteSpace(apiKey)) throw new DecisionException("the guard needs your OpenRouter key");
+        if (string.IsNullOrWhiteSpace(apiKey)) throw new DecisionException("the guard needs your " + provider + " key");
 
         var questions = new JsonObject();
         foreach (var (name, text) in statements) questions[name] = new JsonObject { ["type"] = "noul", ["instructions"] = text };
@@ -52,7 +65,7 @@ public sealed class JevDecisionClient(HttpClient http, Func<string?> key, Uri? e
         }
         catch (HttpRequestException e)
         {
-            throw new DecisionException("OpenRouter could not be reached", 0, e);
+            throw new DecisionException(provider + " could not be reached", 0, e);
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
@@ -75,7 +88,7 @@ public sealed class JevDecisionClient(HttpClient http, Func<string?> key, Uri? e
                 throw new DecisionException("the guard did not answer in time");
             }
 
-            if (!response.IsSuccessStatusCode) throw new DecisionException(Refusal((int)response.StatusCode, text));
+            if (!response.IsSuccessStatusCode) throw new DecisionException(Refusal(provider, (int)response.StatusCode, text));
             return Parse(text, statements.Keys);
         }
     }
@@ -115,12 +128,14 @@ public sealed class JevDecisionClient(HttpClient http, Func<string?> key, Uri? e
             : 0.0001m;
     }
 
-    static string Refusal(int status, string body)
+    static string Refusal(string provider, int status, string body)
     {
         string? message = null;
         try
         {
-            message = JsonNode.Parse(body)?["error"]?["message"]?.GetValue<string>();
+            // OpenRouter: {"error":{"message":…}}; TypeSafe: {"detail":{"message":…}} (a plain string or a list of problems for a malformed request)
+            var root = JsonNode.Parse(body);
+            message = (root?["error"]?["message"] ?? root?["detail"]?["message"]) is JsonValue v && v.TryGetValue<string>(out var s) ? s : null;
         }
         catch (Exception e) when (e is System.Text.Json.JsonException or InvalidOperationException)
         {
@@ -129,10 +144,11 @@ public sealed class JevDecisionClient(HttpClient http, Func<string?> key, Uri? e
 
         var why = status switch
         {
-            401 or 403 => "OpenRouter did not accept your key",
-            402 => "your OpenRouter account has no credit",
-            429 => "OpenRouter asked to slow down",
-            _ => "OpenRouter answered " + status.ToString(CultureInfo.InvariantCulture),
+            401 or 403 => provider + " did not accept your key",
+            402 => "your " + provider + " account has no credit",
+            429 => provider + " asked to slow down",
+            529 => provider + " is overloaded just now",
+            _ => provider + " answered " + status.ToString(CultureInfo.InvariantCulture),
         };
         if (message is { Length: > 0 })
         {

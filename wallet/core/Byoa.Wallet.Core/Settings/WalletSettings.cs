@@ -257,7 +257,7 @@ public sealed class SourceSetting
 }
 
 /// <summary>
-/// The guard: before the visitor's agent answers a site's request, a small fast model (Jev, behind the visitor's OpenRouter key) answers a few
+/// The guard: before the visitor's agent answers a site's request, a small fast model (Jev, behind the visitor's OpenRouter key or his TypeSafe key) answers a few
 /// yes-or-no questions about it. A request that looks harmful, that tries to give the agent orders, or that is not what the site said it is
 /// for, waits for the visitor.
 /// </summary>
@@ -272,13 +272,17 @@ public sealed class GuardSettings
     public string DailyLimit { get; set; } = DefaultDailyLimit;
 
     /// <summary>
-    /// Who checks the requests: "jev", the default (TypeSafe's decision model, through the visitor's OpenRouter key), or the
+    /// Who checks the requests: "jev", the default (TypeSafe's decision model, through the visitor's OpenRouter key), "jev-typesafe"
+    /// (the same model, asked at TypeSafe itself with the visitor's TypeSafe key), or the
     /// id of one of the visitor's text sources — a model on this computer keeps the requests home and costs nothing, a paid
     /// one is counted by what it really costs. The visitor picks one in Agent guard; an agent source never judges.
     /// </summary>
     public string Judge { get; set; } = DefaultJudge;
 
     public const string DefaultJudge = "jev";
+
+    /// <summary>Jev asked at TypeSafe itself, with a TypeSafe key, instead of through OpenRouter.</summary>
+    public const string TypeSafeJudge = "jev-typesafe";
 
     /// <summary>
     /// The longest input one call to a text-source judge sees, in characters. More than this is judged in three chunks (the

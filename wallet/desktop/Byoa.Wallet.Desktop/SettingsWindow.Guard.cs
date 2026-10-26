@@ -29,7 +29,7 @@ sealed partial class SettingsWindow
         page.Children.Add(Ui.Box("card", JudgeCard(guard.Judge)));
 
         // its key (only Jev needs one) and what checking costs today
-        var hasKey = _w.Secrets.Has(OpenRouterSource.SecretName);
+        var hasKey = _w.Secrets.Has(guard.Judge == GuardSettings.TypeSafeJudge ? JevDecisionClient.TypeSafeSecretName : OpenRouterSource.SecretName);
         page.Children.Add(Ui.Box("card", JudgeKeyCard(guard.Judge, hasKey, spent, limit)));
 
         page.Children.Add(Ui.Box("card", Ui.Column(8, Ui.Text("What it may spend a day", "h2"), DailyLimitRow(limit),
