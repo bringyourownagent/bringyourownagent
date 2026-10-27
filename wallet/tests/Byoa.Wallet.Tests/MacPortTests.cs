@@ -260,17 +260,16 @@ public class UnixWalletPathsTests
     {
         if (OperatingSystem.IsWindows()) return;
         Assert.Throws<IOException>(() => WalletPaths.PrepareSocketFolder("/" + new string('a', 120) + ".sock"));
-        var home = TestFolder.New();
-        var socket = Path.Combine(home, "run", "x.sock");
-        WalletPaths.PrepareSocketFolder(socket);
-        Assert.True(Directory.Exists(Path.Combine(home, "run")));
+        var folder = Path.Combine(Path.GetTempPath(), "byoa-prep-" + Guid.NewGuid().ToString("N")[..10]);   // short: a socket path is limited
+        WalletPaths.PrepareSocketFolder(Path.Combine(folder, "x.sock"));
+        Assert.True(Directory.Exists(folder));
     }
 
     [Fact]
     public async Task AWalletSocketCarriesAFrameBothWaysForItsOwnUserAndReportsTheSameProcessAtTheOtherEnd()
     {
         if (OperatingSystem.IsWindows()) return;
-        var path = Path.Combine(TestFolder.New(), "w.sock");
+        var path = Path.Combine(Path.GetTempPath(), "byoa-w-" + Guid.NewGuid().ToString("N")[..10] + ".sock");   // short: a socket path is limited to 103 characters
         using var server = new NamedPipeServerStream(path, PipeDirection.InOut, 2, PipeTransmissionMode.Byte, PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
         var accepted = server.WaitForConnectionAsync();
         using var client = new NamedPipeClientStream(".", path, PipeDirection.InOut, PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);

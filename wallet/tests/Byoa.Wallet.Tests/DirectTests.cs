@@ -213,7 +213,8 @@ public class PairingStoreTests
 /// <summary>Review 2 #7: handing a link to the running wallet never hangs on a wallet that does not answer.</summary>
 public class LinkHandOffTests
 {
-    static string PipeName() => "byoa-test-handoff-" + Guid.NewGuid().ToString("N");
+    // (short: on macOS the name becomes a Unix socket path, which is limited to 103 characters together with the temp folder)
+    static string PipeName() => "byoa-th-" + Guid.NewGuid().ToString("N")[..12];
 
     [Fact]
     public async Task AWalletThatTakesTheLinkButNeverAnswersDoesNotHoldTheSecondProcess()
