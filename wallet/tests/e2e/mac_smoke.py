@@ -7,12 +7,15 @@ What it checks, with the real programs:
   1. the wallet starts, stays up, makes its data folder and listens on its socket (a Unix socket in the temp folder, because a data folder of its own);
   2. it tells every browser folder it finds where the native host is (the manifest names the host, allows only the extension's ID) and keeps a copy of the extension;
   3. the real native host (byoa-host), speaking Chrome's framing on stdin and stdout, reaches the wallet: "status" says it is running, "open" is taken;
+     the real MCP bridge (byoa-mcp) is recognised by the wallet (the system tells it which program is on the other end of the socket and which
+     program started that), and an agent that was approved before can list the tools and call one;
   4. a second wallet process with --url hands the link over and ends; a second plain start ends at once (one wallet per data folder);
   5. with --bundle-links: `open -a <app> bringyourownagent://...` reaches the running wallet as a macOS event (the wallet records the link);
   6. after a crash (kill -9) the socket file is stale, and a new wallet still starts and is reached by the host again;
   7. SIGTERM ends the wallet and takes its socket away.
 """
 import argparse
+import ctypes
 import hashlib
 import json
 import os
@@ -45,6 +48,24 @@ else:
     BUNDLE = None
 WALLET = os.path.join(MACOS, "Byoa.Wallet")
 HOST = os.path.join(MACOS, "byoa-host")
+
+def proc_path(pid):
+    """The image path the system reports for a process (what the wallet sees for the program that starts the MCP bridge)."""
+    libc = ctypes.CDLL("/usr/lib/libSystem.B.dylib")
+    buf = ctypes.create_string_buffer(4096)
+    n = libc.proc_pidpath(pid, buf, 4096)
+    return buf.raw[:n].decode() if n > 0 else None
+
+
+def agent_id(path):
+    """AgentIdentityFactory: the first 12 bytes of the SHA-256 of the upper-cased parent path, in lower-case hex."""
+    return hashlib.sha256(path.upper().encode()).digest()[:12].hex()
+
+
+MY_PATH = proc_path(os.getpid())
+os.makedirs(HOME)
+with open(os.path.join(HOME, "settings.json"), "w", encoding="utf-8") as f:
+    json.dump({"version": 1, "agents": [{"id": agent_id(MY_PATH), "name": "smoke agent", "executablePath": MY_PATH, "status": "allowed", "fullAccess": False}]}, f)
 
 env = dict(os.environ, BYOA_WALLET_HOME=HOME, BYOA_NATIVE_HOST_ROOT=SUPPORT, AVALONIA_TELEMETRY_OPTOUT="1")
 failed = []
@@ -161,6 +182,31 @@ try:
     check("the host reaches the wallet: status says it runs", bool(status) and (status.get("result") or {}).get("running") is True, json.dumps(status))
     opened = host_ask({"id": 2, "type": "open", "origin": "", "payload": {}})
     check("the host's 'open' is answered by the wallet", opened is not None and opened.get("id") == 2, json.dumps(opened))
+
+    # ------------------------------------------------------------------------------------------------- 3b. the real MCP bridge
+    MCP = os.path.join(MACOS, "byoa-mcp")
+    bridge = subprocess.Popen([MCP], env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    children.append(bridge)
+
+    def rpc(message):
+        bridge.stdin.write(json.dumps(message) + "\n")
+        bridge.stdin.flush()
+        return json.loads(bridge.stdout.readline())
+
+    init = rpc({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "smoke agent", "version": "1"}}})
+    check("the MCP bridge answers initialize", "result" in init and "serverInfo" in init["result"], json.dumps(init)[:200])
+    bridge.stdin.write(json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}) + "\n")
+    bridge.stdin.flush()
+    tools = rpc({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
+    names = [t["name"] for t in tools.get("result", {}).get("tools", [])]
+    check("it lists the wallet's tools", "status" in names and "help" in names, ", ".join(names))
+    called = rpc({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "status", "arguments": {}}})
+    check("an approved agent calls a tool and the wallet answers (it recognised the bridge and its parent)", "result" in called and not called["result"].get("isError", False), json.dumps(called)[:300])
+    bridge.stdin.close()
+    try:
+        bridge.wait(10)
+    except subprocess.TimeoutExpired:
+        bridge.kill()
 
     # ------------------------------------------------------------------------------------------------- 4. second processes
     before = len(activity_lines())

@@ -80,12 +80,19 @@ abstract class CornerWindow : Window
         if (first) Dispatcher.UIThread.Post(CornerStack.Relayout, DispatcherPriority.Background);   // the others close up over its place
     }
 
-    /// <summary>Where the window is now, in pixels, as Windows has it (null before it has a handle).</summary>
-    internal PixelRect? Frame() => TryGetPlatformHandle() is { } handle ? ScreenArea.WindowRect(handle.Handle) : null;
+    /// <summary>Where the window is now, in pixels, as the system has it (null before it has a handle). Away from Windows: from the window's own position and size.</summary>
+    internal PixelRect? Frame() => TryGetPlatformHandle() is { } handle
+        ? ScreenArea.WindowRect(handle.Handle) ?? (OperatingSystem.IsWindows() ? null : OwnFrame())
+        : null;
+
+    PixelRect OwnFrame() => new(Position, new PixelSize(PixelWidth(RenderScaling), PixelHeight(RenderScaling)));
 
     /// <summary>The window's right and bottom edges (shadow margin included) in pixels.</summary>
     internal PixelPoint RightBottom() =>
         Frame() is { } f ? new PixelPoint(f.Right, f.Bottom) : new PixelPoint(Position.X + PixelWidth(RenderScaling), Position.Y + PixelHeight(RenderScaling));
+
+    /// <summary>The window's right and top edges (shadow margin included) in pixels.</summary>
+    internal PixelPoint RightTop() => Frame() is { } f ? new PixelPoint(f.Right, f.Y) : new PixelPoint(Position.X + PixelWidth(RenderScaling), Position.Y);
 
     int PixelWidth(double scale) => (int)Math.Ceiling(Width * scale);
 
@@ -102,6 +109,19 @@ abstract class CornerWindow : Window
         var width = PixelWidth(scale);
         var height = PixelHeight(scale);
         _placed = Inside(new PixelPoint(right - width, bottom - height - (int)Math.Round(above * scale)), width, height, area, scale);
+        Position = _placed.Value;
+        return Dips();
+    }
+
+    /// <summary>
+    /// Like <see cref="Place"/>, from the top (macOS: the notices hang below the menu bar, at the right): the window (shadow margin included) has its right
+    /// edge at <paramref name="right"/> and its top <paramref name="below"/> DIPs below <paramref name="top"/> (pixels); returns its height.
+    /// </summary>
+    internal double PlaceFromTop(double below, int right, int top, PixelRect area, double scale)
+    {
+        var width = PixelWidth(scale);
+        var height = PixelHeight(scale);
+        _placed = Inside(new PixelPoint(right - width, top + (int)Math.Round(below * scale)), width, height, area, scale);
         Position = _placed.Value;
         return Dips();
     }
@@ -161,8 +181,11 @@ static class CornerStack
         Relayout();
     }
 
+    /// <summary>On macOS the stack hangs from the top right (below the menu bar), as the system's own notices do; on Windows it rises from the bottom right, above the taskbar.</summary>
+    static bool FromTop => OperatingSystem.IsMacOS();
+
     /// <summary>The visitor dropped <paramref name="w"/> somewhere: later windows start from that corner.</summary>
-    public static void Remember(CornerWindow w) => _dropped = w.RightBottom();
+    public static void Remember(CornerWindow w) => _dropped = FromTop ? w.RightTop() : w.RightBottom();
 
     public static void Relayout()
     {
@@ -175,6 +198,17 @@ static class CornerStack
         // The first card's bottom sits 12 DIPs above the taskbar (or where the visitor last dropped a card); each next card
         // 8 DIPs above the one below it. A card the visitor moved is left where it is and does not count.
         var fromDropped = _dropped is not null && shown.All(w => !w.Moved);
+        if (FromTop)
+        {
+            // The first card's top sits 12 DIPs below the menu bar (or where the visitor last dropped a card); each next card 8 DIPs below the one above it.
+            var topRight = fromDropped ? _dropped!.Value.X : area.Right + (int)Math.Round((CornerWindow.ShadowMargin - 12) * scale);
+            var top = fromDropped ? _dropped!.Value.Y : area.Y;
+            var below = fromDropped ? 0 : 12 - CornerWindow.ShadowMargin;
+            foreach (var w in shown.Where(w => !w.Moved))
+                below += w.PlaceFromTop(below, topRight, top, area, scale) - 2 * CornerWindow.ShadowMargin + 8;
+            return;
+        }
+
         var right = fromDropped ? _dropped!.Value.X : area.Right + (int)Math.Round((CornerWindow.ShadowMargin - 12) * scale);
         var bottom = fromDropped ? _dropped!.Value.Y : area.Bottom;
         var above = fromDropped ? 0 : 12 - CornerWindow.ShadowMargin;

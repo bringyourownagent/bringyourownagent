@@ -276,6 +276,7 @@ sealed class DesktopUi : IWalletUi, IAgentConsentUi, IEndpointConfirmationUi, IS
         _settings.Show(page);
         if (_settings.WindowState == WindowState.Minimized) _settings.WindowState = WindowState.Normal;
         _settings.Activate();
+        MacActivation.BringToFront();
     });
 
     public void OpenHelp(string? topic = null) => PostSafe(() =>
@@ -290,11 +291,21 @@ sealed class DesktopUi : IWalletUi, IAgentConsentUi, IEndpointConfirmationUi, IS
         {
             _help.Activate();
         }
+
+        MacActivation.BringToFront();
     });
 
-    public void OpenAddModel(string? sourceId = null) => PostSafe(() => new AddModelWindow(_w, sourceId).Show());
+    public void OpenAddModel(string? sourceId = null) => PostSafe(() =>
+    {
+        new AddModelWindow(_w, sourceId).Show();
+        MacActivation.BringToFront();
+    });
 
-    public void OpenAddAgent() => PostSafe(() => new AddAgentWindow(_w).Show());
+    public void OpenAddAgent() => PostSafe(() =>
+    {
+        new AddAgentWindow(_w).Show();
+        MacActivation.BringToFront();
+    });
 
     internal static void PostSafe(Action action)
     {

@@ -94,9 +94,9 @@ static class ShotsMode
                 n++;
                 try
                 {
-                    Draw(window, path, window.RenderScaling);
-                    Draw(window, Path.ChangeExtension(path, null) + "@1x.png", 1);
-                    log.Add($"{name}: {window.GetType().Name} {window.Bounds.Width:0}x{window.Bounds.Height:0} scale {window.RenderScaling} client {window.ClientSize} frame {window.FrameSize} -> {Path.GetFileName(path)}");
+                    // (a transparent, borderless corner window is drawn wrongly by a bitmap at the screen's scale: its picture is taken at 1x)
+                    Draw(window, path, window is CornerWindow ? 1 : window.RenderScaling);
+                    log.Add($"{name}: {window.GetType().Name} {window.Bounds.Width:0}x{window.Bounds.Height:0} -> {Path.GetFileName(path)}");
                 }
                 catch (Exception e) when (e is not OutOfMemoryException)
                 {
