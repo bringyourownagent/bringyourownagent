@@ -241,8 +241,14 @@ while IFS= read -r f; do
 done < <(find "$MACOS" -type f | sort)
 [ "${#LIBS[@]}" -ge 3 ] || die "expected at least 3 libraries in the bundle, found ${#LIBS[@]}"
 # Nothing but code may sit in Contents/MacOS: code signing takes every file there for code and refuses what is not signed
-OTHER="$(find "$MACOS" -type f | while IFS= read -r f; do case "$(file -b "$f" | sed -n 1p)" in *Mach-O*) ;; *) echo "$f" ;; esac; done)"
-[ -z "$OTHER" ] || die "files in Contents/MacOS that are not Mach-O code: $OTHER"
+OTHER=""
+while IFS= read -r f; do
+  case "$(file -b "$f" | sed -n 1p)" in
+    *Mach-O*) ;;
+    *) OTHER="$OTHER $f" ;;
+  esac
+done < <(find "$MACOS" -type f)
+[ -z "$OTHER" ] || die "files in Contents/MacOS that are not Mach-O code:$OTHER"
 
 # ---- 3. signing ---------------------------------------------------------------------------------------------------------------------
 IDENTITY="${BYOA_SIGN_IDENTITY:-Developer ID Application}"
