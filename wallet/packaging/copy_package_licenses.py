@@ -40,7 +40,7 @@ WANTED = re.compile(r"^(LICEN[CS]E|NOTICE|THIRD-PARTY-NOTICES)", re.IGNORECASE)
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--app", required=True)
+    parser.add_argument("--app", help="the published folder, when it holds the .deps.json files (a single-file publish does not: they are then taken from --artifacts)")
     parser.add_argument("--artifacts", required=True)
     parser.add_argument("--out", required=True)
     parser.add_argument("--packages", default=os.environ.get("NUGET_PACKAGES") or os.path.join(os.path.expanduser("~"), ".nuget", "packages"))
@@ -54,9 +54,23 @@ def main() -> int:
         print(f"copy_package_licenses: the NuGet packages folder was not found: {args.packages} (set NUGET_PACKAGES)", file=sys.stderr)
         return 1
 
+    def find_deps(name):
+        if args.app and os.path.isfile(os.path.join(args.app, name)):
+            return os.path.join(args.app, name)
+        # the build's own output under --artifacts (bin/<project>/release_<rid>/), the self-contained one: the file that names the runtime pack
+        found = []
+        for root, _dirs, files in os.walk(args.artifacts):
+            if name in files and os.sep + "bin" + os.sep in root + os.sep:
+                found.append(os.path.join(root, name))
+        for candidate in sorted(found):
+            with open(candidate, encoding="utf-8") as f:
+                if "runtimepack" in f.read():
+                    return candidate
+        raise SystemExit(f"copy_package_licenses: {name} was not found in {args.app or '-'} or under {args.artifacts}")
+
     folders = {}
     for deps in DEPS:
-        with open(os.path.join(args.app, deps), encoding="utf-8") as f:
+        with open(find_deps(deps), encoding="utf-8") as f:
             libraries = json.load(f).get("libraries", {})
         for name, value in libraries.items():
             if value.get("type") not in ("package", "runtimepack"):

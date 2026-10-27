@@ -6,8 +6,9 @@
 # Run it on a Mac with the .NET 10 SDK (it needs dotnet, plutil, otool, codesign, ditto, file, shasum and python3).
 #
 # 1. Publishes the tray app (desktop/Byoa.Wallet.Desktop), the native messaging host (host/Byoa.Wallet.Host) and the MCP bridge
-#    (mcp/Byoa.Wallet.Mcp), Release, self-contained for osx-arm64 (the .NET runtime is included: the Mac needs no .NET), not trimmed
-#    and not single-file, into one folder under --out, so that the three programs share one runtime.
+#    (mcp/Byoa.Wallet.Mcp), Release, self-contained for osx-arm64 (the .NET runtime is included: the Mac needs no .NET) and as single
+#    files, not trimmed, into one folder under --out. Single files, because code signing treats every file of Contents/MacOS as code: a
+#    folder of managed .dll files cannot be sealed there. Avalonia's native libraries stay beside the wallet program.
 # 2. Makes "Agent Wallet.app": the programs and the runtime in Contents/MacOS, the icon and the browser extension in
 #    Contents/Resources, an Info.plist that registers the bringyourownagent:// links and makes the wallet a menu-bar program.
 # 3. Signs it (--sign) and has Apple notarize it (--notarize), then zips the package folder byoa-wallet-<version>-mac-arm64:
@@ -88,14 +89,12 @@ mkdir -p "$PUBLISH/app"
 for project in desktop/Byoa.Wallet.Desktop/Byoa.Wallet.Desktop.csproj host/Byoa.Wallet.Host/Byoa.Wallet.Host.csproj mcp/Byoa.Wallet.Mcp/Byoa.Wallet.Mcp.csproj; do
   say "publishing $project (Release, self-contained, $RID)"
   dotnet publish "$WALLET/$project" -c Release -r "$RID" --self-contained true \
-    -p:PublishTrimmed=false -p:PublishSingleFile=false -p:DebugType=none -p:DebugSymbols=false -p:Version="$VERSION" \
+    -p:PublishTrimmed=false -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=false -p:IncludeNativeLibrariesForSelfExtract=false \
+    -p:DebugType=none -p:DebugSymbols=false -p:Version="$VERSION" \
     --artifacts-path "$ARTIFACTS" -o "$PUBLISH/app" --nologo -v quiet
 done
-for file in Byoa.Wallet byoa-host byoa-mcp libhostfxr.dylib libcoreclr.dylib Byoa.Wallet.runtimeconfig.json byoa-host.runtimeconfig.json byoa-mcp.runtimeconfig.json libAvaloniaNative.dylib; do
+for file in Byoa.Wallet byoa-host byoa-mcp libAvaloniaNative.dylib libSkiaSharp.dylib libHarfBuzzSharp.dylib; do
   [ -e "$PUBLISH/app/$file" ] || die "$file is missing in $PUBLISH/app"
-done
-for config in Byoa.Wallet byoa-host byoa-mcp; do
-  grep -q '"includedFrameworks"' "$PUBLISH/app/$config.runtimeconfig.json" || die "$config is not self-contained"
 done
 
 # ---- 2. the bundle ------------------------------------------------------------------------------------------------------------------
@@ -202,7 +201,7 @@ PLIST
 plutil -lint "$APP/Contents/Info.plist" > /dev/null || die "plutil -lint says Info.plist is not valid"
 
 # ---- the notices, outside the bundle (a folder with a dot in its name inside a bundle is taken by codesign for a nested bundle) -----------
-python3 "$HERE/copy_package_licenses.py" --app "$MACOS" --artifacts "$ARTIFACTS" --out "$STAGE/licenses" --fonts-license "$WALLET/desktop/Byoa.Wallet.Desktop/Assets/Fonts/OFL.txt"
+python3 "$HERE/copy_package_licenses.py" --artifacts "$ARTIFACTS" --out "$STAGE/licenses" --fonts-license "$WALLET/desktop/Byoa.Wallet.Desktop/Assets/Fonts/OFL.txt"
 sed "s/{VERSION}/$VERSION/g" "$MACOS_DIR/README.txt" > "$STAGE/README.txt"
 sed "s/{VERSION}/$VERSION/g" "$MACOS_DIR/THIRD-PARTY-NOTICES.txt" > "$STAGE/THIRD-PARTY-NOTICES.txt"
 cp "$REPO/LICENSE" "$STAGE/LICENSE"
@@ -240,7 +239,10 @@ while IFS= read -r f; do
     *"Mach-O"*) LIBS+=("$f") ;;
   esac
 done < <(find "$MACOS" -type f | sort)
-[ "${#LIBS[@]}" -ge 5 ] || die "expected at least 5 libraries in the bundle, found ${#LIBS[@]}"
+[ "${#LIBS[@]}" -ge 3 ] || die "expected at least 3 libraries in the bundle, found ${#LIBS[@]}"
+# Nothing but code may sit in Contents/MacOS: code signing takes every file there for code and refuses what is not signed
+OTHER="$(find "$MACOS" -type f | while IFS= read -r f; do case "$(file -b "$f" | sed -n 1p)" in *Mach-O*) ;; *) echo "$f" ;; esac; done)"
+[ -z "$OTHER" ] || die "files in Contents/MacOS that are not Mach-O code: $OTHER"
 
 # ---- 3. signing ---------------------------------------------------------------------------------------------------------------------
 IDENTITY="${BYOA_SIGN_IDENTITY:-Developer ID Application}"
