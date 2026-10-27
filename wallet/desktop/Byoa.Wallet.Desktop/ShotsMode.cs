@@ -94,8 +94,9 @@ static class ShotsMode
                 n++;
                 try
                 {
-                    Draw(window, path);
-                    log.Add($"{name}: {window.GetType().Name} {window.Bounds.Width:0}x{window.Bounds.Height:0} -> {Path.GetFileName(path)}");
+                    Draw(window, path, window.RenderScaling);
+                    Draw(window, Path.ChangeExtension(path, null) + "@1x.png", 1);
+                    log.Add($"{name}: {window.GetType().Name} {window.Bounds.Width:0}x{window.Bounds.Height:0} scale {window.RenderScaling} client {window.ClientSize} frame {window.FrameSize} -> {Path.GetFileName(path)}");
                 }
                 catch (Exception e) when (e is not OutOfMemoryException)
                 {
@@ -109,9 +110,8 @@ static class ShotsMode
         });
     }
 
-    static void Draw(Window window, string path)
+    static void Draw(Window window, string path, double scale)
     {
-        var scale = window.RenderScaling;
         var size = new PixelSize(Math.Max(1, (int)Math.Ceiling(window.Bounds.Width * scale)), Math.Max(1, (int)Math.Ceiling(window.Bounds.Height * scale)));
         using var bitmap = new RenderTargetBitmap(size, new Vector(96 * scale, 96 * scale));
         bitmap.Render(window);

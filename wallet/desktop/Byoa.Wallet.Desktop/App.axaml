@@ -41,7 +41,7 @@
 
       <FontFamily x:Key="Body">avares://Byoa.Wallet/Assets/Fonts#Barlow</FontFamily>
       <FontFamily x:Key="SignFace">avares://Byoa.Wallet/Assets/Fonts#Barlow Semi Condensed</FontFamily>
-      <FontFamily x:Key="Mono">Cascadia Mono, Consolas, monospace</FontFamily>
+      <FontFamily x:Key="Mono">Cascadia Mono, Menlo, Consolas, monospace</FontFamily>
 
       <!-- Fluent's accent (ticked boxes, progress) is the visitor's own decision colour: Exit Orange. -->
       <Color x:Key="SystemAccentColor">#c8401c</Color>
