@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
@@ -7,6 +8,7 @@ namespace Byoa.Wallet.Desktop;
 public partial class App : Application
 {
     WalletServices? _services;
+    readonly List<PosixSignalRegistration> _signals = [];
 
     public override void Initialize() => AvaloniaXamlLoader.Load(this);
 
@@ -26,10 +28,18 @@ public partial class App : Application
             {
                 ListenForMacActivation(services);
                 _ = Task.Run(MacBundle.RegisterBrowsers);
+                // A stop from outside (a logout, `kill`, a restart of the Mac) ends the wallet the way the tray's Quit does, so that its sockets are taken away
+                foreach (var signal in new[] { PosixSignal.SIGTERM, PosixSignal.SIGINT, PosixSignal.SIGHUP })
+                    _signals.Add(PosixSignalRegistration.Create(signal, context =>
+                    {
+                        context.Cancel = true;
+                        Avalonia.Threading.Dispatcher.UIThread.Post(() => desktop.Shutdown());
+                    }));
             }
 
             if (Program.LinkArgument is not null) services.OpenLink(Program.LinkArgument);
-            if (!Program.Background) services.Ui.OpenSettings("sites");
+            if (ShotsMode.Requested) _ = ShotsMode.RunAsync(services, desktop);
+            else if (!Program.Background) services.Ui.OpenSettings("sites");
             desktop.Exit += (_, _) => services.Dispose();
         }
 
