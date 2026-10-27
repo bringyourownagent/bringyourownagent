@@ -47,11 +47,20 @@ function startWallet() {
   return p;
 }
 
-// a minimal DevTools protocol client over node's WebSocket
+// a minimal DevTools protocol client over the pipe Chrome offers (--remote-debugging-pipe: messages are JSON texts each ended with a NUL byte)
 class Cdp {
-  constructor(ws) { this.ws = ws; this.n = 0; this.pending = new Map(); ws.onmessage = (e) => { const m = JSON.parse(e.data); if (m.id && this.pending.has(m.id)) { this.pending.get(m.id)(m); this.pending.delete(m.id); } }; }
-  static async connect(url) { const ws = new WebSocket(url); await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej; }); return new Cdp(ws); }
-  send(method, params = {}, sessionId) { const id = ++this.n; return new Promise((res) => { this.pending.set(id, res); this.ws.send(JSON.stringify({ id, method, params, sessionId })); }); }
+  constructor(toChrome, fromChrome) {
+    this.toChrome = toChrome; this.n = 0; this.pending = new Map(); let buffer = '';
+    fromChrome.setEncoding('utf8');
+    fromChrome.on('data', (chunk) => {
+      buffer += chunk;
+      for (let end = buffer.indexOf('\0'); end >= 0; end = buffer.indexOf('\0')) {
+        const m = JSON.parse(buffer.slice(0, end)); buffer = buffer.slice(end + 1);
+        if (m.id && this.pending.has(m.id)) { this.pending.get(m.id)(m); this.pending.delete(m.id); }
+      }
+    });
+  }
+  send(method, params = {}, sessionId) { const id = ++this.n; return new Promise((res) => { this.pending.set(id, res); this.toChrome.write(JSON.stringify({ id, method, params, sessionId }) + '\0'); }); }
 }
 
 let chromeProcess;
@@ -63,17 +72,20 @@ try {
   check('the wallet wrote the host manifest into the Chrome profile of the test', await until(() => existsSync(hostManifest), 20000) !== null);
   check('and it names the extension this test loads', existsSync(hostManifest) && readFileSync(hostManifest, 'utf8').includes(`chrome-extension://${extId}/`), extId);
 
+  // Chrome 137+ ignores --load-extension in its branded builds; the DevTools command Extensions.loadUnpacked still installs an unpacked extension when
+  // the browser is driven through a pipe and started with --enable-unsafe-extension-debugging.
   chromeProcess = spawn(chrome, [
-    `--user-data-dir=${profile}`, `--load-extension=${extension}`, `--disable-extensions-except=${extension}`,
-    '--disable-features=DisableLoadExtensionCommandLineSwitch', '--remote-debugging-port=9334', '--headless=new',
+    `--user-data-dir=${profile}`, '--remote-debugging-pipe', '--enable-unsafe-extension-debugging', '--headless=new',
     '--no-first-run', '--no-default-browser-check', '--password-store=basic', '--use-mock-keychain', 'about:blank',
-  ], { env, stdio: 'ignore' });
+  ], { env, stdio: ['ignore', 'ignore', 'ignore', 'pipe', 'pipe'] });
   children.push(chromeProcess);
-  const version = await until(async () => (await fetch('http://127.0.0.1:9334/json/version')).json(), 30000);
-  check('a Chrome of its own started', !!version, version?.Browser ?? '');
-  const cdp = await Cdp.connect(version.webSocketDebuggerUrl);
+  const cdp = new Cdp(chromeProcess.stdio[3], chromeProcess.stdio[4]);
+  const version = await until(async () => (await cdp.send('Browser.getVersion')).result, 30000);
+  check('a Chrome of its own started', !!version, version?.product ?? '');
+  const loaded = await cdp.send('Extensions.loadUnpacked', { path: extension });
+  check('the extension is loaded into it with the expected ID', loaded.result?.id === extId, loaded.result?.id ?? JSON.stringify(loaded.error ?? loaded));
   const worker = await until(async () => (await cdp.send('Target.getTargets')).result.targetInfos.find((t) => t.url.startsWith(`chrome-extension://${extId}/`)), 20000);
-  check('the extension is loaded (its service worker runs) with the expected ID', !!worker, worker?.url ?? 'no target of the extension');
+  check('its service worker runs', !!worker, worker?.url ?? 'no target of the extension');
 
   async function popupChip() {
     const { result } = await cdp.send('Target.createTarget', { url: `chrome-extension://${extId}/popup.html` });
@@ -102,6 +114,15 @@ try {
     return r.result?.result?.value === 'Wallet connected' ? true : null;
   }, 40000, 500);
   check('"Open the wallet" makes the host start the wallet, and the popup says connected', !!connected);
+  if (!connected) {
+    // what a person would look at: is a wallet of this copy running, what does the popup say, what is in the data folder
+    const mine = spawnSync('/usr/bin/pgrep', ['-fl', join(macos, 'Byoa.Wallet')], { encoding: 'utf8' }).stdout.trim();
+    const shown = await cdp.send('Runtime.evaluate', { expression: 'document.getElementById("chip").textContent + " | " + document.getElementById("note").textContent', returnByValue: true }, second.sessionId);
+    console.log('  diag: wallet processes of this copy: ' + (mine || 'none'));
+    console.log('  diag: popup shows: ' + shown.result?.result?.value);
+    console.log('  diag: host processes: ' + (spawnSync('/usr/bin/pgrep', ['-fl', join(macos, 'byoa-host')], { encoding: 'utf8' }).stdout.trim() || 'none'));
+    console.log('  diag: sockets in TMPDIR: ' + (spawnSync('/bin/sh', ['-c', 'ls -la "${TMPDIR}"byoa-* 2>&1'], { encoding: 'utf8', env }).stdout.trim()));
+  }
 } catch (e) {
   check('no exception', false, String(e?.stack ?? e).slice(0, 400));
 } finally {

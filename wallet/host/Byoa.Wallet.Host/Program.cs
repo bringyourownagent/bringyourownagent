@@ -90,8 +90,10 @@ namespace Byoa.Wallet.Host
             if (bundle is not null)
             {
                 info = new ProcessStartInfo("/usr/bin/open") { ArgumentList = { "-g", "-a", bundle } };
-                // a program the system starts gets the system's environment, not this one: the data folder of a wallet run apart (a test) is handed on
-                foreach (var name in new[] { WalletPaths.HomeVariable, NativeHostManifests.RootVariable })
+                // a program the system starts gets the system's environment, not this one: the data folder of a wallet run apart (a test) is handed on,
+                // and with it the temporary folder its short socket names are made in
+                var apart = Environment.GetEnvironmentVariable(WalletPaths.HomeVariable) is { Length: > 0 };
+                foreach (var name in apart ? new[] { WalletPaths.HomeVariable, NativeHostManifests.RootVariable, "TMPDIR" } : [])
                     if (Environment.GetEnvironmentVariable(name) is { Length: > 0 } value) { info.ArgumentList.Add("--env"); info.ArgumentList.Add(name + "=" + value); }
                 info.ArgumentList.Add("--args");
                 info.ArgumentList.Add("--background");
