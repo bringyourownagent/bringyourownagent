@@ -20,7 +20,7 @@ async function refresh() {
   chip.className = running ? "chip" : "chip off";
   if (!running && result && result.installed === false) {
     chip.textContent = "Wallet not installed";
-    note.textContent = "Install the BYOA agent wallet on this computer (wallet/install.ps1), then reload this extension.";
+    note.textContent = "Install the BYOA agent wallet on this computer, then reload this extension.";
   } else if (!running) {
     note.textContent = "It starts when a page asks for your AI, or with the button below.";
   } else {

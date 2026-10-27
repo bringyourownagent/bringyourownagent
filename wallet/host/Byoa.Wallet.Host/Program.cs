@@ -86,9 +86,21 @@ namespace Byoa.Wallet.Host
         static bool StartOnMac(string exe)
         {
             var bundle = BundleOf(exe);
-            var info = bundle is not null
-                ? new ProcessStartInfo("/usr/bin/open") { ArgumentList = { "-g", "-a", bundle, "--args", "--background" } }
-                : new ProcessStartInfo("/bin/sh") { ArgumentList = { "-c", "nohup \"$0\" --background >/dev/null 2>&1 </dev/null &", exe } };
+            ProcessStartInfo info;
+            if (bundle is not null)
+            {
+                info = new ProcessStartInfo("/usr/bin/open") { ArgumentList = { "-g", "-a", bundle } };
+                // a program the system starts gets the system's environment, not this one: the data folder of a wallet run apart (a test) is handed on
+                foreach (var name in new[] { WalletPaths.HomeVariable, NativeHostManifests.RootVariable })
+                    if (Environment.GetEnvironmentVariable(name) is { Length: > 0 } value) { info.ArgumentList.Add("--env"); info.ArgumentList.Add(name + "=" + value); }
+                info.ArgumentList.Add("--args");
+                info.ArgumentList.Add("--background");
+            }
+            else
+            {
+                info = new ProcessStartInfo("/bin/sh") { ArgumentList = { "-c", "nohup \"$0\" --background >/dev/null 2>&1 </dev/null &", exe } };
+            }
+
             info.UseShellExecute = false;
             info.CreateNoWindow = true;
             using var p = Process.Start(info);
