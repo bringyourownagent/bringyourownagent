@@ -1,4 +1,4 @@
-# BYOA agent wallet 0.1 (Windows)
+# BYOA agent wallet 0.1 (Windows and macOS)
 
 The first working agent wallet for [BYOA](../README.md): a tray app on your computer, a small native messaging host and a Chrome extension. A web page asks for your AI with `window.byoa`; the wallet shows a short notice, then a short consent window, and answers the page's calls with **your** models: a model in a program on your computer, a compatible home server, or your own API key as a paid fallback that asks first.
 
@@ -54,6 +54,18 @@ Needs Windows 10 or 11, 64-bit; nothing else (the package carries its own .NET r
 To update, quit the wallet from its tray icon and run the new package's Install.cmd. To remove it, run `%LOCALAPPDATA%\BYOA\wallet-app\Uninstall.cmd` (or the one in the package): the same `uninstall.ps1` as below, which removes only the registry keys and the Startup shortcut and deletes no files.
 
 To build the package yourself: `powershell -ExecutionPolicy Bypass -File wallet\packaging\make-package.ps1 [-OutDir <empty folder>]` (needs the .NET 10 SDK). It publishes the app and the host self-contained for win-x64 under the output folder (never into the repository's `bin` and `obj`), stages the package, zips it and prints its size and SHA-256 (also written to `<zip>.sha256`).
+
+## Install on a Mac (Apple silicon)
+
+Needs macOS 12 or later on an M1 or newer; nothing else (the app carries its own .NET runtime). The wallet is the same program as on Windows, with the system parts replaced: it lives in the menu bar (no Dock icon), keeps its API keys sealed under a key in your login Keychain (the counterpart of Windows DPAPI), talks to the native host and the MCP bridge over Unix sockets in `~/Library/Application Support/BYOA/run` (only you can open that folder), opens `bringyourownagent://` links through `Info.plist`, and tells every Chromium browser you have installed where its native host is. **Everywhere** (dictation and the check of selected text) is Windows only for now; its page is hidden on the Mac.
+
+1. Download the zip from <https://bringyourownagent.org/wallet> (the page names it `byoa-wallet-mac-arm64.zip`) and compare its SHA-256 with the one on that page (`shasum -a 256 ~/Downloads/byoa-wallet-mac-arm64.zip`).
+2. Unzip it and drag **Agent Wallet.app** into Applications; open it once. The build is signed with a Developer ID and notarized by Apple, so it opens without a warning.
+3. Optional, for sites that use the extension: `chrome://extensions`, **Developer mode**, **Load unpacked**, and choose `~/Library/Application Support/BYOA/extension` (Command-Shift-G in the file dialog). The wallet puts a copy of the extension there each time it starts. The extension ID is the same as on Windows.
+
+To update, quit the wallet from its menu-bar icon and replace the app. To remove it, drag the app to the Trash; the data folder `~/Library/Application Support/BYOA`, the Keychain item and the host manifests stay for you to delete yourself (the README in the package lists them).
+
+To build the package yourself, on a Mac with the .NET 10 SDK: `wallet/packaging/make-macos-package.sh --out <new folder> [--sign none|adhoc|identity] [--notarize]`. It publishes the three programs self-contained for osx-arm64 as single files, builds the bundle, checks it, signs it (with a Developer ID identity named by `BYOA_SIGN_IDENTITY`; `--notarize` also sends it to Apple and staples the ticket), zips it and prints the SHA-256. The tests: the unit tests run on a Mac too (`dotnet test`); `tests/e2e/mac_smoke.py` drives the built app and its real host and bridge, and `tests/e2e/mac_chrome_e2e.mjs` drives a real Chrome with the extension through the real host (both run on a data folder and a browser profile of their own).
 
 ## Install from the source code
 
