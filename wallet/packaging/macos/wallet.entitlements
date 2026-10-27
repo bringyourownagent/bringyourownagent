@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Entitlements of the hardened runtime for Agent Wallet.app (make-macos-package.sh uses them when it signs the programs).
+  The .NET runtime compiles code while it runs, which the hardened runtime forbids unless it is allowed explicitly:
+    allow-jit                         the JIT compiler (CoreCLR)
+    allow-unsigned-executable-memory  executable memory the runtime writes itself (stubs, tiered compilation)
+  The wallet is NOT sandboxed on purpose: it starts the programs of the user's own agents, talks to a local socket of the
+  browser's native host and to the MCP bridge, and keeps its key in the user's login Keychain.
+  Every Mach-O file of the bundle is signed with the same identity, so library validation stays ON.
+-->
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+</dict>
+</plist>

@@ -39,6 +39,14 @@ sealed class MemoryKeychainItem : IKeychainItem
     }
 }
 
+/// <summary>A program every system has, for the tests that add or run an agent's program.</summary>
+static class TestPrograms
+{
+    public static readonly string Runnable = OperatingSystem.IsWindows()
+        ? Environment.GetEnvironmentVariable("ComSpec") ?? @"C:\Windows\System32\cmd.exe"
+        : "/bin/sh";
+}
+
 static class TestSetup
 {
     /// <summary>
@@ -178,6 +186,31 @@ public class NativeHostManifestTests
         // the copy moved: the manifest follows it
         Assert.Equal("written", NativeHostManifests.Register("/Applications/Agent Wallet.app/Contents/MacOS/byoa-host", ExtensionManifest(), support)[0].Result);
         Assert.Contains("/Applications/Agent Wallet.app/", File.ReadAllText(chrome));
+    }
+}
+
+public class ExtensionCopyTests
+{
+    [Fact]
+    public void TheExtensionCopyIsWrittenOnceChangedFilesFollowAndNothingIsDeleted()
+    {
+        var source = TestFolder.New();
+        Directory.CreateDirectory(Path.Combine(source, "icons"));
+        File.WriteAllText(Path.Combine(source, "manifest.json"), "{\"v\":1}");
+        File.WriteAllBytes(Path.Combine(source, "icons", "a.png"), [1, 2, 3]);
+        var support = TestFolder.New();
+        var copy = Path.Combine(support, "BYOA", "extension");
+
+        Assert.Equal(2, NativeHostManifests.SyncExtension(source, support));
+        Assert.Equal("{\"v\":1}", File.ReadAllText(Path.Combine(copy, "manifest.json")));
+        Assert.Equal([1, 2, 3], File.ReadAllBytes(Path.Combine(copy, "icons", "a.png")));
+        Assert.Equal(0, NativeHostManifests.SyncExtension(source, support));              // nothing changed: nothing written
+
+        File.WriteAllText(Path.Combine(source, "manifest.json"), "{\"v\":2}");
+        File.WriteAllText(Path.Combine(copy, "kept-by-the-person.txt"), "mine");
+        Assert.Equal(1, NativeHostManifests.SyncExtension(source, support));              // the changed file follows
+        Assert.Equal("{\"v\":2}", File.ReadAllText(Path.Combine(copy, "manifest.json")));
+        Assert.True(File.Exists(Path.Combine(copy, "kept-by-the-person.txt")));           // a file of the person's own is left alone
     }
 }
 

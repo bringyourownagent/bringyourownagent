@@ -145,7 +145,9 @@ static class AgentIdentityFactory
     public static bool IsInterpreterPath(string? path)
     {
         if (string.IsNullOrWhiteSpace(path)) return false;
-        var name = Path.GetFileNameWithoutExtension(path.Trim());
+        // the last part of the path, whichever separator it was written with (a path from another system is still one)
+        var trimmed = path.Trim();
+        var name = Path.GetFileNameWithoutExtension(trimmed[(Math.Max(trimmed.LastIndexOf('/'), trimmed.LastIndexOf('\\')) + 1)..]);
         // python3, python3.12 and pythonw are all the interpreter
         return InterpreterNames.Contains(name) || name.StartsWith("python", StringComparison.OrdinalIgnoreCase);
     }

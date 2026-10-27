@@ -39,7 +39,9 @@ static class MacBundle
         {
             var host = Path.Combine(AppContext.BaseDirectory, "byoa-host");
             if (!File.Exists(host) || ExtensionFolder() is not { } extension) return;
-            NativeHostManifests.Register(host, File.ReadAllText(Path.Combine(extension, "manifest.json")), NativeHostManifests.ApplicationSupport());
+            var support = NativeHostManifests.ApplicationSupport();
+            NativeHostManifests.SyncExtension(extension, support);
+            NativeHostManifests.Register(host, File.ReadAllText(Path.Combine(extension, "manifest.json")), support);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidDataException or FormatException or System.Text.Json.JsonException)
         {

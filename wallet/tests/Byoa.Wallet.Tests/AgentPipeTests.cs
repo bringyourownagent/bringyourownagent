@@ -30,9 +30,9 @@ public sealed class AgentPipeTests
             using var wallet = new WalletServices();
             var consent = new FakeConsentUi(new AgentConsentAnswer(AgentConsentDecision.NotNow, false));
             using var process = new FakeProcessInfo(
-                new ObservedAgentProcess(Path.Combine(bridgeFolder, "byoa-mcp.exe"), "C:\\agents\\first.exe"),
-                new ObservedAgentProcess(Path.Combine(bridgeFolder, "byoa-mcp.exe"), "C:\\agents\\normal.exe"),
-                new ObservedAgentProcess(Path.Combine(bridgeFolder, "byoa-mcp.exe"), "C:\\agents\\full.exe"));
+                new ObservedAgentProcess(Path.Combine(bridgeFolder, AgentPipeServer.BridgeFileName), "C:\\agents\\first.exe"),
+                new ObservedAgentProcess(Path.Combine(bridgeFolder, AgentPipeServer.BridgeFileName), "C:\\agents\\normal.exe"),
+                new ObservedAgentProcess(Path.Combine(bridgeFolder, AgentPipeServer.BridgeFileName), "C:\\agents\\full.exe"));
             using var server = new AgentPipeServer(wallet, consent, process);
             server.Start();
 
@@ -89,8 +89,8 @@ public sealed class AgentPipeTests
             using var wallet = new WalletServices();
             var consent = new FakeConsentUi(new AgentConsentAnswer(AgentConsentDecision.Allow, false));
             using var process = new FakeProcessInfo(
-                new ObservedAgentProcess(Path.Combine(bridgeFolder, "byoa-mcp.exe"), "C:\\agents\\approved.exe"),
-                new ObservedAgentProcess(Path.Combine(bridgeFolder, "byoa-mcp.exe"), "C:\\agents\\impostor.exe"));
+                new ObservedAgentProcess(Path.Combine(bridgeFolder, AgentPipeServer.BridgeFileName), "C:\\agents\\approved.exe"),
+                new ObservedAgentProcess(Path.Combine(bridgeFolder, AgentPipeServer.BridgeFileName), "C:\\agents\\impostor.exe"));
             using var server = new AgentPipeServer(wallet, consent, process);
             server.Start();
 
@@ -158,8 +158,8 @@ public sealed class AgentPipeTests
             using var wallet = new WalletServices();
             var consent = new FakeConsentUi(new AgentConsentAnswer(AgentConsentDecision.Allow, true));
             using var process = new FakeProcessInfo(
-                new ObservedAgentProcess(Path.Combine(bridgeFolder, "byoa-mcp.exe"), null, 42, DateTimeOffset.UnixEpoch),
-                new ObservedAgentProcess(Path.Combine(bridgeFolder, "byoa-mcp.exe"), null, 42, DateTimeOffset.UnixEpoch));
+                new ObservedAgentProcess(Path.Combine(bridgeFolder, AgentPipeServer.BridgeFileName), null, 42, DateTimeOffset.UnixEpoch),
+                new ObservedAgentProcess(Path.Combine(bridgeFolder, AgentPipeServer.BridgeFileName), null, 42, DateTimeOffset.UnixEpoch));
             using var server = new AgentPipeServer(wallet, consent, process);
             server.Start();
 
@@ -201,7 +201,7 @@ public sealed class AgentPipeTests
             using var wallet = new WalletServices();
             var consent = new FakeConsentUi(new AgentConsentAnswer(AgentConsentDecision.Allow, true));
             using var process = new FakeProcessInfo(new ObservedAgentProcess(
-                Path.Combine(bridgeFolder, "byoa-mcp.exe"), "C:\\Windows\\System32\\cmd.exe"));
+                Path.Combine(bridgeFolder, AgentPipeServer.BridgeFileName), "C:\\Windows\\System32\\cmd.exe"));
             using var server = new AgentPipeServer(wallet, consent, process);
             server.Start();
 
@@ -234,7 +234,7 @@ public sealed class AgentPipeTests
         {
             using var wallet = new WalletServices();
             using var process = new FakeProcessInfo(new ObservedAgentProcess(
-                Path.Combine(bridgeFolder, "byoa-mcp.exe"), "C:\\agents\\normal.exe"));
+                Path.Combine(bridgeFolder, AgentPipeServer.BridgeFileName), "C:\\agents\\normal.exe"));
             using var server = new AgentPipeServer(wallet,
                 new FakeConsentUi(new AgentConsentAnswer(AgentConsentDecision.Allow, false)), process);
             server.Start();
@@ -269,7 +269,7 @@ public sealed class AgentPipeTests
         {
             using var wallet = new WalletServices();
             using var process = new FakeProcessInfo(new ObservedAgentProcess(
-                Path.Combine(bridgeFolder, "byoa-mcp.exe"), "C:\\agents\\normal.exe"));
+                Path.Combine(bridgeFolder, AgentPipeServer.BridgeFileName), "C:\\agents\\normal.exe"));
             using var server = new AgentPipeServer(wallet,
                 new FakeConsentUi(new AgentConsentAnswer(AgentConsentDecision.Allow, false)), process);
             server.Start();
@@ -319,7 +319,7 @@ public sealed class AgentPipeTests
                 Note = "alpha.example note",
             });
             using var process = new FakeProcessInfo(new ObservedAgentProcess(
-                Path.Combine(bridgeFolder, "byoa-mcp.exe"), "C:\\agents\\normal.exe"));
+                Path.Combine(bridgeFolder, AgentPipeServer.BridgeFileName), "C:\\agents\\normal.exe"));
             using var server = new AgentPipeServer(wallet,
                 new FakeConsentUi(new AgentConsentAnswer(AgentConsentDecision.Allow, false)), process);
             server.Start();

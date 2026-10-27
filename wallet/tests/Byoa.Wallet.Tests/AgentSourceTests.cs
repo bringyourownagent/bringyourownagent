@@ -66,7 +66,7 @@ public class AgentCliSourceTests
         }
     }
 
-    static readonly string Program = Environment.GetEnvironmentVariable("ComSpec") ?? @"C:\Windows\System32\cmd.exe";
+    static readonly string Program = TestPrograms.Runnable;
 
     static AgentCliSource Make(IAgentRunner runner, string? command = null, string flavor = AgentFlavors.ClaudeCode) =>
         new(new AgentCliSource.SourceSettingView("agent:claude-code", "claude-code", "My Claude", flavor, command ?? Program), TestFolder.New(), runner);
@@ -272,7 +272,7 @@ public class AgentCliSourceTests
         Assert.Equal(Program, AgentPrograms.Resolve(Program));
         Assert.Equal(Program, AgentPrograms.Resolve(Program + "  "));
         Assert.Null(AgentPrograms.Resolve(@"C:\no-such-folder\x.cmd"));
-        Assert.NotNull(AgentPrograms.Resolve("cmd"));                       // on PATH: cmd.exe
+        Assert.NotNull(AgentPrograms.Resolve(OperatingSystem.IsWindows() ? "cmd" : "sh"));   // on PATH: cmd.exe, or sh
         Assert.Null(AgentPrograms.Resolve(@"sub\x.cmd"));                   // a relative path is not a name
         Assert.Null(AgentPrograms.Resolve("x%PATH%"));
         Assert.Equal("agent:claude-code-glm", AgentPrograms.IdOf("Claude Code (GLM)"));
@@ -677,7 +677,7 @@ public class AgentEngineTests
 /// <summary>Adding the agent: only the visitor can, and the MCP bridge has no way to name a program.</summary>
 public class AgentRegistryTests
 {
-    static readonly string Program = Environment.GetEnvironmentVariable("ComSpec") ?? @"C:\Windows\System32\cmd.exe";
+    static readonly string Program = TestPrograms.Runnable;
 
     static WalletRegistry Make(SettingsStore store) =>
         new(store, new SecretStore(Path.Combine(TestFolder.New(), "secrets.dat")), new ActivityLog(null, DateTimeOffset.UtcNow), [new FakeSource("speech")], []);

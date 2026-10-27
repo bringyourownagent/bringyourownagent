@@ -83,6 +83,30 @@ public static class NativeHostManifests
     }
 
     /// <summary>
+    /// Puts a copy of the extension where the person can always find it for "Load unpacked": <c>BYOA/extension</c> under
+    /// <paramref name="applicationSupport"/> (the app bundle's own folder is hard to pick in a file dialog and changes with every update).
+    /// A file that is missing or different is written; nothing is deleted. Returns how many files it wrote.
+    /// </summary>
+    public static int SyncExtension(string from, string applicationSupport)
+    {
+        var to = Path.Combine(applicationSupport, "BYOA", "extension");
+        var written = 0;
+        foreach (var file in Directory.EnumerateFiles(from, "*", SearchOption.AllDirectories))
+        {
+            var target = Path.Combine(to, Path.GetRelativePath(from, file));
+            var bytes = File.ReadAllBytes(file);
+            if (File.Exists(target) && File.ReadAllBytes(target).AsSpan().SequenceEqual(bytes)) continue;
+            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+            var temp = target + ".tmp";
+            File.WriteAllBytes(temp, bytes);
+            File.Move(temp, target, overwrite: true);
+            written++;
+        }
+
+        return written;
+    }
+
+    /// <summary>
     /// Writes the host manifest for each browser whose folder exists under <paramref name="applicationSupport"/>; a file that already says
     /// the same is left as it is. Nothing is created for a browser that is not installed, and nothing is deleted.
     /// </summary>

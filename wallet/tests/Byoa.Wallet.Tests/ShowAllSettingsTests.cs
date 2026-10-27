@@ -12,7 +12,9 @@ public class ShowAllSettingsTests
     [Fact]
     public void ByDefaultOnlyTheSimpleTabsShow()
     {
-        Assert.Equal(["sites", "sources", "everywhere", "activity"], SettingsWindow.VisiblePages(showAll: false).Select(p => p.Id).ToArray());
+        // Everywhere (dictation and the check in every program) is Windows only for now: no tab for it on a Mac
+        string[] simple = OperatingSystem.IsWindows() ? ["sites", "sources", "everywhere", "activity"] : ["sites", "sources", "activity"];
+        Assert.Equal(simple, SettingsWindow.VisiblePages(showAll: false).Select(p => p.Id).ToArray());
         var all = SettingsWindow.VisiblePages(showAll: true).Select(p => p.Id).ToArray();
         Assert.True(all.Length >= 8);                                     // guard, Skills, Limits, My MCP, help…
         Assert.Equal(all, SettingsWindow.VisiblePages(showAll: true).Select(p => p.Id).ToArray());
