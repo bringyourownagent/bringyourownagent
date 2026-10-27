@@ -15,12 +15,16 @@ public interface ISecretProtector
 
 public static class SecretProtectors
 {
+    /// <summary>The unit tests (only they see it) give a protector that never touches the Keychain of the person who runs them.</summary>
+    internal static Func<string, ISecretProtector>? TestFactory { get; set; }
+
     /// <summary>
     /// The protector of this operating system: Windows DPAPI, or a key kept in the macOS Keychain. <paramref name="purpose"/> ("secrets", "pairings")
     /// is mixed in, so that a file made for one purpose does not open as the other.
     /// </summary>
     public static ISecretProtector CreateDefault(string purpose = "secrets")
     {
+        if (TestFactory is { } factory) return factory(purpose);
         if (OperatingSystem.IsWindows()) return new DpapiSecretProtector(Encoding.UTF8.GetBytes("BYOA agent wallet " + purpose + " v1"));
         if (OperatingSystem.IsMacOS())
             return new KeychainSecretProtector(new MacKeychainItem(KeychainSecretProtector.Service, KeychainSecretProtector.Account, KeychainSecretProtector.Label), purpose);
