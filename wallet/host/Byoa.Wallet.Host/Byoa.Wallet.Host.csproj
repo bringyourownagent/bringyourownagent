@@ -6,7 +6,7 @@
     <OutputType>Exe</OutputType>
     <AssemblyName>byoa-host</AssemblyName>
     <RootNamespace>Byoa.Wallet.Host</RootNamespace>
-    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <RuntimeIdentifier Condition="$([MSBuild]::IsOSPlatform('Windows'))">win-x64</RuntimeIdentifier>
     <SelfContained>false</SelfContained>
     <InvariantGlobalization>true</InvariantGlobalization>
     <UseAppHost>true</UseAppHost>

@@ -61,7 +61,6 @@ public enum DirectState
 /// (60 s), until the site says the code is bad. Later, when the connection drops, it reconnects with backoff only
 /// while the site keeps "decide on my own" and its pairing is stored.
 /// </summary>
-[SupportedOSPlatform("windows")]
 public sealed class DirectConnection
 {
     enum Outcome

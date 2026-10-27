@@ -15,7 +15,6 @@ namespace Byoa.Wallet.Direct;
 /// engine's, shared with the extension transport for the same origin. A link of a blocked site, a bad link and a
 /// repeated link do nothing but leave an activity entry.
 /// </summary>
-[SupportedOSPlatform("windows")]
 public sealed class DirectTransport : IDisposable
 {
     static readonly TimeSpan RememberLinks = TimeSpan.FromMinutes(10);

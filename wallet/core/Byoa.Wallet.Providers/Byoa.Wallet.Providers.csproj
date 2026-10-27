@@ -15,11 +15,4 @@
     <InternalsVisibleTo Include="Byoa.Wallet.Tests" />
   </ItemGroup>
 
-  <!-- 0.1 is Windows first (DPAPI, the tray, the native host registration). -->
-  <ItemGroup>
-    <AssemblyAttribute Include="System.Runtime.Versioning.SupportedOSPlatformAttribute">
-      <_Parameter1>windows</_Parameter1>
-    </AssemblyAttribute>
-  </ItemGroup>
-
 </Project>

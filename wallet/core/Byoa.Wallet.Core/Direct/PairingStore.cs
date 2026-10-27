@@ -1,7 +1,6 @@
-using System.Runtime.Versioning;
 using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
+using Byoa.Wallet.Secrets;
 
 namespace Byoa.Wallet.Direct;
 
@@ -12,20 +11,23 @@ namespace Byoa.Wallet.Direct;
 public sealed record Pairing(string Origin, string Endpoint, string Manifest, string Token, DateTimeOffset StoredAt);
 
 /// <summary>
-/// The stored pairings, one per origin, encrypted with DPAPI for the current user (<c>pairings.dat</c> in the data
-/// folder): a token lets its holder use the visitor's AI on that site's server, so it is kept like a key. With no
-/// path the store lives in memory only (tests).
+/// The stored pairings, one per origin, sealed for the current user like the keys (<c>pairings.dat</c> in the data
+/// folder; see <see cref="SecretProtectors"/>): a token lets its holder use the visitor's AI on that site's server, so it is
+/// kept like a key. With no path the store lives in memory only (tests).
 /// </summary>
-[SupportedOSPlatform("windows")]
 public sealed class PairingStore
 {
-    static readonly byte[] Entropy = Encoding.UTF8.GetBytes("BYOA agent wallet pairings v1");
-
     readonly string? _path;
+    readonly ISecretProtector? _protector;
     readonly object _gate = new();
     List<Pairing>? _memory;
 
-    public PairingStore(string? path) => _path = path;
+    /// <param name="protector">How the file is sealed; the protector of this operating system when omitted (tests give their own).</param>
+    public PairingStore(string? path, ISecretProtector? protector = null)
+    {
+        _path = path;
+        _protector = path is null ? null : protector ?? SecretProtectors.CreateDefault("pairings");
+    }
 
     public event Action? Changed;
 
@@ -73,7 +75,7 @@ public sealed class PairingStore
         if (!File.Exists(_path)) return [];
         try
         {
-            var plain = ProtectedData.Unprotect(File.ReadAllBytes(_path), Entropy, DataProtectionScope.CurrentUser);
+            var plain = _protector!.Unprotect(File.ReadAllBytes(_path));
             try
             {
                 return JsonSerializer.Deserialize<List<Pairing>>(plain) ?? [];
@@ -103,7 +105,7 @@ public sealed class PairingStore
         {
             Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
             var tmp = _path + ".tmp";
-            File.WriteAllBytes(tmp, ProtectedData.Protect(plain, Entropy, DataProtectionScope.CurrentUser));
+            File.WriteAllBytes(tmp, _protector!.Protect(plain));
             File.Move(tmp, _path, overwrite: true);
         }
         finally

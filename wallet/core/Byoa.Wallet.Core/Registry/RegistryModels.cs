@@ -105,6 +105,8 @@ static class AgentIdentityFactory
     {
         "node", "bun", "deno", "python", "pythonw", "py", "cmd", "powershell", "pwsh", "wscript", "cscript",
         "java", "bash", "sh", "wsl",
+        // the shells and script runners of macOS and Linux
+        "zsh", "dash", "fish", "ksh", "tcsh", "ruby", "perl", "osascript", "npx", "env",
     };
 
     public static AgentIdentity CreateObserved(string? name, string? clientPath, string? parentPath,
@@ -144,7 +146,8 @@ static class AgentIdentityFactory
     {
         if (string.IsNullOrWhiteSpace(path)) return false;
         var name = Path.GetFileNameWithoutExtension(path.Trim());
-        return InterpreterNames.Contains(name);
+        // python3, python3.12 and pythonw are all the interpreter
+        return InterpreterNames.Contains(name) || name.StartsWith("python", StringComparison.OrdinalIgnoreCase);
     }
 }
 

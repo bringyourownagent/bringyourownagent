@@ -146,7 +146,9 @@ sealed partial class SettingsWindow : Window
     static readonly string[] SimplePages = ["sites", "sources", "activity", "everywhere"];
 
     /// <summary>The tabs the list shows now: the simple ones, or all of them.</summary>
-    internal static IReadOnlyList<(string Id, string Name, string Glyph)> VisiblePages(bool showAll) => VisiblePages(showAll, Pages);
+    internal static IReadOnlyList<(string Id, string Name, string Glyph)> VisiblePages(bool showAll) =>
+        // Everywhere (dictation and the check in every program) listens to the keyboard system-wide: Windows only for now
+        VisiblePages(showAll, Pages.Where(p => p.Id != "everywhere" || OperatingSystem.IsWindows()).ToList());
 
     internal static IReadOnlyList<(string Id, string Name, string Glyph)> VisiblePages(bool showAll,
         IReadOnlyList<(string Id, string Name, string Glyph)> pages) =>
@@ -1053,7 +1055,7 @@ sealed partial class SettingsWindow : Window
     void ConnectAgentPage(StackPanel page)
     {
         Head(page, "My MCP", "Let your AI agent (Claude Code, Codex, opencode) manage this wallet: add models, test them, put them in order. " +
-            "It talks to the wallet through byoa-mcp.exe over a per-user pipe. Start the wallet first; the bridge never starts it and never holds your keys. " +
+            "It talks to the wallet through " + AgentPipeServer.BridgeFileName + " over a per-user pipe. Start the wallet first; the bridge never starts it and never holds your keys. " +
             "This is not the same as giving your agent to a site to answer its questions: that is My agents.");
         var exe = McpPath();
         page.Children.Add(Ui.Box("card", Ui.Column(7,
@@ -1091,11 +1093,14 @@ sealed partial class SettingsWindow : Window
 
     static string McpPath()
     {
-        var candidates = new[]
-        {
-            Path.Combine(AppContext.BaseDirectory, "byoa-mcp.exe"),
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BYOA", "wallet-app", "byoa-mcp.exe"),
-        };
+        var file = AgentPipeServer.BridgeFileName;
+        var candidates = OperatingSystem.IsMacOS()
+            ? new[] { Path.Combine(AppContext.BaseDirectory, file), Path.Combine("/Applications", MacBundle.FolderName, "Contents", "MacOS", file) }
+            : new[]
+            {
+                Path.Combine(AppContext.BaseDirectory, file),
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BYOA", "wallet-app", file),
+            };
         return candidates.FirstOrDefault(File.Exists) ?? candidates[0];
     }
 

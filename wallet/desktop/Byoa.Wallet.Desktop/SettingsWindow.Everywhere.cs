@@ -36,7 +36,7 @@ sealed partial class SettingsWindow
             "Your own models, in every program on this computer and not only on sites. Dictation types what you say into the field you are in; the check reads the text you selected " +
             "and asks your model to do something with it. Both are off until you turn them on: they listen for a hotkey in every program and send keystrokes to the program you are in.");
         var settings = _w.Store.Snapshot().Everywhere;
-        var status = _w.Everywhere.Status;
+        var status = _w.Everywhere?.Status ?? EverywhereStatus.Off;
 
         page.Children.Add(Section("Dictation into any text field"));
         page.Children.Add(Ui.Box("card", DictationCard(settings, status.Dictation)));

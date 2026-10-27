@@ -1,25 +1,25 @@
-using System.Runtime.Versioning;
 using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
 
 namespace Byoa.Wallet.Secrets;
 
 /// <summary>
-/// API keys, encrypted with Windows DPAPI for the current user (<c>secrets.dat</c> in the data folder).
-/// The file never holds plain text; keys are decrypted only for the moment a request needs them, and are never
-/// logged, shown or sent anywhere except to their own provider.
+/// API keys, sealed for the current user (<c>secrets.dat</c> in the data folder): with Windows DPAPI, or on macOS under a key kept in
+/// the user's Keychain (see <see cref="SecretProtectors"/>). The file never holds plain text; keys are decrypted only for the moment a
+/// request needs them, and are never logged, shown or sent anywhere except to their own provider.
 /// </summary>
-[SupportedOSPlatform("windows")]
 public sealed class SecretStore
 {
-    // Extra entropy. It is a constant in this public source, so it is not a secret: DPAPI keeps the file from other accounts, but not from a program running as this user.
-    static readonly byte[] Entropy = Encoding.UTF8.GetBytes("BYOA agent wallet secrets v1");
-
     readonly string _path;
+    readonly ISecretProtector _protector;
     readonly object _gate = new();
 
-    public SecretStore(string path) => _path = path;
+    /// <param name="protector">How the file is sealed; the protector of this operating system when omitted (tests give their own).</param>
+    public SecretStore(string path, ISecretProtector? protector = null)
+    {
+        _path = path;
+        _protector = protector ?? SecretProtectors.CreateDefault();
+    }
 
     public event Action? Changed;
 
@@ -70,7 +70,7 @@ public sealed class SecretStore
     }
 
     /// <summary>
-    /// True while the file exists but cannot be read: it was made by another Windows account, or it is damaged. The wallet then
+    /// True while the file exists but cannot be read: it was made by another account, or its key is gone, or it is damaged. The wallet then
     /// works as if it held no keys (free local models need none), and the first key the visitor enters keeps the unreadable
     /// file next to the new one (<c>secrets.dat.unreadable-&lt;time&gt;</c>) instead of writing over it.
     /// </summary>
@@ -86,7 +86,7 @@ public sealed class SecretStore
 
         try
         {
-            var plain = ProtectedData.Unprotect(File.ReadAllBytes(_path), Entropy, DataProtectionScope.CurrentUser);
+            var plain = _protector.Unprotect(File.ReadAllBytes(_path));
             try
             {
                 var all = JsonSerializer.Deserialize<Dictionary<string, string>>(plain) ?? new(StringComparer.Ordinal);
@@ -118,7 +118,7 @@ public sealed class SecretStore
         var plain = JsonSerializer.SerializeToUtf8Bytes(all);
         try
         {
-            var sealedBytes = ProtectedData.Protect(plain, Entropy, DataProtectionScope.CurrentUser);
+            var sealedBytes = _protector.Protect(plain);
             var temp = _path + ".tmp";
             File.WriteAllBytes(temp, sealedBytes);
             File.Move(temp, _path, overwrite: true);

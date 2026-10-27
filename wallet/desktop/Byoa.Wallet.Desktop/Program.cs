@@ -26,8 +26,8 @@ static class Program
     [STAThread]
     public static int Main(string[] args)
     {
-        if (!OperatingSystem.IsWindows()) return 1;
-        if (WalletPaths.IsCustomHome) Native.SetErrorMode(0x8003);
+        if (!OperatingSystem.IsWindows() && !OperatingSystem.IsMacOS()) return 1;
+        if (OperatingSystem.IsWindows() && WalletPaths.IsCustomHome) Native.SetErrorMode(0x8003);
         AppDomain.CurrentDomain.UnhandledException += (_, e) => LogError(e.ExceptionObject as Exception);
         TaskScheduler.UnobservedTaskException += (_, e) =>
         {
@@ -47,15 +47,14 @@ static class Program
 
         var url = Array.IndexOf(args, "--url");
         if (url >= 0) LinkArgument = url + 1 < args.Length ? args[url + 1] : "";
-        using var instance = new Mutex(true, WalletPaths.MutexName(), out var first);
+        using var instance = SingleInstance.TryAcquire();
+        var first = instance is not null;
         Background = args.Contains("--background") || LinkArgument is not null;
         var userActivation = !args.Contains("--no-user-activation", StringComparer.Ordinal);
         if (!first)
         {
             if (LinkArgument is not null && !HandOffLink(LinkArgument, userActivation) && !WalletPaths.IsCustomHome)
-                Native.MessageBox(IntPtr.Zero,
-                    "The wallet is running but did not take this link.\n\nIf it was started as administrator, close it from the tray icon and open it again normally (from the Start menu); a wallet started that way cannot be reached from the browser.",
-                    "Agent wallet", 0x30);
+                Say("The wallet is running but did not take this link.\n\nIf it was started as administrator, close it from the tray icon and open it again normally (from the Start menu); a wallet started that way cannot be reached from the browser.");
             else if (!Background) AskRunningWalletToOpen();
             return 0;
         }
@@ -64,7 +63,31 @@ static class Program
         return 0;
     }
 
-    public static AppBuilder BuildAvaloniaApp() => AppBuilder.Configure<App>().UsePlatformDetect().LogToTrace();
+    public static AppBuilder BuildAvaloniaApp()
+    {
+        var builder = AppBuilder.Configure<App>().UsePlatformDetect().LogToTrace();
+        // a menu-bar program: no Dock icon and no application menu (the bundle's LSUIElement says the same, but a build run from a folder has no bundle)
+        if (OperatingSystem.IsMacOS()) builder = builder.With(new MacOSPlatformOptions { ShowInDock = false, DisableDefaultApplicationMenuItems = true });
+        return builder;
+    }
+
+    /// <summary>A message for the person before there is any window of the wallet: a message box on Windows, an alert on macOS.</summary>
+    static void Say(string text)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            Native.MessageBox(IntPtr.Zero, text, "Agent wallet", 0x30);
+        }
+        else if (OperatingSystem.IsMacOS())
+        {
+            try
+            {
+                var script = "display alert \"Agent wallet\" message \"" + text.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\n", "\\n") + "\"";
+                using var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("osascript") { ArgumentList = { "-e", script }, UseShellExecute = false, CreateNoWindow = true });
+            }
+            catch (Exception e) when (e is System.ComponentModel.Win32Exception or InvalidOperationException) { /* no alert; nothing else to do */ }
+        }
+    }
 
     static void AskRunningWalletToOpen()
     {

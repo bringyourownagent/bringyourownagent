@@ -20,7 +20,6 @@ public sealed record InvalidTextSource(string Id, string Label, string Message);
 /// and rebuild themselves whenever the settings change. A background scan keeps the "is the runtime running" states
 /// fresh.
 /// </summary>
-[System.Runtime.Versioning.SupportedOSPlatform("windows")]
 public sealed class SourceSet : IDisposable
 {
     readonly SettingsStore _store;

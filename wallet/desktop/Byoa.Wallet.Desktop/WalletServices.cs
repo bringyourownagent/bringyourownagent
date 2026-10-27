@@ -14,7 +14,6 @@ using Byoa.Wallet.Sources;
 namespace Byoa.Wallet.Desktop;
 
 /// <summary>Everything the running wallet is made of, created once at start.</summary>
-[SupportedOSPlatform("windows")]
 sealed class WalletServices : IDisposable
 {
     public WalletServices()
@@ -54,13 +53,15 @@ sealed class WalletServices : IDisposable
         Direct = new DirectTransport(Engine, Pairings, new DirectOptions { DevLocal = DirectLink.DevLocalFromEnvironment });
         Pipe = new PipeServer(Engine, OpenLink);
         AgentPipe = new AgentPipeServer(this, Ui);
-        Everywhere = CreateEverywhere();
+        // Dictation and the check of selected text listen to the keyboard system-wide: Windows only for now
+        Everywhere = OperatingSystem.IsWindows() ? CreateEverywhere() : null;
     }
 
     /// <summary>
     /// Dictation and the check of selected text (the Everywhere page): the native parts, the state machines over them, and the service that listens for
     /// the hotkeys once the visitor has turned a feature on. Nothing is installed or listened to until then.
     /// </summary>
+    [SupportedOSPlatform("windows")]
     EverywhereService CreateEverywhere()
     {
         var keyboard = new WinKeyboard();
@@ -134,14 +135,14 @@ sealed class WalletServices : IDisposable
     public AgentPipeServer AgentPipe { get; }
 
     /// <summary>Dictation and the check of selected text: listens for their hotkeys while the visitor has them on.</summary>
-    public EverywhereService Everywhere { get; }
+    public EverywhereService? Everywhere { get; }
 
     /// <summary>Asks Windows whether another program already holds a hotkey (the Everywhere page checks a hotkey before it keeps it).</summary>
     public IHotkeyProbe HotkeyProbe { get; private set; } = null!;
 
     public void Dispose()
     {
-        Everywhere.Dispose();
+        Everywhere?.Dispose();
         Direct.Dispose();
         Pipe.Dispose();
         AgentPipe.Dispose();

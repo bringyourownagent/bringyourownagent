@@ -6,6 +6,12 @@ using Microsoft.Win32.SafeHandles;
 
 namespace Byoa.Wallet.Desktop;
 
+/// <summary>The reader of the management pipe client's process facts for the operating system the wallet runs on.</summary>
+static class AgentProcessInfo
+{
+    public static IAgentProcessInfo ForThisSystem() => OperatingSystem.IsMacOS() ? new MacAgentProcessInfo() : new WindowsAgentProcessInfo();
+}
+
 /// <summary>Reads the management pipe client's image and its direct parent from Windows.</summary>
 sealed class WindowsAgentProcessInfo : IAgentProcessInfo
 {

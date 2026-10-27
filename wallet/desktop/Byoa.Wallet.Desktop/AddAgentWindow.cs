@@ -17,7 +17,11 @@ sealed class AddAgentWindow : Window
 {
     readonly WalletServices _w;
     readonly TextBox _name = new() { Watermark = "A name you will know it by, for example My Claude", MinWidth = 380 };
-    readonly TextBox _program = new() { Watermark = @"ccodeglm.cmd, claude, or C:\path\to\claude.exe", MinWidth = 300 };
+    readonly TextBox _program = new()
+    {
+        Watermark = OperatingSystem.IsWindows() ? @"ccodeglm.cmd, claude, or C:\path\to\claude.exe" : "claude, or /full/path/to/claude",
+        MinWidth = 300,
+    };
     readonly TextBox _model = new() { Watermark = "Optional: opus, sonnet, haiku, or a model's name", MinWidth = 300 };
     readonly TextBlock _status = new() { TextWrapping = TextWrapping.Wrap };
     readonly Button _test;
@@ -53,7 +57,8 @@ sealed class AddAgentWindow : Window
             {
                 Title = "The program that runs your agent",
                 AllowMultiple = false,
-                FileTypeFilter = [new FilePickerFileType("Programs and launchers") { Patterns = ["*.exe", "*.cmd", "*.bat"] }],
+                // (a program on macOS has no extension: no filter there)
+                FileTypeFilter = OperatingSystem.IsWindows() ? [new FilePickerFileType("Programs and launchers") { Patterns = ["*.exe", "*.cmd", "*.bat"] }] : null,
             });
             if (files.Count > 0 && files[0].TryGetLocalPath() is { } path) _program.Text = path;
         }, "small");

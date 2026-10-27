@@ -63,11 +63,12 @@ namespace Byoa.Wallet.Host
         static bool StartWallet()
         {
             var exe = Environment.GetEnvironmentVariable("BYOA_WALLET_EXE");
-            if (string.IsNullOrWhiteSpace(exe)) exe = Path.Combine(AppContext.BaseDirectory, "Byoa.Wallet.exe");
+            if (string.IsNullOrWhiteSpace(exe)) exe = Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "Byoa.Wallet.exe" : "Byoa.Wallet");
             if (!File.Exists(exe)) return false;
             if (OperatingSystem.IsWindows() && Native.StartDetached(exe, "--background")) return true;
             try
             {
+                if (OperatingSystem.IsMacOS()) return StartOnMac(exe);
                 using var p = Process.Start(new ProcessStartInfo(exe, "--background") { UseShellExecute = true });
                 return p is not null;
             }
@@ -75,6 +76,33 @@ namespace Byoa.Wallet.Host
             {
                 return false;
             }
+        }
+
+        /// <summary>
+        /// macOS: an application bundle is opened through the system (<c>open -g</c>: in the background, as the user's own program, not as a
+        /// child of the browser); a bare program (a build run from a folder) is started detached from this host and from its pipes, because
+        /// this program's standard output is the extension's channel.
+        /// </summary>
+        static bool StartOnMac(string exe)
+        {
+            var bundle = BundleOf(exe);
+            var info = bundle is not null
+                ? new ProcessStartInfo("/usr/bin/open") { ArgumentList = { "-g", "-a", bundle, "--args", "--background" } }
+                : new ProcessStartInfo("/bin/sh") { ArgumentList = { "-c", "nohup \"$0\" --background >/dev/null 2>&1 </dev/null &", exe } };
+            info.UseShellExecute = false;
+            info.CreateNoWindow = true;
+            using var p = Process.Start(info);
+            if (p is null) return false;
+            p.WaitForExit(5000);
+            return true;
+        }
+
+        /// <summary>The <c>.app</c> folder a program inside <c>Contents/MacOS</c> belongs to; null for a program outside a bundle.</summary>
+        internal static string? BundleOf(string exe)
+        {
+            for (var folder = Path.GetDirectoryName(exe); !string.IsNullOrEmpty(folder); folder = Path.GetDirectoryName(folder))
+                if (folder.EndsWith(".app", StringComparison.Ordinal)) return folder;
+            return null;
         }
     }
 

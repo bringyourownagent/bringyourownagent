@@ -5,7 +5,7 @@
   <PropertyGroup>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
-    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <RuntimeIdentifier Condition="$([MSBuild]::IsOSPlatform('Windows'))">win-x64</RuntimeIdentifier>
   </PropertyGroup>
 
   <ItemGroup>
@@ -24,9 +24,6 @@
 
   <ItemGroup>
     <Using Include="Xunit" />
-    <AssemblyAttribute Include="System.Runtime.Versioning.SupportedOSPlatformAttribute">
-      <_Parameter1>windows</_Parameter1>
-    </AssemblyAttribute>
   </ItemGroup>
 
 </Project>

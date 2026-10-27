@@ -55,7 +55,7 @@ sealed class AgentPipeServer : IDisposable
     {
         _w = services;
         _ui = ui;
-        _processInfo = processInfo ?? new WindowsAgentProcessInfo();
+        _processInfo = processInfo ?? AgentProcessInfo.ForThisSystem();
     }
 
     public void Start() => _ = Task.Run(async () =>
@@ -68,6 +68,7 @@ sealed class AgentPipeServer : IDisposable
     async Task AcceptLoopAsync()
     {
         var name = WalletPaths.McpPipeName();
+        WalletPaths.PrepareSocketFolder(name);
         while (!_stop.IsCancellationRequested)
         {
             if (!_connectionSlots.Wait(0))
@@ -234,22 +235,27 @@ sealed class AgentPipeServer : IDisposable
         return IsBridgeIn(path, string.IsNullOrWhiteSpace(configured) ? AppContext.BaseDirectory : configured);
     }
 
+    /// <summary>The bridge's file name: <c>byoa-mcp.exe</c> on Windows, <c>byoa-mcp</c> on macOS.</summary>
+    internal static string BridgeFileName => OperatingSystem.IsWindows() ? "byoa-mcp.exe" : "byoa-mcp";
+
     /// <summary>
-    /// True when <paramref name="path"/> is <c>byoa-mcp.exe</c> inside <paramref name="walletFolder"/>. The wallet's own
-    /// folder comes from <c>AppContext.BaseDirectory</c>, which ends in a backslash, while the folder of the
+    /// True when <paramref name="path"/> is the bridge (<see cref="BridgeFileName"/>) inside <paramref name="walletFolder"/>. The wallet's own
+    /// folder comes from <c>AppContext.BaseDirectory</c>, which ends in a separator, while the folder of the
     /// bridge's image path does not: both are compared without a trailing separator.
     /// </summary>
     internal static bool IsBridgeIn(string? path, string walletFolder)
     {
+        // Windows file names are not case sensitive; a macOS path from the system is exact, and a lookalike in other case must not pass
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
         if (string.IsNullOrWhiteSpace(path) || !Path.IsPathFullyQualified(path) ||
-            !string.Equals(Path.GetFileName(path), "byoa-mcp.exe", StringComparison.OrdinalIgnoreCase))
+            !string.Equals(Path.GetFileName(path), BridgeFileName, comparison))
             return false;
         try
         {
             var folder = walletFolder;
-            if (string.Equals(Path.GetExtension(folder), ".exe", StringComparison.OrdinalIgnoreCase)) folder = Path.GetDirectoryName(folder)!;
+            if (OperatingSystem.IsWindows() && string.Equals(Path.GetExtension(folder), ".exe", StringComparison.OrdinalIgnoreCase)) folder = Path.GetDirectoryName(folder)!;
             static string Normal(string value) => Path.TrimEndingDirectorySeparator(Path.GetFullPath(value));
-            return string.Equals(Normal(Path.GetDirectoryName(path)!), Normal(folder), StringComparison.OrdinalIgnoreCase);
+            return string.Equals(Normal(Path.GetDirectoryName(path)!), Normal(folder), comparison);
         }
         catch (Exception e) when (e is ArgumentException or IOException or NotSupportedException) { return false; }
     }
@@ -423,7 +429,9 @@ sealed class AgentPipeServer : IDisposable
         }
         catch (CryptographicException)
         {
-            return Failure("Windows could not protect the wallet data for this user profile. Try again in the wallet.");
+            return Failure(OperatingSystem.IsWindows()
+                ? "Windows could not protect the wallet data for this user profile. Try again in the wallet."
+                : "The wallet could not protect its data with the Keychain of this user. Try again in the wallet.");
         }
         catch (IOException)
         {

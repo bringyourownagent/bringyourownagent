@@ -8,7 +8,8 @@
     <!-- The file description: what Windows and browsers call the app, e.g. Chrome's "Open Agent wallet?" for a link. -->
     <AssemblyTitle>Agent wallet</AssemblyTitle>
     <RootNamespace>Byoa.Wallet.Desktop</RootNamespace>
-    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <!-- Windows builds default to win-x64; a macOS build names its own runtime on the command line (-r osx-arm64). -->
+    <RuntimeIdentifier Condition="$([MSBuild]::IsOSPlatform('Windows'))">win-x64</RuntimeIdentifier>
     <SelfContained>false</SelfContained>
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
@@ -35,11 +36,6 @@
     <PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.22" />
   </ItemGroup>
 
-  <!-- 0.1 is Windows first (DPAPI, the tray, the native host registration). -->
-  <ItemGroup>
-    <AssemblyAttribute Include="System.Runtime.Versioning.SupportedOSPlatformAttribute">
-      <_Parameter1>windows</_Parameter1>
-    </AssemblyAttribute>
-  </ItemGroup>
+  <!-- Windows and macOS (the Everywhere page is Windows only for now); the Windows-only classes carry their own SupportedOSPlatform. -->
 
 </Project>

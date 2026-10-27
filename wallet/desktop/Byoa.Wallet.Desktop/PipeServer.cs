@@ -32,6 +32,7 @@ sealed class PipeServer : IDisposable
     async Task AcceptLoopAsync()
     {
         var name = WalletPaths.PipeName();
+        WalletPaths.PrepareSocketFolder(name);
         while (!_stop.IsCancellationRequested)
         {
             var pipe = new NamedPipeServerStream(name, PipeDirection.InOut, NamedPipeServerStream.MaxAllowedServerInstances,

@@ -15,7 +15,6 @@ namespace Byoa.Wallet.Registry;
 /// The single management surface for sources, models, routes, API-key entry and agent-facing status. The desktop
 /// page and the MCP pipe both call this class; they do not edit settings behind each other's back.
 /// </summary>
-[SupportedOSPlatform("windows")]
 public sealed class WalletRegistry
 {
     static readonly HashSet<string> Kinds = new(StringComparer.Ordinal)

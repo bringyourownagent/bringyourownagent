@@ -14,7 +14,6 @@ namespace Byoa.Wallet.Desktop;
 /// The desktop side of <see cref="IWalletUi"/>: the tray icon (with its quiet badge), the notices above the tray,
 /// the consent window and the settings window. Called from any thread; everything runs on the UI thread.
 /// </summary>
-[SupportedOSPlatform("windows")]
 sealed class DesktopUi : IWalletUi, IAgentConsentUi, IEndpointConfirmationUi, ISecretDeletionUi
 {
     readonly WalletServices _w;
@@ -37,8 +36,10 @@ sealed class DesktopUi : IWalletUi, IAgentConsentUi, IEndpointConfirmationUi, IS
     /// <summary>Creates the tray icon; called once the Avalonia application is up.</summary>
     public void CreateTray(Application app, Action quit)
     {
-        _icon = new WindowIcon(AssetLoader.Open(new Uri("avares://Byoa.Wallet/Assets/tray.ico")));
-        _badgeIcon = new WindowIcon(AssetLoader.Open(new Uri("avares://Byoa.Wallet/Assets/tray-badge.ico")));
+        // the menu bar of macOS takes a plain picture (44 px: 22 points on a Retina screen), Windows its .ico
+        var type = OperatingSystem.IsMacOS() ? "png" : "ico";
+        _icon = new WindowIcon(AssetLoader.Open(new Uri("avares://Byoa.Wallet/Assets/tray." + type)));
+        _badgeIcon = new WindowIcon(AssetLoader.Open(new Uri("avares://Byoa.Wallet/Assets/tray-badge." + type)));
         var menu = new NativeMenu();
         var open = new NativeMenuItem("Open the wallet");
         open.Click += (_, _) => OpenSettings("sites");
@@ -69,7 +70,7 @@ sealed class DesktopUi : IWalletUi, IAgentConsentUi, IEndpointConfirmationUi, IS
         _w.Secrets.Changed += () => PostSafe(() => _settings?.Invalidate());
         _w.Direct.Changed += () => PostSafe(() => _settings?.Invalidate());
         _w.Registry.Changed += _ => PostSafe(() => _settings?.Invalidate());
-        _w.Everywhere.StatusChanged += () => PostSafe(() => _settings?.Invalidate());
+        if (_w.Everywhere is { } everywhere) everywhere.StatusChanged += () => PostSafe(() => _settings?.Invalidate());
         UpdateBadge();
     }
 

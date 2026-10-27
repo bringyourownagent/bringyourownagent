@@ -16,22 +16,25 @@ public static class AgentPrograms
         !string.IsNullOrEmpty(name) && name.Length <= 64 && char.IsAsciiLetterOrDigit(name[0])
         && name.All(c => char.IsAsciiLetterOrDigit(c) || c is '.' or '_' or ':' or '/' or '-');
 
-    /// <summary>The full path of the program: the path itself when it is one, else the first match on PATH (.exe, .cmd, .bat). Null when there is none.</summary>
+    /// <summary>
+    /// The full path of the program: the path itself when it is one, else the first match on PATH (Windows: .exe, .cmd, .bat; macOS: a file
+    /// that can be run). Null when there is none.
+    /// </summary>
     public static string? Resolve(string? command)
     {
         command = command?.Trim();
         if (string.IsNullOrEmpty(command) || !IsPlain(command)) return null;
         if (Path.IsPathRooted(command)) return File.Exists(command) ? command : null;
         if (command.Contains('\\') || command.Contains('/')) return null;
-        var extensions = Path.HasExtension(command) ? new[] { "" } : new[] { ".exe", ".cmd", ".bat" };
-        foreach (var directory in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+        var extensions = !OperatingSystem.IsWindows() || Path.HasExtension(command) ? new[] { "" } : new[] { ".exe", ".cmd", ".bat" };
+        foreach (var directory in SearchDirectories())
         {
             foreach (var extension in extensions)
             {
                 try
                 {
                     var candidate = Path.Combine(directory.Trim(), command + extension);
-                    if (File.Exists(candidate)) return candidate;
+                    if (File.Exists(candidate) && IsRunnable(candidate)) return candidate;
                 }
                 catch (ArgumentException)
                 {
@@ -41,6 +44,56 @@ public static class AgentPrograms
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// The folders a program name is looked for in: PATH, and on macOS also where agent programs usually live. A program started from the
+    /// Dock or by a browser gets a short PATH (the system's), without Homebrew, npm or the folder of Claude Code's own installer.
+    /// </summary>
+    public static IReadOnlyList<string> SearchDirectories()
+    {
+        var comparison = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+        var seen = new HashSet<string>(comparison);
+        var all = new List<string>();
+        void Add(string? directory)
+        {
+            directory = directory?.Trim();
+            if (!string.IsNullOrEmpty(directory) && seen.Add(directory)) all.Add(directory);
+        }
+
+        foreach (var directory in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)) Add(directory);
+        if (!OperatingSystem.IsMacOS()) return all;
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        foreach (var directory in new[]
+                 {
+                     "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin",
+                     Path.Combine(home, ".local", "bin"), Path.Combine(home, ".claude", "local"), Path.Combine(home, ".npm-global", "bin"),
+                     Path.Combine(home, ".bun", "bin"), Path.Combine(home, ".cargo", "bin"),
+                 }) Add(directory);
+        // nvm and similar tools keep each version of node in a folder of its own
+        var nvm = Path.Combine(home, ".nvm", "versions", "node");
+        try
+        {
+            if (Directory.Exists(nvm))
+                foreach (var version in Directory.GetDirectories(nvm).OrderDescending(StringComparer.Ordinal)) Add(Path.Combine(version, "bin"));
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { /* not readable: skip it */ }
+
+        return all;
+    }
+
+    /// <summary>The PATH to give a program the wallet starts (<see cref="SearchDirectories"/> joined), so that a script that starts with <c>#!/usr/bin/env node</c> finds node.</summary>
+    public static string SearchPath() => string.Join(Path.PathSeparator, SearchDirectories());
+
+    /// <summary>On macOS and Linux a program must have an execute permission; on Windows the extension decides.</summary>
+    static bool IsRunnable(string file)
+    {
+        if (OperatingSystem.IsWindows()) return true;
+        try
+        {
+            return (File.GetUnixFileMode(file) & (UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute)) != 0;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return false; }
     }
 
     /// <summary>The id a source made from a name gets: "agent:" and the name as a plain slug.</summary>
