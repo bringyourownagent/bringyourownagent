@@ -15,7 +15,7 @@
 
   <PropertyGroup>
     <PackageId>BringYourOwnAgent.Relay</PackageId>
-    <Version>0.0.2</Version>
+    <Version>0.0.3</Version>
     <Authors>ultrathinker</Authors>
     <Description>The site's side of the BYOA «direct» link, ready-made for an ASP.NET Core site: the one-time codes of the bringyourownagent:// link, the WebSocket the visitor's agent wallet dials into, and the job relay a page polls. No accounts, no database, nothing kept but the live connections.</Description>
     <PackageTags>byoa;bring-your-own-agent;ai;agents;agent-wallet;relay;websocket;aspnetcore</PackageTags>

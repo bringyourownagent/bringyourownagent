@@ -8,6 +8,7 @@
   body { font: 16px/1.5 system-ui, sans-serif; max-width: 34rem; margin: 2rem auto; padding: 0 1rem; }
   button { font: inherit; padding: .5rem .9rem; }
   #log { white-space: pre-wrap; background: #f4f4f4; padding: .75rem; min-height: 4rem; }
+  #check { font: 700 2rem/1.2 ui-monospace, monospace; letter-spacing: .2em; }
 </style>
 </head>
 <body>
@@ -19,6 +20,8 @@
   <button id="stop" hidden>Cancel</button>
 </p>
 <p id="state">Not connected.</p>
+<p id="waiting" hidden>Your wallet will show this code. Allow only if it is the same:<br><span id="check"></span><br>
+  <a id="again">Open the wallet again</a></p>
 <form id="ask" hidden>
   <input id="q" size="30" placeholder="Is it alive?" autocomplete="off">
   <button>Ask</button>
@@ -55,8 +58,16 @@ $('direct').onclick = async () => {
   controller = new AbortController();
   $('stop').hidden = false;
   $('state').textContent = 'Waiting for your wallet... (allow the browser to open it)';
-  const result = await connectWithoutExtension({ signal: controller.signal });   // from a click
+  const result = await connectWithoutExtension({                                  // from a click
+    signal: controller.signal,
+    onIssued: ({ link, check }) => {           // the same code is in the wallet's consent window
+      $('check').textContent = check ?? '';
+      $('again').href = link;                  // in case the visitor closed the browser's question
+      $('waiting').hidden = false;
+    },
+  });
   $('stop').hidden = true;
+  $('waiting').hidden = true;
   if (result.state !== 'connected') { $('state').textContent = 'The wallet did not connect.'; return; }
   $('state').textContent = 'Connected without the extension.';
   ask = async (question) => {

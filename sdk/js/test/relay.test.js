@@ -3,7 +3,7 @@
 
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
-import { createRelay, encodeManifest } from '../src/site/relay.js';
+import { CHECK_ALPHABET, connectCheck, createRelay, encodeManifest } from '../src/site/relay.js';
 import { MANIFEST, connect, hello, registerCleanup, sleep, start } from './relay-helpers.js';
 
 registerCleanup();
@@ -46,6 +46,33 @@ describe('codes and links', () => {
     w.send(hello(code));
     assert.deepEqual(await w.next(), { type: 'error', code: 'bad-session' });
     await w.closedWith;
+  });
+
+  test('the check code is the one the spec computes (vectors from an independent Python script)', () => {
+    const vectors = [
+      ['', 'G7CP'], ['a', 'G3Y6'], ['test-session-0001', 'PW4A'], ['V8lRbzS0m6b-9A0vV8lRbzS0m6b-9A0v', '88UT'],
+      ['kQ3Zr8Yt1pLd5Nw7Xc2Vb9Mj4Hf6Gs0A', 'QZTP'], ['0123456789abcdefghijklmnopqrstuvwxyz', 'X5N7'], ['SESSION-é中\u{1f600}', 'P546'],
+    ];
+    for (const [session, expected] of vectors) assert.equal(connectCheck(session), expected, session);
+    assert.equal(CHECK_ALPHABET, 'ABCDEFGHJKMNPQRSTUVWXYZ23456789');
+    assert.throws(() => connectCheck(null), /session code/);
+  });
+
+  test('with connectCheck the links say so and every code comes with its check code', async () => {
+    const env = await start({ connectCheck: true });
+    const issued = env.relay.newCode('p', { ip: 'a' });
+    assert.equal(issued.check, connectCheck(issued.code));
+    const manifest = JSON.parse(Buffer.from(new URL(issued.link).searchParams.get('manifest'), 'base64url').toString('utf8'));
+    assert.deepEqual(manifest, { ...MANIFEST, connect: { check: true } });
+    const w = env.wallet();
+    await w.open;
+    w.send(hello(issued.code));
+    const welcome = await w.next();
+    assert.equal(welcome.manifest, new URL(issued.link).searchParams.get('manifest'), 'the welcome echoes the manifest of the link');
+    const plain = await start();
+    assert.equal('check' in plain.relay.newCode('p', { ip: 'a' }), false);
+    const declared = await start({ manifest: { ...MANIFEST, connect: { check: true } } });
+    assert.match(declared.relay.newCode('p', { ip: 'a' }).check, /^[A-Z2-9]{4}$/);
   });
 
   test('an invalid manifest or an endpoint that is not ws(s) is refused at creation', () => {

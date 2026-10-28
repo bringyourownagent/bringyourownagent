@@ -2,7 +2,14 @@
 
 The libraries share one version number and one rule set. Dates are UTC.
 
-## Unreleased (Node.js)
+## 0.0.3 for Node.js and .NET (2026-10-28)
+
+The site's side of the wallet connection, released. No change to any rule: the shared test vectors are the same 173, and the Python package stays at 0.0.2.
+
+- Node.js: `bringyourownagent/browser`, `bringyourownagent/relay` and `bringyourownagent/crossdevice` are in the package (they were in the repository only). The relay's new option `connectCheck` puts `"connect": { "check": true }` into the links' manifest and adds `check`, the four-character connect check code of spec/CONTRACT-DIRECT.md section 3a, to every `newCode` answer; `connectCheck(session)` computes it on its own. The page helper `connectWithoutExtension` takes `onIssued({ code, link, check })` to show the code (and the link) while it waits. `bringyourownagent/crossdevice` offers the link for another device to a phone or a computer with no wallet: the check code, copy, Share, a QR code made on the page, and the project's web wallet. The example site in `sdk/examples/site/` shows the check code.
+- .NET: the first release of `BringYourOwnAgent.Relay`, the same site's side for ASP.NET Core (net10.0): `AddByoaRelay`, `MapByoaRelay`, one-time codes, the check code (`ConnectCheck`), the wallet's WebSocket, and a job relay a page polls. `BringYourOwnAgent` itself only moves to 0.0.3 with it.
+
+## Earlier, unreleased (Node.js)
 
 - Added the site's side of the wallet connection, no change to any rule: `bringyourownagent/browser` (page helpers for the extension, and "connect without the extension" with a `bringyourownagent://` link) and `bringyourownagent/relay` (a small server part: one-time codes, pairing tokens, the wallet's WebSocket and calls to it, as in `spec/CONTRACT-DIRECT.md`). The relay needs the optional peer dependency `ws`. A runnable example site is in `sdk/examples/site/`. Each site runs its own relay; there is no shared one. Reviewed independently before release: bounded call queue, caps on sockets, connection age and what a wallet may return, per-address (IPv6 /64) and per-page code limits, an address that must be given, honest typings.
 - The relay follows wallets that work with text (spec/CONTRACT-DIRECT.md section 4, CONTRACT.md sections 3.3 and 3.4), no change to any rule: a connection reports the limits and the models the visitor gave the site (`connection.grant.limits`, `.models`, and a `grant` event when the visitor changes them), keeps as many calls in flight as the wallet's `maxParallelCalls` says (the new option `maxInFlight` can only lower it; 4 for a wallet that says nothing), hands streamed pieces to `call(..., { onChunk })`, and lets a receipt carry the `model` that answered. The three new limit names (`maxAnswerTokens`, `maxCallSeconds`, `maxParallelCalls`) still pass `validateManifest` with a `limit-unknown` warning, as the spec says for 0.0.2 libraries.

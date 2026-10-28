@@ -65,7 +65,11 @@ export function openWalletLink(link) {
  * @param {number} [options.waitMs=90000]   After this long: `{ state: 'timeout' }`, with no other detail.
  * @param {number} [options.pollMs=1000]
  * @param {AbortSignal} [options.signal]    Abort to cancel: `{ state: 'cancelled' }`.
- * @param {(link: string) => void} [options.open]  Replaces `openWalletLink` (tests).
+ * @param {(issued: { code: string, link: string, check?: string }) => void} [options.onIssued]  Called once the
+ *   server has answered, before the link is opened: show `check` (the connect check code) in large letters while you
+ *   wait, and the link itself, in case the visitor closed the browser's question.
+ * @param {(link: string) => void} [options.open]  Replaces `openWalletLink`; on a phone, where nothing handles the
+ *   link, pass `() => {}` and offer the link for another device instead (`bringyourownagent/crossdevice`).
  * @returns {Promise<{ state: 'connected', pairing: string } | { state: 'expired' | 'timeout' | 'cancelled' | 'error' }>}
  */
 export function connectWithoutExtension(options = {}) {
@@ -80,7 +84,7 @@ let connecting = null;
 async function connect(options) {
   const {
     newCodeUrl = '/byoa/code', stateUrl = '/byoa/state', cancelUrl = '/byoa/cancel',
-    waitMs = 90_000, signal, open = openWalletLink,
+    waitMs = 90_000, signal, open = openWalletLink, onIssued,
   } = options;
   const pollMs = Math.max(options.pollMs ?? 1000, 5); // never a busy loop
   const fetchJson = async (url, init) => {
@@ -94,6 +98,8 @@ async function connect(options) {
   const code = issued?.code ?? issued?.session;
   if (typeof issued?.link !== 'string' || typeof code !== 'string') return { state: 'error' };
   issued.code = code;
+  const check = typeof issued.check === 'string' ? issued.check : undefined;
+  try { onIssued?.({ code, link: issued.link, ...(check ? { check } : {}) }); } catch { /* the page's own trouble */ }
   try { open(issued.link); } catch { return { state: 'error' }; }
 
   const until = Date.now() + waitMs;

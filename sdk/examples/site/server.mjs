@@ -31,7 +31,9 @@ export const MANIFEST = {
   expectedCost: { perSession: '0.00 USD' },
 };
 
-const relay = createRelay({ manifest: MANIFEST, endpoint: ENDPOINT });
+// connectCheck: the page shows a four-character code while it waits, and the wallet shows the same one before Allow,
+// so a link somebody else sent to the visitor cannot pair his wallet with their page (spec/CONTRACT-DIRECT.md 3a)
+const relay = createRelay({ manifest: MANIFEST, endpoint: ENDPOINT, connectCheck: true });
 relay.on('connected', (wallet) => console.log('wallet connected:', wallet.wallet?.name ?? '?'));
 relay.on('disconnected', () => console.log('wallet disconnected'));
 

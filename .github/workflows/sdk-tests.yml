@@ -63,6 +63,18 @@ jobs:
         working-directory: sdk/dotnet
         run: dotnet run --project tests/BringYourOwnAgent.Tests -c Release -f net8.0 -p:TestNetStandard=true
 
+  dotnet-relay:
+    # The site's side of the direct link for ASP.NET Core (BringYourOwnAgent.Relay, net10.0).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: Relay tests
+        working-directory: sdk/dotnet
+        run: dotnet test tests/BringYourOwnAgent.Relay.Tests -c Release
+
   dotnet-framework:
     # The netstandard2.0 build on .NET Framework 4.8, as Windows desktop apps load it.
     runs-on: windows-latest

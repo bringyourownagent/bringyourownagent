@@ -56,6 +56,8 @@ export interface RelayOptions {
   manifest: object;
   /** The wallet's WebSocket URL, `wss://your-host/byoa/ws` (no user name, no fragment). */
   endpoint: string;
+  /** Your page shows the connect check code: the links' manifest gets `connect.check` and `newCode` answers with `check`. Default false (on when the manifest says so). */
+  connectCheck?: boolean;
   /** Codes one address may ask for in a minute (see `addressKey`). Default 10. */
   codesPerMinute?: number;
   /** Codes one page (`pageKey`) may ask for in a minute. Default 6. */
@@ -107,7 +109,8 @@ export class Relay extends EventEmitter {
    * connection, or from a header that your own reverse proxy sets (never one the visitor can send).
    * Returns null when this address or page asked for too many in the last minute, or the table is full.
    */
-  newCode(pageKey: string, options: { ip: string }): { code: string; link: string; expiresAt: string } | null;
+  /** `check` is there when the relay checks connections (`connectCheck`, or `connect.check` in the manifest). */
+  newCode(pageKey: string, options: { ip: string }): { code: string; link: string; expiresAt: string; check?: string } | null;
   /** Has the wallet come with this code? `connected` carries the pairing token for the page to keep. */
   codeState(pageKey: string, code: string): { state: 'waiting' | 'expired' } | { state: 'connected'; pairing: string };
   /** The page stopped waiting: a wallet that arrives with this code later hears "bad-session". */
@@ -141,6 +144,10 @@ export function createRelay(options: RelayOptions): Relay;
 export function encodeManifest(manifest: object): string;
 /** `bringyourownagent://connect?v=0.1&endpoint=...&manifest=...&session=...` */
 export function connectLink(endpoint: string, manifestB64: string, code: string): string;
+/** The alphabet of the connect check code (no I, L, O, 0, 1). */
+export const CHECK_ALPHABET: string;
+/** The connect check code of a session (spec/CONTRACT-DIRECT.md section 3a): four characters the page and the wallet both show. */
+export function connectCheck(session: string): string;
 export const CODE_LIFE_MS: number;
 export const MAX_FRAME_BYTES: number;
 export const MAX_MANIFEST_BYTES: number;

@@ -85,21 +85,25 @@ button.onclick = async () => {              // both need a click
     const grant = await requestWithExtension(manifest);          // null: AI unavailable, use your own path
     const answer = await callWithExtension(grant, 'text.generate', { messages }, { choices: ['yes', 'no'] });
   } else {
-    const r = await connectWithoutExtension();                    // starts the wallet with a bringyourownagent:// link
+    const r = await connectWithoutExtension({                     // starts the wallet with a bringyourownagent:// link
+      onIssued: ({ link, check }) => showWaiting(check, link),    // show the check code big; the wallet shows the same
+    });
     // r = { state: 'connected', pairing } | { state: 'timeout' | 'expired' | 'cancelled' | 'error' }
   }
 };
 ```
+
+While the page waits it shows the **check code** in large letters, with a line like "Your wallet will show this code. Allow only if it matches." The wallet shows the same four characters before Allow, so a link that somebody else sent to the visitor cannot pair his wallet with their page (spec/CONTRACT-DIRECT.md section 3a).
 
 **On your server** (`bringyourownagent/relay`, needs `npm install ws`):
 
 ```js
 import { createRelay } from 'bringyourownagent/relay';
 
-const relay = createRelay({ manifest, endpoint: 'wss://your-host/byoa/ws' });   // the manifest is validated now
+const relay = createRelay({ manifest, endpoint: 'wss://your-host/byoa/ws', connectCheck: true });   // the manifest is validated now
 await relay.attach(httpServer, '/byoa/ws');                                      // the wallet connects here
 
-// your routes: POST /byoa/code      -> relay.newCode(pageKey, { ip })     { code, link }   (ip: the connection's, or your proxy's header)
+// your routes: POST /byoa/code      -> relay.newCode(pageKey, { ip })     { code, link, check }   (ip: the connection's, or your proxy's header)
 //              GET  /byoa/state     -> relay.codeState(pageKey, code)     { state, pairing? }
 //              POST /byoa/cancel    -> relay.cancel(pageKey, code)
 

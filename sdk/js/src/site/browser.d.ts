@@ -29,7 +29,9 @@ export interface ConnectOptions {
   /** Default 1000; never less than 5. */
   pollMs?: number;
   signal?: AbortSignal;
-  /** Replaces `openWalletLink` (tests). */
+  /** Called once the server has answered, before the link opens: show `check` (the connect check code) and the link while you wait. */
+  onIssued?: (issued: { code: string; link: string; check?: string }) => void;
+  /** Replaces `openWalletLink`; on a phone pass `() => {}` and offer the link for another device (`bringyourownagent/crossdevice`). */
   open?: (link: string) => void;
 }
 export type ConnectResult =

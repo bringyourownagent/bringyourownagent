@@ -16,7 +16,7 @@
 
   <PropertyGroup>
     <PackageId>BringYourOwnAgent</PackageId>
-    <Version>0.0.2</Version>
+    <Version>0.0.3</Version>
     <Authors>ultrathinker</Authors>
     <Description>Early draft reference implementation of BYOA (Bring Your Own Agent): manifest validation and the call gate.</Description>
     <PackageTags>byoa;bring-your-own-agent;ai;agents;agent-wallet;protocol;manifest;grant;local-models</PackageTags>

@@ -9,7 +9,7 @@
 // (an optional peer dependency of this library): `npm install ws`.
 
 import { EventEmitter } from 'node:events';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { isIPv6 } from 'node:net';
 import { validateManifest } from '../manifest.js';
 
@@ -37,6 +37,23 @@ export function encodeManifest(manifest) {
 export function connectLink(endpoint, manifestB64, code) {
   return `bringyourownagent://connect?v=0.1&endpoint=${encodeURIComponent(endpoint)}`
     + `&manifest=${encodeURIComponent(manifestB64)}&session=${encodeURIComponent(code)}`;
+}
+
+/** The alphabet of the connect check code: no I, L, O, 0 or 1, which are told apart badly by eye. */
+export const CHECK_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+
+/**
+ * The connect check code of one session (spec/CONTRACT-DIRECT.md section 3a): four characters that the page shows
+ * while it waits and the wallet shows in its consent window, so the visitor sees that the connection he started is
+ * the one he is asked to allow. `d = SHA-256(UTF-8("BYOA-CHECK-1:" + session))`, character i is
+ * `CHECK_ALPHABET[d[i] mod 31]`. It is not a secret: the session it comes from is in the link.
+ */
+export function connectCheck(session) {
+  if (typeof session !== 'string') throw new TypeError('connectCheck needs the session code as a string');
+  const d = createHash('sha256').update('BYOA-CHECK-1:' + session, 'utf8').digest();
+  let code = '';
+  for (let i = 0; i < 4; i++) code += CHECK_ALPHABET[d[i] % CHECK_ALPHABET.length];
+  return code;
 }
 
 /**
@@ -238,6 +255,8 @@ export class WalletConnection extends EventEmitter {
  * @param {object} options
  * @param {object} options.manifest       The manifest this site asks with (validated now; it travels in every link).
  * @param {string} options.endpoint       The wallet's WebSocket URL, `wss://your-host/byoa/ws`.
+ * @param {boolean} [options.connectCheck=false]  Your page shows the connect check code while it waits: the links'
+ *   manifest gets `"connect": { "check": true }` and `newCode` answers with `check` (also on when the manifest already says so).
  * @param {number} [options.codesPerMinute=10]     Codes one address may ask for in a minute.
  * @param {number} [options.codesPerPageMinute=6]  Codes one page (`pageKey`) may ask for in a minute.
  * @param {number} [options.callTimeoutMs=12000]
@@ -274,8 +293,11 @@ export class Relay extends EventEmitter {
       || endpoint.username || endpoint.password || endpoint.hash) {
       throw new TypeError('options.endpoint must be a ws:// or wss:// URL without user name or fragment');
     }
-    this.manifest = options.manifest;
-    this.manifestB64 = encodeManifest(options.manifest);
+    this.checks = options.connectCheck === true || options.manifest.connect?.check === true;
+    this.manifest = this.checks && options.manifest.connect?.check !== true
+      ? { ...options.manifest, connect: { ...options.manifest.connect, check: true } }
+      : options.manifest;
+    this.manifestB64 = encodeManifest(this.manifest);
     this.endpoint = options.endpoint;
     this.limits = {
       codesPerMinute: options.codesPerMinute ?? 10,
@@ -316,7 +338,8 @@ export class Relay extends EventEmitter {
    * Give the address of the connection, or a header that your own reverse proxy sets (never one the visitor can
    * send); behind a proxy the socket's address is the proxy's, which would put every visitor in one bucket.
    *
-   * Returns null when this address or page asked for too many codes in the last minute, or the table is full.
+   * Returns `{ code, link, expiresAt }`, with `check` (the code your page shows) when the relay checks connections,
+   * or null when this address or page asked for too many codes in the last minute, or the table is full.
    */
   newCode(pageKey, { ip } = {}) {
     if (typeof pageKey !== 'string' || pageKey === '') throw new TypeError('newCode needs a pageKey');
@@ -331,7 +354,9 @@ export class Relay extends EventEmitter {
     byPage.push(now);
     const code = { value: secret(), pageKey, expires: now + CODE_LIFE_MS, used: false, cancelled: false, pairing: null };
     this._codes.set(code.value, code);
-    return { code: code.value, link: connectLink(this.endpoint, this.manifestB64, code.value), expiresAt: new Date(code.expires).toISOString() };
+    const issued = { code: code.value, link: connectLink(this.endpoint, this.manifestB64, code.value), expiresAt: new Date(code.expires).toISOString() };
+    if (this.checks) issued.check = connectCheck(code.value);
+    return issued;
   }
 
   _recent(map, key, now) {

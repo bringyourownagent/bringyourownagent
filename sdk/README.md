@@ -1,14 +1,14 @@
-# BYOA libraries (version 0.0.2, early draft)
+# BYOA libraries (Node.js and .NET 0.0.3, Python 0.0.2; early draft)
 
 Reference implementations of the first BYOA rules, in three languages that must agree exactly. They check a requester's **manifest** and decide whether one **call** may go ahead under the visitor's **grant** (`allowed`, `warn`, `ask` or `blocked`). The rules are in [`../spec/rules-0.1-draft.md`](../spec/rules-0.1-draft.md), a draft for discussion.
 
 | Folder | What | Package |
 |---|---|---|
 | [`python/`](python/) | Python 3.9+, standard library only; `import bringyourownagent` | `bringyourownagent` on PyPI |
-| [`js/`](js/) | Node.js 18+, ES module, zero dependencies, TypeScript types | `bringyourownagent` on npm |
-| [`dotnet/`](dotnet/) | .NET 8 (no dependencies) and .NET Standard 2.0 for .NET Framework desktop apps; `using BringYourOwnAgent;` | `BringYourOwnAgent` on NuGet |
+| [`js/`](js/) | Node.js 18+, ES module, zero dependencies, TypeScript types. Also the site's side of the wallet connection: `bringyourownagent/browser` (the page), `bringyourownagent/relay` (your server; needs `ws`), `bringyourownagent/crossdevice` (a phone, or a computer with no wallet) | `bringyourownagent` on npm |
+| [`dotnet/`](dotnet/) | .NET 8 (no dependencies) and .NET Standard 2.0 for .NET Framework desktop apps; `using BringYourOwnAgent;`. The site's side of the wallet connection for ASP.NET Core (.NET 10): [`BringYourOwnAgent.Relay`](dotnet/src/BringYourOwnAgent.Relay/README.md) | `BringYourOwnAgent` and `BringYourOwnAgent.Relay` on NuGet |
 | [`test-vectors/`](test-vectors/) | Shared JSON cases, input and expected result, that every library must pass | — |
-| [`examples/`](examples/) | A manifest, a grant, calls and a state for trying the `bringyourownagent` command line tool | — |
+| [`examples/`](examples/) | A manifest, a grant, calls and a state for trying the `bringyourownagent` command line tool; [`site/`](examples/site/), a complete small site that asks the visitor's own model | — |
 
 Every public name is `bringyourownagent`: the PyPI distribution, the Python import package, the npm package and the command in both. The .NET package follows .NET naming: package, assembly and namespace `BringYourOwnAgent`. The short name `byoa` is only the protocol version field inside documents (`"byoa": "0.1-draft"`).
 

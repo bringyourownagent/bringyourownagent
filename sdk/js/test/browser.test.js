@@ -76,6 +76,21 @@ describe('connect without the extension', () => {
     assert.equal(polls, 3);
   });
 
+  test('onIssued hears the code, the link and the check code before the link opens', async () => {
+    const order = [];
+    fakeFetch((url) => (url === '/byoa/code'
+      ? { json: { code: 'c', link: 'bringyourownagent://x', check: 'K7MQ' } } : { json: { state: 'connected', pairing: 'P' } }));
+    const result = await connectWithoutExtension({
+      pollMs: 1, onIssued: (issued) => order.push(['issued', issued]), open: (link) => order.push(['open', link]),
+    });
+    assert.deepEqual(result, { state: 'connected', pairing: 'P' });
+    assert.deepEqual(order, [['issued', { code: 'c', link: 'bringyourownagent://x', check: 'K7MQ' }], ['open', 'bringyourownagent://x']]);
+    fakeFetch((url) => (url === '/byoa/code' ? { json: { session: 's', link: 'bringyourownagent://y' } } : { json: { state: 'expired' } }));
+    const seen = [];
+    await connectWithoutExtension({ pollMs: 1, open() {}, onIssued: (issued) => { seen.push(issued); throw new Error('page bug'); } });
+    assert.deepEqual(seen, [{ code: 's', link: 'bringyourownagent://y' }], 'no check code: none is passed, and a throwing callback changes nothing');
+  });
+
   test('an expired code, a server error and a refused link are plain answers', async () => {
     fakeFetch((url) => (url === '/byoa/code' ? { json: { code: 'c', link: 'bringyourownagent://x' } } : { json: { state: 'expired' } }));
     assert.deepEqual(await connectWithoutExtension({ pollMs: 1, open() {} }), { state: 'expired' });
