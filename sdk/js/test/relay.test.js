@@ -242,8 +242,11 @@ describe('calls', () => {
   test('bye from the wallet ends the connection', async () => {
     const env = await start();
     const { w, welcome } = await connect(env);
+    // the relay's own close, not the test socket's: on a fast machine the socket hears the close before the relay has let go
+    const relayClosed = new Promise((resolve) => env.relay.walletFor(welcome.pairing).once('close', resolve));
     w.send({ type: 'bye' });
     await w.closedWith;
+    await relayClosed;
     assert.equal(env.relay.walletFor(welcome.pairing), undefined);
   });
 });
