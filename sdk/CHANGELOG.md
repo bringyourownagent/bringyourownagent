@@ -2,9 +2,9 @@
 
 The libraries share one version number and one rule set. Dates are UTC.
 
-## 0.0.3 for Node.js and .NET (2026-10-28)
+## 0.0.3 (2026-10-28)
 
-The site's side of the wallet connection, released. No change to any rule: the shared test vectors are the same 173, and the Python package stays at 0.0.2.
+The site's side of the wallet connection, released. No change to any rule: the shared test vectors are the same 173. The Python package moves to 0.0.3 only to keep the one shared version number; nothing in it changed.
 
 - Node.js: `bringyourownagent/browser`, `bringyourownagent/relay` and `bringyourownagent/crossdevice` are in the package (they were in the repository only). The relay's new option `connectCheck` puts `"connect": { "check": true }` into the links' manifest and adds `check`, the four-character connect check code of spec/CONTRACT-DIRECT.md section 3a, to every `newCode` answer; `connectCheck(session)` computes it on its own. The page helper `connectWithoutExtension` takes `onIssued({ code, link, check })` to show the code (and the link) while it waits. `bringyourownagent/crossdevice` offers the link for another device to a phone or a computer with no wallet: the check code, copy, Share, a QR code made on the page, and the project's web wallet. The example site in `sdk/examples/site/` shows the check code.
 - .NET: the first release of `BringYourOwnAgent.Relay`, the same site's side for ASP.NET Core (net10.0): `AddByoaRelay`, `MapByoaRelay`, one-time codes, the check code (`ConnectCheck`), the wallet's WebSocket, and a job relay a page polls. `BringYourOwnAgent` itself only moves to 0.0.3 with it.

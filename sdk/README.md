@@ -1,4 +1,4 @@
-# BYOA libraries (Node.js and .NET 0.0.3, Python 0.0.2; early draft)
+# BYOA libraries (version 0.0.3, early draft)
 
 Reference implementations of the first BYOA rules, in three languages that must agree exactly. They check a requester's **manifest** and decide whether one **call** may go ahead under the visitor's **grant** (`allowed`, `warn`, `ask` or `blocked`). The rules are in [`../spec/rules-0.1-draft.md`](../spec/rules-0.1-draft.md), a draft for discussion.
 
