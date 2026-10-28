@@ -43,8 +43,11 @@ A family geography game: players name countries out loud, the map fills in. It n
 - [docs/prior-art.md](docs/prior-art.md) — related work and how BYOA differs
 - [spec/](spec/) — the protocol specification (v0.1 in progress)
 - [spec/rules-0.1-draft.md](spec/rules-0.1-draft.md) — the first machine-checkable rules, a draft for discussion
-- [sdk/](sdk/) — early draft libraries for Python, Node.js and .NET that implement these rules, with shared test vectors
-- [wallet/](wallet/) — the agent wallet 0.1 for Windows: a tray app, a native messaging host and a Chrome extension; local speech recognition with your own models ([design](docs/wallet-0.1.md))
+- [sdk/](sdk/) — early draft libraries for Python, Node.js and .NET that implement these rules, with shared test vectors, and the site's side of the wallet connection (npm `bringyourownagent/browser`, `/relay`, `/crossdevice`; NuGet `BringYourOwnAgent.Relay`), version 0.0.3
+- [wallet/](wallet/) — the agent wallet 0.1 for Windows and macOS (Apple silicon): a tray or menu-bar app, a native messaging host, a Chrome extension and an MCP bridge. It holds no model: it passes a site's request, after your consent, to a model on your computer, a free demo model, your own API key or your own agent ([design](docs/wallet-0.1.md)). Download: <https://bringyourownagent.org/wallet>
+- [webwallet/](webwallet/) — a prototype of the wallet in a browser tab, for a phone or a computer with nothing installed (<https://wallet.bringyourownagent.org>)
+
+Sites that use the wallet: [geo.appshub.net](https://geo.appshub.net) (a voice geography game), [Twenty Questions](https://twenty-questions.appshub.net), [WhoisRight](https://whoisright.org) (several of your models judge a dispute) and [Chat to Agents](https://chat-to-agents.appshub.net) (your models and your own agents in one chat).
 
 ## Author
 
