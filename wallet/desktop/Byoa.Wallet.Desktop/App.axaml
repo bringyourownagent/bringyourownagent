@@ -1,6 +1,7 @@
 <Application xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              x:Class="Byoa.Wallet.Desktop.App"
+             Name="Agent Wallet"
              RequestedThemeVariant="Light">
   <!-- Colours and type follow the BYOA design system (DESIGN.md of the site): three inks (sign blue, signal orange,
        board black) on enamel white and quiet desktop neutrals; Barlow for controls, Barlow Semi Condensed for signs. -->

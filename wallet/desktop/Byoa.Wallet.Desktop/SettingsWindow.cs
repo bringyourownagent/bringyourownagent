@@ -335,7 +335,7 @@ sealed partial class SettingsWindow : Window
         var sites = _w.Store.Snapshot().Sites.OrderByDescending(s => _w.Engine.LastSeen(s) ?? DateTimeOffset.MinValue).ToList();
         if (sites.Count == 0)
         {
-            page.Children.Add(Ui.Wrap("No site has asked yet. When a page asks to use your AI after your click, a short notice appears above the tray.", "muted"));
+            page.Children.Add(Ui.Wrap("No site has asked yet. A site may ask only after you click something on it, and the wallet asks you before it answers.", "muted"));
         }
         else
         {
@@ -484,7 +484,7 @@ sealed partial class SettingsWindow : Window
         if (site.QuietRequests > 0)
         {
             card.Children.Add(Ui.Wrap(site.QuietRequests.ToString(CultureInfo.InvariantCulture) + (site.QuietRequests == 1 ? " request" : " requests")
-                + " without a click held back: no notice, only a dot on the tray.", "muted"));
+                + " without a click held back: no notice, only a dot on the wallet's icon.", "muted"));
         }
 
         var buttons = Ui.Row(8);
