@@ -149,6 +149,9 @@ public class InstallerTests
         Assert.Equal(typeof(WalletPaths).Assembly.GetName().Version!.ToString(3), WalletPaths.Version);
     }
 
+    /// <summary>A test must never write to the real wallet's errors.log.</summary>
+    static void NoLog(Exception error) { }
+
     sealed class FakeEngine : IUpdateEngine
     {
         public bool CanUpdateItself { get; set; } = true;
@@ -178,7 +181,7 @@ public class InstallerTests
     public async Task NothingIsAskedOfTheSiteUntilThePersonPressesTheButton()
     {
         var engine = new FakeEngine();
-        var updater = new WalletUpdater(engine, () => { });
+        var updater = new WalletUpdater(engine, () => { }, NoLog);
         Assert.Equal(UpdateState.Idle, updater.State);
         Assert.Empty(engine.Calls);
 
@@ -189,7 +192,7 @@ public class InstallerTests
     [Fact]
     public async Task TheNewestVersionIsSaid()
     {
-        var updater = new WalletUpdater(new FakeEngine { Newer = null }, () => { });
+        var updater = new WalletUpdater(new FakeEngine { Newer = null }, () => { }, NoLog);
         await updater.CheckAsync();
         Assert.Equal(UpdateState.UpToDate, updater.State);
         Assert.Null(updater.NewVersion);
@@ -200,7 +203,7 @@ public class InstallerTests
     {
         var engine = new FakeEngine { Newer = "0.31.0" };
         var quit = 0;
-        var updater = new WalletUpdater(engine, () => { quit++; engine.Calls.Add("quit"); });
+        var updater = new WalletUpdater(engine, () => { quit++; engine.Calls.Add("quit"); }, NoLog);
         var seen = new List<UpdateState>();
         updater.Changed += () => seen.Add(updater.State);
 
@@ -220,7 +223,7 @@ public class InstallerTests
     public async Task InstallDoesNothingBeforeAVersionWasFound()
     {
         var engine = new FakeEngine { Newer = "0.31.0" };
-        var updater = new WalletUpdater(engine, () => Assert.Fail("must not close"));
+        var updater = new WalletUpdater(engine, () => Assert.Fail("must not close"), NoLog);
         await updater.InstallAsync();
         Assert.Empty(engine.Calls);
     }
@@ -228,9 +231,11 @@ public class InstallerTests
     [Fact]
     public async Task AnUnreachableSiteIsSaidInPlainWordsAndTheWalletStaysOpen()
     {
-        var updater = new WalletUpdater(new FakeEngine { CheckFails = new HttpRequestException("secret detail") }, () => Assert.Fail("must not close"));
+        var logged = new List<Exception>();
+        var updater = new WalletUpdater(new FakeEngine { CheckFails = new HttpRequestException("secret detail") }, () => Assert.Fail("must not close"), logged.Add);
         await updater.CheckAsync();
         Assert.Equal(UpdateState.Failed, updater.State);
+        Assert.Single(logged);                                                 // the log (types and stacks only) gets it; the person gets plain words
         Assert.Contains("bringyourownagent.org", updater.Error);
         Assert.DoesNotContain("secret detail", updater.Error);
     }
@@ -239,7 +244,7 @@ public class InstallerTests
     public async Task AFailedDownloadKeepsTheWalletRunningAndAllowsAnotherTry()
     {
         var engine = new FakeEngine { Newer = "0.31.0", DownloadFails = new IOException("disk full") };
-        var updater = new WalletUpdater(engine, () => Assert.Fail("must not close"));
+        var updater = new WalletUpdater(engine, () => Assert.Fail("must not close"), NoLog);
         await updater.CheckAsync();
         await updater.InstallAsync();
 
@@ -264,6 +269,6 @@ public class InstallerTests
     public void ACopyThatTheInstallerDidNotPutInPlaceSaysSo()
     {
         Assert.False(new NoUpdateEngine().CanUpdateItself);
-        Assert.False(new WalletUpdater(new NoUpdateEngine(), () => { }).CanUpdateItself);
+        Assert.False(new WalletUpdater(new NoUpdateEngine(), () => { }, NoLog).CanUpdateItself);
     }
 }

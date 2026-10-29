@@ -38,7 +38,7 @@ enum UpdateState
 /// "Update and restart" downloads the new version, closes, and comes back as the new version. Nothing is asked of the site until the
 /// person presses the button: the wallet makes no call of its own to check.
 /// </summary>
-sealed class WalletUpdater(IUpdateEngine engine, Action quit)
+sealed class WalletUpdater(IUpdateEngine engine, Action quit, Action<Exception>? log = null)
 {
     CancellationTokenSource? _running;
 
@@ -107,7 +107,7 @@ sealed class WalletUpdater(IUpdateEngine engine, Action quit)
 
     void Fail(Exception e)
     {
-        ErrorLog.Write(WalletPaths.Home, e);
+        (log ?? (error => ErrorLog.Write(WalletPaths.Home, error)))(e);
         State = UpdateState.Failed;
         Error = e is OperationCanceledException ? "The site did not answer in time. Try again later."
             : e is HttpRequestException ? "Could not reach bringyourownagent.org. Check the internet connection and try again."
