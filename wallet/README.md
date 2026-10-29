@@ -42,18 +42,21 @@ The **Everywhere** page (Settings) lets your own models work in every program, n
 
 These are the wallet's **own calls**: no site, no consent, but the same gate, routes, fallbacks and limits (they show in Activity as "Everywhere" and count in the day's limits), and no content in the log: never the sound, the words, the selected text or the answer. By default only models on this computer or a home server are used; **Let Everywhere use a paid source** allows a paid fallback, and the wallet asks before each paid call. A hotkey is checked before it is kept (not a shortcut Windows and most programs use, not the other feature's, not held by another program such as a second dictation program); one that clashes is reported and not listened to. The words are pasted (the clipboard is saved, kept clear of the clipboard history and put back; if it is busy the wallet types the characters instead). The keyboard hook is installed only while a feature is on. Windows only; settings under `everywhere` in `settings.json`; more in Help, Everywhere.
 
-## Install from the ready package
+## Install from the installer
 
-Needs Windows 10 or 11, 64-bit; nothing else (the package carries its own .NET runtime). Chrome or another Chromium browser only for sites that use the extension: sites that start the wallet with a `bringyourownagent://` link need no extension.
+Needs Windows 10 or 11, 64-bit; nothing else (the installer carries its own .NET runtime). Chrome or another Chromium browser only for sites that use the extension: sites that start the wallet with a `bringyourownagent://` link need no extension.
 
-1. Download the zip from <https://bringyourownagent.org/wallet> (the page names it `byoa-wallet-win-x64.zip`) and compare its SHA-256 with the one on that page (PowerShell, in the folder where you saved it: `Get-FileHash .\byoa-wallet-win-x64.zip`).
-2. Unzip the whole package (right click, **Extract All...**) and double-click **Install.cmd** in the `byoa-wallet-<version>-win-x64` folder inside the unzipped folder (the zip holds that one folder; `Install.cmd -StartWithWindows` from a command prompt also adds a Startup shortcut). It runs the same `install.ps1` as below in its package mode: no build, it copies `app\` (the wallet, the host and the runtime) into `%LOCALAPPDATA%\BYOA\wallet-app`, the extension into `%LOCALAPPDATA%\BYOA\wallet-app\extension`, and the uninstaller next to them, then registers the same three keys for your user. The copies lose the "downloaded from the internet" mark, so Windows does not ask again each time a site starts the wallet. The unzipped folder is not needed afterwards.
-3. The build is not code-signed yet. Windows may first show "Open File - Security Warning" ("Unknown Publisher") when you start Install.cmd: check the SHA-256, then click **Run**. SmartScreen may also say "Windows protected your PC" for Install.cmd or the wallet: choose **More info**, then **Run anyway**.
-4. Optional, for sites that use the extension: `chrome://extensions`, **Developer mode**, **Load unpacked**, and choose the `extension` folder the installer prints.
+1. Download `AgentWallet-win-Setup.exe` from <https://bringyourownagent.org/wallet> and compare its SHA-256 with the one on that page (PowerShell, in the folder where you saved it: `Get-FileHash .\AgentWallet-win-Setup.exe`).
+2. Run it. It installs for your Windows user only (no administrator rights) into `%LOCALAPPDATA%\AgentWallet\current`, adds **Agent wallet** to the Start menu, registers the browser helper (Chrome and Chromium) and the `bringyourownagent://` links, and opens the wallet. The installer is Velopack's `Setup.exe`; it is not code-signed yet, so Windows may show "Unknown Publisher" or SmartScreen's "Windows protected your PC": check the SHA-256, then **Run** (or **More info**, **Run anyway**).
+3. Optional, for sites that use the extension: `chrome://extensions`, **Developer mode**, **Load unpacked**, and choose `%LOCALAPPDATA%\AgentWallet\current\extension`.
 
-To update, quit the wallet from its tray icon and run the new package's Install.cmd. To remove it, run `%LOCALAPPDATA%\BYOA\wallet-app\Uninstall.cmd` (or the one in the package): the same `uninstall.ps1` as below, which removes only the registry keys and the Startup shortcut and deletes no files.
+**To update**, open the wallet and press **Check for updates** at the bottom of the tab list (or **Check for updates** in the tray menu). If the site has a newer version, press **Update and restart**: the wallet downloads it (usually a delta of a few hundred KB), closes for a few seconds and comes back as the new version, with its settings. The wallet asks `https://bringyourownagent.org/downloads/win/` only when you press the button, never by itself. A copy that Setup.exe did not install (a build from the source, the earlier zip) shows **Get the latest version**, which opens the download page. **Start with Windows** is a tick box in the same place.
 
-To build the package yourself: `powershell -ExecutionPolicy Bypass -File wallet\packaging\make-package.ps1 [-OutDir <empty folder>]` (needs the .NET 10 SDK). It publishes the app and the host self-contained for win-x64 under the output folder (never into the repository's `bin` and `obj`), stages the package, zips it and prints its size and SHA-256 (also written to `<zip>.sha256`).
+**To remove it**: Settings, Apps, Installed apps, **Agent wallet**, Uninstall. It removes the program and the registry keys, and deletes none of your data (`%LOCALAPPDATA%\BYOA\wallet`: settings, keys, activity log).
+
+Earlier releases came as a zip with `Install.cmd` (into `%LOCALAPPDATA%\BYOA\wallet-app`). Quit that wallet from its tray icon (right click, **Quit**), then run the installer once over it: the settings stay (they live in `%LOCALAPPDATA%\BYOA\wallet`), the registry keys now point to the new place, and the old folder is not used any more.
+
+To build the installer yourself: `powershell -ExecutionPolicy Bypass -File wallet\packaging\make-package.ps1 -Installer [-OutDir <empty folder>]` (needs the .NET 10 SDK and the `vpk` tool: `dotnet tool install -g vpk`). It publishes the app, the host and the MCP bridge self-contained for win-x64 under the output folder (never into the repository's `bin` and `obj`), stages the package, packs it with Velopack into `<OutDir>\release` (`AgentWallet-win-Setup.exe`, the full package `AgentWallet-<version>-win-full.nupkg`, `releases.win.json` and, with `-WithDeltas`, a delta from the version on the site), and also zips the staged package with its SHA-256 (`<zip>.sha256`). The version is `<Version>` in `wallet\Directory.Build.props`; a release must have a higher one than the last.
 
 ## Install on a Mac (Apple silicon)
 
@@ -90,7 +93,7 @@ To remove it: `powershell -ExecutionPolicy Bypass -File wallet\uninstall.ps1` re
 
 | What | Where |
 |---|---|
-| App, host and MCP bridge | `%LOCALAPPDATA%\BYOA\wallet-app` (`Byoa.Wallet.exe`, `byoa-host.exe`, `byoa-mcp.exe`, `org.bringyourownagent.wallet.json`; from the package also `extension\`, `uninstall.ps1` and `Uninstall.cmd`) |
+| App, host and MCP bridge | `%LOCALAPPDATA%\AgentWallet\current` (the installer; a source install or the earlier zip: `%LOCALAPPDATA%\BYOA\wallet-app`) (`Byoa.Wallet.exe`, `byoa-host.exe`, `byoa-mcp.exe`, `org.bringyourownagent.wallet.json`, `extension\`) |
 | Settings | `%LOCALAPPDATA%\BYOA\wallet\settings.json` (sites, sources, routes, limits; no secrets) |
 | API keys | `%LOCALAPPDATA%\BYOA\wallet\secrets.dat` (DPAPI, current user) |
 | Pairings of direct links | `%LOCALAPPDATA%\BYOA\wallet\pairings.dat` (DPAPI, current user; only for sites with "decide on my own") |
@@ -147,7 +150,7 @@ host/Byoa.Wallet.Host        byoa-host.exe, the native messaging host
 mcp/Byoa.Wallet.Mcp          byoa-mcp.exe, the stdio MCP bridge for the visitor's own AI agent
 extension/                   the MV3 extension: page.js (MAIN world), bridge.js (isolated world), background.js, popup
 tests/                       unit tests and the end-to-end test
-packaging/                   make-package.ps1 (the ready-to-install zip), Install.cmd, Uninstall.cmd, README.txt and
+packaging/                   make-package.ps1 (the zip, and with -Installer the Velopack installer and update feed), Install.cmd, Uninstall.cmd, README.txt and
                              THIRD-PARTY-NOTICES.txt of the package
 install.ps1, uninstall.ps1   install from the source, or (next to app\ in the package) from the package
 ```

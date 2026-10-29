@@ -21,6 +21,8 @@ HarfBuzzSharp, with HarfBuzz                 MIT; HarfBuzz       Copyright (c) 2
 MicroCom.Runtime                             MIT                 Copyright (c) 2021 Nikita Tsukanov
 Tmds.DBus.Protocol                           MIT                 Copyright 2006 Alp Toker; 2010 Other Contributors;
                                                                  2016 Tom Deseyn
+Velopack (library, Setup.exe, Update.exe)    MIT                 Copyright (c) 2021 Caelan Sayler;
+                                                                 Copyright (c) 2024 Velopack Ltd.
 BringYourOwnAgent (the BYOA rules library)   Apache-2.0          the BYOA project
 Barlow fonts (inside Byoa.Wallet.dll)        SIL OFL 1.1         Copyright 2017 The Barlow Project Authors
 
@@ -32,6 +34,7 @@ Where the license text of a component is not in the package, it is published her
   HarfBuzz       https://github.com/harfbuzz/harfbuzz
   MicroCom       https://github.com/kekekeks/MicroCom/blob/master/LICENSE
   Tmds.DBus      https://github.com/tmds/Tmds.DBus/blob/8cb04f66c330b64244e996ff68f685f27f7381a0/COPYING
+  Velopack       https://github.com/velopack/velopack/blob/f1c24f8/LICENSE
   Barlow         https://github.com/jpt/barlow
 
 The wallet holds no model and downloads none. Speech and text models run in programs the visitor installs

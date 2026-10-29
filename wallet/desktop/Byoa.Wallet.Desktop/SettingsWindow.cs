@@ -103,7 +103,7 @@ sealed partial class SettingsWindow : Window
             Render();
         };
         var today = Ui.Column(4, Ui.Text("Wallet today", "muted", "small"), _todayText, _todayBar);
-        var sidebarFoot = Ui.Column(8, allSettings, Ui.Rule(2, 6), today);
+        var sidebarFoot = Ui.Column(8, allSettings, Ui.Rule(2, 6), today, Ui.Rule(2, 6), _updateBox);
         sidebarFoot.Margin = new Thickness(16, 12, 16, 16);
         var sidebar = new DockPanel { Background = Ui.Brush("Field") };
         var head = Ui.Row(8,
@@ -132,6 +132,7 @@ sealed partial class SettingsWindow : Window
         });
         _refresh.Start();
         Closed += (_, _) => _refresh.Stop();
+        WatchUpdates();
         Show("sites");
     }
 

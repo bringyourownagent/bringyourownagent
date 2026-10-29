@@ -50,12 +50,19 @@ sealed class DesktopUi : IWalletUi, IAgentConsentUi, IEndpointConfirmationUi, IS
         help.Click += (_, _) => OpenHelp();
         var agent = new NativeMenuItem("My MCP");
         agent.Click += (_, _) => OpenSettings("connect");
+        var update = new NativeMenuItem("Check for updates");
+        update.Click += (_, _) =>
+        {
+            OpenSettings("sites");
+            if (_w.Updater.CanUpdateItself) _ = _w.Updater.CheckAsync();
+        };
         var exit = new NativeMenuItem("Quit");
         exit.Click += (_, _) => quit();
         menu.Items.Add(open);
         menu.Items.Add(activity);
         menu.Items.Add(help);
         menu.Items.Add(agent);
+        menu.Items.Add(update);
         menu.Items.Add(new NativeMenuItemSeparator());
         menu.Items.Add(exit);
         _tray = new TrayIcon { Icon = _icon, ToolTipText = "Agent wallet", Menu = menu, IsVisible = true };

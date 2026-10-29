@@ -27,6 +27,19 @@ static class Program
     public static int Main(string[] args)
     {
         if (!OperatingSystem.IsWindows() && !OperatingSystem.IsMacOS()) return 1;
+        // Setup.exe and its updater start this program with a hook argument after an install or an update and before an uninstall:
+        // the hook runs and the program ends here, before anything of the wallet starts. After an install or an update the registration
+        // (host for the browser extension, links) is put in place for the folder the program now runs from; before an uninstall it is taken
+        // back. A copy that Setup.exe did not install (a build from the source) runs through this without any effect. Velopack wants the
+        // call here, at the top of Main, and not in another method. A test wallet (its own data folder) leaves the registry alone.
+#pragma warning disable CA1416 // Windows only, as the line below says
+        if (OperatingSystem.IsWindows())
+            Velopack.VelopackApp.Build()
+                .OnAfterInstallFastCallback(_ => { if (!WalletPaths.IsCustomHome) new WindowsRegistration(new UserRegistry()).Apply(AppContext.BaseDirectory); })
+                .OnAfterUpdateFastCallback(_ => { if (!WalletPaths.IsCustomHome) new WindowsRegistration(new UserRegistry()).Apply(AppContext.BaseDirectory); })
+                .OnBeforeUninstallFastCallback(_ => { if (!WalletPaths.IsCustomHome) new WindowsRegistration(new UserRegistry()).Remove(AppContext.BaseDirectory); })
+                .Run();
+#pragma warning restore CA1416
         if (OperatingSystem.IsWindows() && WalletPaths.IsCustomHome) Native.SetErrorMode(0x8003);
         AppDomain.CurrentDomain.UnhandledException += (_, e) => LogError(e.ExceptionObject as Exception);
         TaskScheduler.UnobservedTaskException += (_, e) =>

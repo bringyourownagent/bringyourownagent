@@ -34,6 +34,8 @@
     <PackageReference Include="Avalonia" Version="11.3.22" />
     <PackageReference Include="Avalonia.Desktop" Version="11.3.22" />
     <PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.22" />
+    <!-- The Windows installer (Setup.exe), the Start menu entry and "Check for updates"; vpk packs the release (wallet\packaging\make-package.ps1 -Installer). -->
+    <PackageReference Include="Velopack" Version="1.2.0" />
   </ItemGroup>
 
   <!-- Windows and macOS (the Everywhere page is Windows only for now); the Windows-only classes carry their own SupportedOSPlatform. -->

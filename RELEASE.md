@@ -14,23 +14,32 @@ code.
 - The version is real: `wallet/Directory.Build.props` for the package, `sdk/*/` for the libraries. A fix to a published
   library version is a new version, never a republish of the same number.
 
-## 2. The wallet package (Windows x64)
+## 2. The wallet installer (Windows x64)
 
-1. `powershell -ExecutionPolicy Bypass -File wallet\packaging\make-package.ps1 -OutDir <empty folder>`. The script fails on a
-   missing file, a package with no license file, or an app that is not self-contained. It writes the zip and `<zip>.sha256`.
-2. Read the printed size and SHA-256 and keep them.
-3. Install from the unzipped package on a **clean** Windows machine or VM (no earlier install, no .NET), as a normal user:
-   `Install.cmd`. Check, by hand:
+1. Raise `<Version>` in `wallet\Directory.Build.props` (the updater only offers a higher version). Then
+   `powershell -ExecutionPolicy Bypass -File wallet\packaging\make-package.ps1 -OutDir <empty folder> -Installer -WithDeltas`
+   (`-WithDeltas` fetches the feed on the site first, so that the update is a small delta; leave it out for the first release).
+   The script fails on a missing file, a package with no license file, or an app that is not self-contained. It writes
+   `<OutDir>\release` (Setup.exe, the full and delta packages, `releases.win.json`) and the zip with `<zip>.sha256`.
+2. Read the printed size and SHA-256 of `AgentWallet-win-Setup.exe` and keep them.
+3. Install on a **clean** Windows machine or VM (no earlier install, no .NET), as a normal user: run Setup.exe. Check, by hand:
    - the wallet starts from the tray and from a `bringyourownagent://` link (the notice, then the consent window);
    - Decline from a link sends nothing to the site and stores nothing; a second link asks again;
    - an Allow from a link connects only after the site's welcome echoes the link's manifest;
-   - the uninstaller removes the registry keys.
-4. Repeat the start on a processor **without AVX** (a VM with AVX off). The wallet must start and use the no-AVX build, and a
+   - Settings, Apps, Installed apps, Uninstall removes the program and the registry keys, and leaves the data folder.
+4. Test the update: `wallet\tests\e2e\installer_update_ui.py` installs an older TEST build (`-PackId AgentWalletTest -Shortcuts None`)
+   from its Setup.exe, serves the newer one over HTTP, presses Check for updates and Update and restart on a hidden desktop, and
+   checks that the install folder and the running wallet are the new version and the registry of the real wallet was not touched.
+   Before the first release with a new Velopack version, run it once with both builds made by that version.
+5. Repeat the start on a processor **without AVX** (a VM with AVX off). The wallet must start and use the no-AVX build, and a
    crash of one model must not take the tray down.
-5. Run `wallet\tests\e2e\direct_e2e.py` on that machine (needs the speech clips from `make_samples.py`). It drives the real
+6. Run `wallet\tests\e2e\direct_e2e.py` on that machine (needs the speech clips from `make_samples.py`). It drives the real
    windows; the unit tests do not cover them.
-6. Only then publish the zip (the site's download folder). The wallet page reads the size and the hash from the file, so
-   check the page shows the numbers of step 2.
+7. Only then publish, in this order, to the site's download folder (`/var/www/bringyourownagent.org/downloads`): the files of
+   `<OutDir>\release` except `releases.win.json` into `win/` (a `.part` name first, then a rename), then `releases.win.json`
+   (the wallets that check see the new version only from this file), and a copy of `AgentWallet-win-Setup.exe` to the top
+   of the folder (the page links to it). The wallet page reads the size, the hash and the version from these files, so check
+   it shows the numbers of step 2. Keep the last Setup.exe and feed of the old release before replacing them.
 
 ## 3. The SDK packages
 

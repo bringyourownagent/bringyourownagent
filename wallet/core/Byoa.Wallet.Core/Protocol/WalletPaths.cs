@@ -9,8 +9,21 @@ public static class WalletPaths
     /// <summary>Overrides the data folder (settings, secrets, activity). Used by tests to keep a separate wallet.</summary>
     public const string HomeVariable = "BYOA_WALLET_HOME";
 
-    /// <summary>The wallet's version, reported to the extension's popup.</summary>
-    public const string Version = "0.1.0";
+    /// <summary>
+    /// The wallet's version, reported to the extension's popup and compared by the updater: the one number in <c>Directory.Build.props</c>
+    /// that every program of the wallet is built with (a build's commit mark after "+" is left out).
+    /// </summary>
+    public static string Version { get; } = ReadVersion();
+
+    static string ReadVersion()
+    {
+        var text = typeof(WalletPaths).Assembly
+            .GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
+            .OfType<System.Reflection.AssemblyInformationalVersionAttribute>().FirstOrDefault()?.InformationalVersion;
+        if (string.IsNullOrWhiteSpace(text)) return typeof(WalletPaths).Assembly.GetName().Version?.ToString(3) ?? "0.0.0";
+        var plus = text.IndexOf('+', StringComparison.Ordinal);
+        return plus >= 0 ? text[..plus] : text;
+    }
 
     /// <summary>
     /// Where per-user application data lives: <c>%LOCALAPPDATA%</c> on Windows, <c>~/Library/Application Support</c> on macOS (.NET would

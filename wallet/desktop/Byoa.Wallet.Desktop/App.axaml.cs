@@ -18,7 +18,11 @@ public partial class App : Application
         {
             var services = new WalletServices();
             _services = services;
+            services.Quit = () => Avalonia.Threading.Dispatcher.UIThread.Post(() => desktop.Shutdown());
             services.Ui.CreateTray(this, () => desktop.Shutdown());
+            // An installed wallet puts its registration right at every start: a key that was lost, or that points at an older copy.
+            if (services.Registration is { } registration && services.Updater.CanUpdateItself)
+                _ = Task.Run(() => { try { registration.Apply(AppContext.BaseDirectory); } catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.Security.SecurityException) { /* the keys stay as they were */ } });
             services.Pipe.Start();
             services.AgentPipe.Start();
             services.Everywhere?.Start();

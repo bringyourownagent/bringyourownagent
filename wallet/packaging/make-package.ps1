@@ -24,6 +24,13 @@
        <OutDir>\byoa-wallet-<version>-win-x64.zip, writes <zip>.sha256 ("<sha256>  <file name>") next to it and
        prints the size and the SHA-256.
 
+    4. With -Installer, also builds the Windows installer with Velopack (the vpk tool: dotnet tool install -g vpk):
+       <OutDir>\release\AgentWallet-win-Setup.exe (the one file a visitor downloads and runs; it installs for the current user,
+       no administrator, into %LOCALAPPDATA%\AgentWallet), the full package AgentWallet-<version>-win-full.nupkg and the feed file
+       releases.win.json that the wallet's "Check for updates" reads. With -WithDeltas it first fetches the latest release from the
+       site's feed into <OutDir>\release, so that vpk also makes a small delta package from it (an update then downloads a few MB).
+       Upload all of <OutDir>\release (publish-installer.sh in the scratch folder does it; releases.win.json goes last).
+
     Nothing is overwritten: -OutDir must not hold an earlier package of the same version. Needs the .NET 10 SDK.
 
 .EXAMPLE
@@ -36,7 +43,17 @@
 [CmdletBinding()]
 param(
     [string]$OutDir,
-    [string]$Version
+    [string]$Version,
+    # also build the Windows installer (Setup.exe) and the update feed with Velopack
+    [switch]$Installer,
+    # with -Installer: fetch the latest release from the feed first, so that vpk can make a delta package
+    [switch]$WithDeltas,
+    [string]$FeedUrl = 'https://bringyourownagent.org/downloads/win',
+    # the installer's identity: the folder under %LOCALAPPDATA%, the Start menu entry and the name of Setup.exe. Another id makes a
+    # copy that lives beside the real wallet without touching it (a test of the installer and the updater)
+    [string]$PackId = 'AgentWallet',
+    [string]$PackTitle = 'Agent wallet',
+    [string]$Shortcuts = 'StartMenuRoot'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -194,12 +211,49 @@ $noLicenseFile = @(
     'Avalonia.X11/11.3.22'                              # MIT: AvaloniaUI/Avalonia licence.md at commit 627ae9e
     'MicroCom.Runtime/0.11.0'                           # MIT: kekekeks/MicroCom LICENSE on its master branch
     'Tmds.DBus.Protocol/0.21.3'                         # MIT: tmds/Tmds.DBus COPYING at commit 8cb04f6
+    'Velopack/1.2.0'                                    # MIT: velopack/velopack LICENSE at commit f1c24f8
 )
 $licenseFiles = Copy-PackageLicenses $app $artifacts $packages $licenses $noLicenseFile
 New-Item -ItemType Directory -Force -Path (Join-Path $licenses 'Barlow-fonts') | Out-Null
 Copy-Item -LiteralPath (Join-Path $wallet 'desktop\Byoa.Wallet.Desktop\Assets\Fonts\OFL.txt') -Destination (Join-Path $licenses 'Barlow-fonts\OFL.txt')
 $licenseFiles++
 Write-Host "  app: $appFiles files, extension: $extensionFiles files, licenses: $licenseFiles files"
+
+# 2b. The installer. Velopack wants the program at the top of the folder it packs, so the staged package is laid out flat:
+#     the app at the root, the extension and the licenses beside it. Setup.exe puts it under %LOCALAPPDATA%\AgentWallet\current,
+#     and an update replaces that folder as a whole.
+if ($Installer) {
+    $vpk = Get-Command vpk -ErrorAction SilentlyContinue
+    if (-not $vpk) { throw 'vpk is not installed: dotnet tool install -g vpk' }
+    $input = Join-Path $OutDir 'velopack-input'
+    $release = Join-Path $OutDir 'release'
+    if (Test-Path -LiteralPath $input) { throw "$input already exists. Choose another -OutDir: this script overwrites nothing." }
+    Write-Host "Laying out $input for vpk ..."
+    $flat = Copy-Into (Join-Path $stage 'app') $input
+    $flat += Copy-Into (Join-Path $stage 'extension') (Join-Path $input 'extension')
+    $flat += Copy-Into (Join-Path $stage 'licenses') (Join-Path $input 'licenses')
+    foreach ($file in 'LICENSE', 'NOTICE', 'THIRD-PARTY-NOTICES.txt') { Copy-Item -LiteralPath (Join-Path $stage $file) -Destination (Join-Path $input $file); $flat++ }
+    Write-Host "  $flat files"
+    New-Item -ItemType Directory -Force -Path $release | Out-Null
+    if ($WithDeltas) {
+        Write-Host "Fetching the latest release from $FeedUrl for the delta ..."
+        & vpk download http --url $FeedUrl --outputDir $release
+        if ($LASTEXITCODE -ne 0) { throw 'vpk download failed' }
+    }
+    & vpk pack --packId $PackId --packVersion $Version --packDir $input --mainExe Byoa.Wallet.exe `
+        --packTitle $PackTitle --packAuthors 'BYOA' --shortcuts $Shortcuts `
+        --icon (Join-Path $wallet 'desktop\Byoa.Wallet.Desktop\Assets\app.ico') --outputDir $release
+    if ($LASTEXITCODE -ne 0) { throw 'vpk pack failed' }
+    $setup = Join-Path $release "$PackId-win-Setup.exe"
+    if (-not (Test-Path -LiteralPath $setup)) { throw "vpk did not make $setup" }
+    $setupHash = (Get-FileHash -LiteralPath $setup -Algorithm SHA256).Hash.ToLowerInvariant()
+    [System.IO.File]::WriteAllText("$setup.sha256", "$setupHash  $PackId-win-Setup.exe`n", (New-Object System.Text.ASCIIEncoding))
+    Write-Host ''
+    Write-Host "Installer: $setup"
+    Write-Host ("Size:      {0:N1} MB" -f ((Get-Item -LiteralPath $setup).Length / 1MB))
+    Write-Host "SHA-256:   $setupHash"
+    Write-Host "Feed:      $release (upload all of it)"
+}
 
 # 3. Zip it with the package folder as the single top folder; entry names use forward slashes.
 Add-Type -AssemblyName System.IO.Compression

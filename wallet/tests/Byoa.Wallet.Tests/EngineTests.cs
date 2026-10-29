@@ -427,7 +427,7 @@ public class EngineTests
     {
         await _engine.HandleAsync(Clips.Request(Site, click: false));
         var status = await _engine.HandleAsync(new WireMessage(9, Wire.Status, "", false, new JsonObject()));
-        Assert.Equal("{\"running\":true,\"version\":\"0.1.0\",\"quiet\":1}", status!.ToJsonString());
+        Assert.Equal("{\"running\":true,\"version\":\"" + WalletPaths.Version + "\",\"quiet\":1}", status!.ToJsonString());
     }
 
     // ------------------------------------------------------------------ pause

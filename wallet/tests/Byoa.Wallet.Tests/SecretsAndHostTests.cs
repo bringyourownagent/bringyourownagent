@@ -160,7 +160,7 @@ public class HostRelayTests
         var connector = new Connector(_ => null);
         var relay = Task.Run(() => new HostRelay(host, host, connector).RunAsync());
         await Framing.WriteAsync(browser, Message(1, "status"));
-        Assert.Equal("{\"id\":1,\"result\":{\"running\":false,\"host\":\"0.1.0\"}}", (await ReadAsync(browser)).ToJsonString());
+        Assert.Equal("{\"id\":1,\"result\":{\"running\":false,\"host\":\"" + WalletPaths.Version + "\"}}", (await ReadAsync(browser)).ToJsonString());
         await Framing.WriteAsync(browser, Message(2, "call"));
         Assert.Equal("{\"id\":2,\"result\":{\"ok\":false}}", (await ReadAsync(browser)).ToJsonString());
         await Framing.WriteAsync(browser, Message(3, "request"));

@@ -55,7 +55,19 @@ sealed class WalletServices : IDisposable
         AgentPipe = new AgentPipeServer(this, Ui);
         // Dictation and the check of selected text listen to the keyboard system-wide: Windows only for now
         Everywhere = OperatingSystem.IsWindows() ? CreateEverywhere() : null;
+        // "Check for updates": the installer's own updater on Windows; a copy it did not install only points to the download page
+        Updater = new WalletUpdater(OperatingSystem.IsWindows() ? new VelopackEngine() : new NoUpdateEngine(), () => Quit());
+        Registration = OperatingSystem.IsWindows() && !WalletPaths.IsCustomHome ? new WindowsRegistration(new UserRegistry()) : null;
     }
+
+    /// <summary>The wallet's check for a newer version, and its button in the settings.</summary>
+    public WalletUpdater Updater { get; }
+
+    /// <summary>What an installed wallet registers for the current user (Windows); null on a Mac and in a test wallet.</summary>
+    public WindowsRegistration? Registration { get; }
+
+    /// <summary>Closes the wallet the way the tray's Quit does; the application sets it once it is up.</summary>
+    public Action Quit { get; set; } = () => Environment.Exit(0);
 
     /// <summary>
     /// Dictation and the check of selected text (the Everywhere page): the native parts, the state machines over them, and the service that listens for
