@@ -108,7 +108,7 @@ A site whose work needs several different models (a judge that wants the opinion
 }
 ```
 
-- **`count`**: how many different models the site uses: a number, or `{ "min", "max" }` (1 to 16; `min` defaults to 1, `max` to 5).
+- **`count`**: how many different models the site uses: a number, or `{ "min", "max" }` (1 to 64; `min` defaults to 1, `max` to 5).
 - **`distinct`**: `vendor` asks for models from different companies where possible; `model` (the default) only for different models.
 - **`require`**: models without which the site cannot work. Each element is a name, a mask ending in `*`, or an array of those meaning "any of these". A visitor who cannot give them is not offered Allow.
 - **`recommend`**: models the site likes, in its order (names and masks). A site that only recommends can always be allowed.

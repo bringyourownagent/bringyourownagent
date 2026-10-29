@@ -28,7 +28,7 @@ public sealed record RequestedModels(
     int Min, int Max, string Distinct, IReadOnlyList<ModelWish> Require, IReadOnlyList<string> Recommend,
     string? Why, string? WhyLong, bool Names)
 {
-    public const int MaxModels = 16;
+    public const int MaxModels = 64;
     public const int MaxRequire = 16;
     public const int MaxRecommend = 64;
     public const int MaxWhy = 160;

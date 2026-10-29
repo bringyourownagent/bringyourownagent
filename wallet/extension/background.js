@@ -123,14 +123,14 @@ function shapeLimits(limits) {
   return Object.keys(out).length ? out : undefined;
 }
 
-// The models the site was given, per skill: { ref, name, id (or null), runs }; at most 16 a skill, short strings only.
+// The models the site was given, per skill: { ref, name, id (or null), runs }; at most 64 a skill, short strings only.
 function shapeModels(models) {
   if (!models || typeof models !== "object" || Array.isArray(models)) return undefined;
   const out = {};
   for (const skill of Object.keys(models).slice(0, 8)) {
     const list = models[skill];
     if (!/^[a-z][a-z0-9-]*\.[a-z][a-z0-9-]*$/.test(skill) || !Array.isArray(list)) continue;
-    out[skill] = list.slice(0, 16)
+    out[skill] = list.slice(0, 64)
       .filter((m) => m && isString(m.ref) && m.ref.length <= 16 && isString(m.name))
       .map((m) => ({
         ref: m.ref,

@@ -94,12 +94,12 @@ function cleanLimits(limits) {
   return out;
 }
 
-/** The models the visitor gave this site ({ ref, name, id, runs, kind }; kind is 'agent' or 'model', 'model' when a wallet does not say), at most 16; a wallet that does not know the models block sends none. */
+/** The models the visitor gave this site ({ ref, name, id, runs, kind }; kind is 'agent' or 'model', 'model' when a wallet does not say), at most 64; a wallet that does not know the models block sends none. */
 function cleanModels(models) {
   const list = models !== null && typeof models === 'object' ? models['text.generate'] : undefined;
   if (!Array.isArray(list)) return [];
   const str = (v, max) => (typeof v === 'string' && v.length <= max ? v : null);
-  return list.slice(0, 16).filter((m) => m !== null && typeof m === 'object' && str(m.ref, 16)).map((m) => ({
+  return list.slice(0, 64).filter((m) => m !== null && typeof m === 'object' && str(m.ref, 16)).map((m) => ({
     ref: m.ref, name: str(m.name, 80) ?? m.ref, id: str(m.id, 120), runs: str(m.runs, 16), kind: m.kind === 'agent' ? 'agent' : 'model',
   }));
 }

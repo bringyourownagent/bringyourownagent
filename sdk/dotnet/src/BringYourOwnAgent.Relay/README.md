@@ -62,7 +62,7 @@ request open behind a proxy. `state` never tells a «no» from a «no wallet».
 | `MaxCallMessages` | `128` | Messages of one call ([CONTRACT.md](https://github.com/bringyourownagent/bringyourownagent/blob/main/spec/CONTRACT.md) §3.2) |
 | `MaxCallTokens`, `DefaultCallTokens`, `DefaultTemperature` | `8 000`, `3000`, `0.7` | What a call may ask for, and what it asks for by default |
 | `MaxAnswerChars` | `128 000` | The longest answer the site keeps |
-| `MaxModels` | `16` | Participants read out of one grant |
+| `MaxModels` | `64` | Participants read out of one grant |
 | `MaxJobRequestBytes` | `1 500 000` | A bigger request body is refused (413) before it is read |
 | `CodeLifeSeconds` | `120` | How long a one-time code lives |
 | `CodesPerMinute`, `MaxCodes` | `10`, `2000` | Per visitor address, and the whole table |

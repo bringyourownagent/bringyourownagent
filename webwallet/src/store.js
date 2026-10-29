@@ -48,7 +48,7 @@ export function createStore(local = globalThis.localStorage, session = globalThi
       try {
         const v = JSON.parse(raw);
         if (!isObject(v) || !Array.isArray(v.models) || !v.models.every((m) => typeof m === 'string')) return null;
-        return { models: v.models.slice(0, 16), showNames: v.showNames !== false, budgetUsd: Number.isFinite(v.budgetUsd) && v.budgetUsd >= 0 ? v.budgetUsd : 0, allowedAt: typeof v.allowedAt === 'string' ? v.allowedAt : '' };
+        return { models: v.models.slice(0, 64), showNames: v.showNames !== false, budgetUsd: Number.isFinite(v.budgetUsd) && v.budgetUsd >= 0 ? v.budgetUsd : 0, allowedAt: typeof v.allowedAt === 'string' ? v.allowedAt : '' };
       } catch {
         return null;
       }
