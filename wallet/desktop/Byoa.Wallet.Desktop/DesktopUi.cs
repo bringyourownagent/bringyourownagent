@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Runtime.Versioning;
 using Avalonia;
 using Avalonia.Controls;
@@ -127,6 +128,24 @@ sealed class DesktopUi : IWalletUi, IAgentConsentUi, IEndpointConfirmationUi, IS
                 _ => PaidAnswer.No,
             };
         }, PaidAnswer.No);
+
+    /// <summary>
+    /// A site reached a limit: raise it? Not in the line of the other questions (a consent window open meanwhile must not hold the site's calls
+    /// back): it shows at once, in its own corner toast. "Set it in Limits…" opens the limit and counts as no answer here.
+    /// </summary>
+    public Task<decimal?> AskRaiseAsync(RaiseModel model, CancellationToken ct) =>
+        OnUi(async () =>
+        {
+            var toast = ToastWindow.Raise(model);
+            toast.CloseOn(ct);
+            toast.Show();
+            var answer = await toast.Result;
+            if (answer == "limits") OpenSettings(model.SettingsPage);
+            return answer is not null && answer.StartsWith("raise:", StringComparison.Ordinal)
+                && int.TryParse(answer["raise:".Length..], NumberStyles.Integer, CultureInfo.InvariantCulture, out var n) && n >= 0 && n < model.Raises.Count
+                ? model.Raises[n].Value
+                : (decimal?)null;
+        });
 
     /// <summary>The guard held a request, or a site's goal, for the visitor: one window at a time, and no answer is a refusal.</summary>
     public Task<GuardAnswer> AskGuardAsync(GuardPrompt model, CancellationToken ct) =>

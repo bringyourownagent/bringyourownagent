@@ -39,7 +39,17 @@ public sealed class GrantSession
     public string Origin { get; }
     public RequestedManifest Manifest { get; }
     public IReadOnlyList<string> Skills { get; }
-    public decimal Budget { get; }
+
+    /// <summary>The visitor's budget for this session. It follows the site's budget in the settings at every call: a change there counts at once.</summary>
+    public decimal Budget
+    {
+        get { lock (_budgetLock) return _budget; }
+        set { lock (_budgetLock) _budget = value; }
+    }
+
+    readonly object _budgetLock = new();
+    decimal _budget;
+
     public DateTimeOffset ExpiresAt { get; }
 
     /// <summary>Serializes the gate checks of this grant (spec: "Concurrent calls").</summary>
@@ -51,8 +61,11 @@ public sealed class GrantSession
     /// <summary>Times of calls that ran or are running (the last minute is enough for the rate limit).</summary>
     public List<DateTimeOffset> CallTimes { get; } = [];
 
-    /// <summary>The visitor was already told that this session reached a limit.</summary>
-    public bool LimitNoticeShown { get; set; }
+    /// <summary>
+    /// The limits the visitor was already told (or asked about) this session: each one once, and once more when its amount was changed. Calls of
+    /// the session run at the same time, so it is a concurrent set.
+    /// </summary>
+    public System.Collections.Concurrent.ConcurrentDictionary<string, bool> LimitsTold { get; } = new(StringComparer.Ordinal);
 
     /// <summary>What the site may use for a call now (set by the engine at each call); the gate sees it as the grant's limits.</summary>
     public TextLimitSet? Limits { get; set; }

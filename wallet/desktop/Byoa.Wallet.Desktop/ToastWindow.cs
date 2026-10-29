@@ -108,6 +108,41 @@ sealed class ToastWindow : CornerWindow
         return t;
     }
 
+    /// <summary>
+    /// "host reached a limit: raise it?" Whose limit it is (the site's own, or the whole wallet's), what it is, and a button for each raise; the
+    /// answer is "raise:N" (the Nth raise), "limits" (set it by hand) or "no". The site's call waits for it.
+    /// </summary>
+    public static ToastWindow Raise(RaiseModel model)
+    {
+        var t = new ToastWindow("Agent wallet limit");
+        var whose = model.Whose == "wallet"
+            ? "The whole wallet's " + model.Name + " (" + model.Now + ", for all sites) is used up."
+            : "The " + model.Name + " of this site (" + model.Now + ") is used up.";
+        var lines = Ui.Column(3,
+            Ui.Runs((model.Host, true), (" reached a limit", false)),
+            Ui.Wrap(whose + " Raise it? Its calls then go on at once.", "muted"),
+            Ui.Text("Agent wallet", "muted", "small"));
+        AutomationProperties.SetName(lines, model.Host + " reached a limit");
+        t._body.Children.Add(t.Header(Ui.Tile(Ui.Gauge, 24, "SignalDeep"), lines));
+        var raises = new WrapPanel();
+        for (var i = 0; i < model.Raises.Count; i++)
+        {
+            var n = i;
+            var choice = model.Raises[i];
+            var button = Ui.Button(choice.Label + " → " + choice.NewText, n == 0 ? "allow" : "deny", "RaiseLimit" + n, () => t.Answer("raise:" + n), "small");
+            AutomationProperties.SetName(button, "Raise to " + choice.NewText);
+            button.Margin = new Thickness(0, 0, 8, 6);
+            raises.Children.Add(button);
+        }
+
+        t._body.Children.Add(raises);
+        var byHand = Ui.Link("Set it in Limits…", "RaiseByHand", () => t.Answer("limits"));
+        var no = Ui.Link("No", "RaiseNo", () => t.Answer("no"));
+        no.HorizontalAlignment = HorizontalAlignment.Right;
+        t._body.Children.Add(Ui.Columns("Auto,*", byHand, no));
+        return t;
+    }
+
     /// <summary>A message with an optional button; it closes on its own after a while.</summary>
     public static ToastWindow Info(InfoModel model, Action<string?>? open)
     {

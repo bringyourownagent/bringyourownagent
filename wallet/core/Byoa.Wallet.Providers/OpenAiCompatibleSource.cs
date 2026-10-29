@@ -216,7 +216,7 @@ public sealed class OpenAiCompatibleSource : ITextSource, IStreamingTextSource, 
     /// <summary>The answer only: hidden reasoning stays in the runtime. With choices, the exact string the page listed.</summary>
     static string AnswerOf(TextRequest request, JsonNode? message) =>
         request.Choices is null
-            ? Texts.CleanAnswer(ChatCompletions.Str(message?["content"]) ?? "")
+            ? Texts.CleanAnswer(ChatCompletions.Content(message?["content"]) ?? "")
             : ChatCompletions.ExtractChoice(message, request.Choices) ?? "";
 
     /// <summary>The reasoning limit this request carries to this runtime: the visitor's, only for a thinking request to a llama.cpp-style server.</summary>

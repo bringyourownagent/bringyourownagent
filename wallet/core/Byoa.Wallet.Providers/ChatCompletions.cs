@@ -45,7 +45,7 @@ static class ChatCompletions
     /// </summary>
     public static string? ExtractChoice(JsonNode? message, IReadOnlyList<string> choices)
     {
-        var content = Str(message?["content"]);
+        var content = Content(message?["content"]);
         var fromContent = FromJson(content, choices) ?? Texts.MatchChoice(content ?? "", choices);
         if (fromContent is not null) return fromContent;
         var reasoning = Str(message?["reasoning_content"]) ?? Str(message?["reasoning"]);
@@ -86,6 +86,24 @@ static class ChatCompletions
     }
 
     public static string? Str(JsonNode? node) => node is JsonValue v && v.TryGetValue<string>(out var s) ? s : null;
+
+    /// <summary>
+    /// The text of a message's (or a streamed piece's) <c>content</c>: a string, or the list of parts some services send instead (Mistral:
+    /// <c>[{"type":"thinking",...},{"type":"text","text":"..."}]</c>), of which only the text parts count. Null when there is none.
+    /// </summary>
+    public static string? Content(JsonNode? node)
+    {
+        if (Str(node) is { } plain) return plain;
+        if (node is not JsonArray parts) return null;
+        var text = new System.Text.StringBuilder();
+        foreach (var part in parts)
+        {
+            if (Str(part) is { } piece) text.Append(piece);
+            else if (Str(part?["type"]) is null or "text" or "output_text") text.Append(Str(part?["text"]) ?? "");
+        }
+
+        return text.Length == 0 ? null : text.ToString();
+    }
 
     static int Int(JsonNode? node) => node is JsonValue v && v.TryGetValue<int>(out var i) ? i : 0;
 }

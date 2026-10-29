@@ -51,7 +51,7 @@ internal static class ChatStream
             var delta = choice?["delta"];
             if ((ChatCompletions.Str(delta?["reasoning_content"]) ?? ChatCompletions.Str(delta?["reasoning"])) is { Length: > 0 } thought)
                 reasoning.Append(thought);
-            if (ChatCompletions.Str(delta?["content"]) is { Length: > 0 } piece)
+            if (ChatCompletions.Content(delta?["content"]) is { Length: > 0 } piece)
             {
                 text.Append(piece);
                 var visible = filter.Push(piece);

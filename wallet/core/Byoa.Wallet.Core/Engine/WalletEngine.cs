@@ -1216,6 +1216,9 @@ public sealed partial class WalletEngine
         // The limits of this call: the visitor's (defaults, then his own for the site) tightened by what the site declared. The gate
         // sees them as the grant's limits, so the draft rules' "the stricter of the two wins" holds for them too.
         session.Limits = _store.Read(s => TextLimits.Effective(s.Limits, s.Site(origin) ?? site, session.Manifest.Limits));
+        // The budget per session follows the site's in the settings as well: one the visitor raised (or lowered) under Limits counts at once,
+        // for the session that is running too, not only for the site's next one.
+        if (Money.TryParse(site.Budget, out var budgetNow)) session.Budget = budgetNow;
 
         if (skill is not (Vocabulary.Transcribe or Vocabulary.Generate))
         {
@@ -1302,16 +1305,28 @@ public sealed partial class WalletEngine
         string? stopReason = null;
 
         var loadedSteps = await OnlyLoadedAsync(plan.Steps, s => s.Source, (s, why) => route.Add(Index((ISpeechSource)s), ((ISpeechSource)s).Name + ": " + why), ct).ConfigureAwait(false);
+        // a clip waits for the visitor's answer to a limit question at most this long
+        using var askTime = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        askTime.CancelAfter(TimeSpan.FromSeconds((session.Limits ?? TextLimits.Defaults).CallSeconds));
         foreach (var step in loadedSteps)
         {
             var source = step.Source;
             var estimate = source.EstimateCost(clip.Seconds);
-            if (estimate > 0 && !HoldMoney(hold, estimate, sitePerDay, walletPerDay))
+            if (estimate > 0)
             {
-                route.Add(Index(source), source.Name + ": over the daily limit");
-                stopReason ??= "money per day";
-                continue;
+                var day = await HoldMoneyOrRaiseAsync(session, site, hold, estimate, sitePerDay, walletPerDay, askTime.Token).ConfigureAwait(false);
+                (sitePerDay, walletPerDay) = (day.SitePerDay, day.WalletPerDay);
+                if (!day.Held)
+                {
+                    route.Add(Index(source), source.Name + ": over the daily limit");
+                    stopReason ??= "money per day";
+                    continue;
+                }
             }
+
+            // A clip that would pass the budget per session asks the visitor to raise it first (the gate below holds it to the budget either way)
+            if (estimate > 0 && session.Spent + estimate > session.Budget)
+                await RaiseAsync(session, site, "budget", session.Budget, session.Spent + estimate, askTime.Token).ConfigureAwait(false);
 
             // The gate (spec/rules-0.1-draft.md) decides before the source runs; the slot and the estimate are reserved.
             var at = Now;
@@ -1361,9 +1376,7 @@ public sealed partial class WalletEngine
 
             if (check.Decision == Decision.Ask)
             {
-                // budget-exceeded: the wallet never spends past the budget without a new yes. 0.1 does not ask
-                // mid-game; it says so once and the visitor raises the budget in the settings.
-                TellLimit(session, site, "budget", "the budget of " + Money.Show(session.Budget) + " per session");
+                // budget-exceeded: the wallet never spends past the budget without a new yes (the visitor was asked just above)
                 route.Add(Index(source), source.Name + ": " + codes);
                 stopReason ??= "budget per session";
                 continue;
@@ -1632,12 +1645,21 @@ public sealed partial class WalletEngine
                 {
                     estimate = source.Paid ? FlatTextEstimate : 0;
                 }
-                if (estimate > 0 && !HoldMoney(hold, estimate, sitePerDay, walletPerDay))
+                if (estimate > 0)
                 {
-                    route.Add(Index(source), source.Name + ": over the daily limit");
-                    stopReason ??= "money per day";
-                    continue;
+                    var day = await HoldMoneyOrRaiseAsync(session, site, hold, estimate, sitePerDay, walletPerDay, routeCt).ConfigureAwait(false);
+                    (sitePerDay, walletPerDay) = (day.SitePerDay, day.WalletPerDay);
+                    if (!day.Held)
+                    {
+                        route.Add(Index(source), source.Name + ": over the daily limit");
+                        stopReason ??= "money per day";
+                        continue;
+                    }
                 }
+
+                // A call that would pass the budget per session asks the visitor to raise it first (the gate below holds it to the budget either way)
+                if (estimate > 0 && SafeAdd(session.Spent, estimate) > session.Budget)
+                    await RaiseAsync(session, site, "budget", session.Budget, SafeAdd(session.Spent, estimate), routeCt).ConfigureAwait(false);
 
                 // The gate (spec/rules-0.1-draft.md) decides before the source runs; the slot and the estimate are reserved.
                 at = Now;
@@ -1688,8 +1710,7 @@ public sealed partial class WalletEngine
 
                 if (decision == Decision.Ask)
                 {
-                    // budget-exceeded: the wallet never spends past the budget without a new yes.
-                    TellLimit(session, site, "budget", "the budget of " + Money.Show(session.Budget) + " per session");
+                    // budget-exceeded: the wallet never spends past the budget without a new yes (the visitor was asked just above)
                     route.Add(Index(source), source.Name + ": " + codes);
                     stopReason ??= "budget per session";
                     continue;
@@ -1932,7 +1953,7 @@ public sealed partial class WalletEngine
             return null;
         }
 
-        if (estimate > 0 && !HoldMoney(hold, estimate, sitePerDay, walletPerDay))
+        if (estimate > 0 && HoldMoney(hold, estimate, sitePerDay, walletPerDay).Over is not null)
         {
             ReleaseHeldCall(hold);
             return null;
@@ -2087,8 +2108,11 @@ public sealed partial class WalletEngine
         }
     }
 
-    /// <summary>Reserves a paid call's estimate if the site's and the wallet's money per day (spent and reserved) allow it.</summary>
-    bool HoldMoney(DailyHold hold, decimal estimate, decimal sitePerDay, decimal walletPerDay)
+    /// <summary>
+    /// Reserves a paid call's estimate if the site's and the wallet's money per day (spent and reserved) allow it: Over is null then; else it
+    /// says which of the two does not ("site" or "wallet"), and Needed what that limit would have to be for this call.
+    /// </summary>
+    (string? Over, decimal Needed) HoldMoney(DailyHold hold, decimal estimate, decimal sitePerDay, decimal walletPerDay)
     {
         lock (_dailyGate)
         {
@@ -2096,12 +2120,131 @@ public sealed partial class WalletEngine
             var (walletSpent, _) = _activity.Today(Now);
             var running = _inflight.GetValueOrDefault(hold.Origin);
             var allRunning = _inflight.Values.Sum(v => v.Money);
-            if (siteSpent + running.Money + estimate > sitePerDay || walletSpent + allRunning + estimate > walletPerDay) return false;
+            if (siteSpent + running.Money + estimate > sitePerDay) return ("site", siteSpent + running.Money + estimate);
+            if (walletSpent + allRunning + estimate > walletPerDay) return ("wallet", walletSpent + allRunning + estimate);
             _inflight[hold.Origin] = (running.Calls, running.Money + estimate);
             hold.Money += estimate;
-            return true;
+            return (null, 0);
         }
     }
+
+    /// <summary>
+    /// Holds a paid call's money per day, and when the site's or the wallet's day limit is in the way, asks the visitor to raise it (at most
+    /// once for each of the two). Answers whether the money is held, and the day limits as they are now.
+    /// </summary>
+    async Task<(bool Held, decimal SitePerDay, decimal WalletPerDay)> HoldMoneyOrRaiseAsync(GrantSession session, SiteRecord site, DailyHold hold,
+        decimal estimate, decimal sitePerDay, decimal walletPerDay, CancellationToken ct)
+    {
+        for (var asked = 0; ; asked++)
+        {
+            var (over, needed) = HoldMoney(hold, estimate, sitePerDay, walletPerDay);
+            if (over is null) return (true, sitePerDay, walletPerDay);
+            if (asked >= 2) return (false, sitePerDay, walletPerDay);
+            var kind = over == "site" ? "site day" : "wallet day";
+            if (await RaiseAsync(session, site, kind, over == "site" ? sitePerDay : walletPerDay, needed, ct).ConfigureAwait(false) is not { } raised)
+                return (false, sitePerDay, walletPerDay);
+            if (over == "site") sitePerDay = raised; else walletPerDay = raised;
+        }
+    }
+
+    // The raises a limit question offers: a tenth more, almost a third more, as much again (never less than the waiting call needs).
+    static readonly decimal[] RaiseFactors = [1.1m, 1.3m, 2m];
+
+    // One question per site and limit at a time: the calls that reach the same limit meanwhile wait for the same answer.
+    readonly ConcurrentDictionary<string, Task<decimal?>> _raiseAsks = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// A call of a site would pass a limit: the site's own ("budget" per session, "site day" money) or the whole wallet's ("wallet day" money).
+    /// The visitor is asked at once whether to raise it, and the call waits for the answer while it has time (<paramref name="ct"/>). Answers
+    /// the new limit, or null: no, no answer, or a question already answered no in this session (its calls then stop at the limit without
+    /// asking again until the limit is changed). The wallet's own callers (Everywhere, a test) get the plain notice instead.
+    /// </summary>
+    async Task<decimal?> RaiseAsync(GrantSession session, SiteRecord site, string kind, decimal limit, decimal needed, CancellationToken ct)
+    {
+        if (session.Origin is OwnOrigin or TestOrigin)
+        {
+            TellLimit(session, site, kind, LimitWords(kind, limit));
+            return null;
+        }
+
+        var key = kind + " " + limit.ToString(CultureInfo.InvariantCulture);
+        if (session.LimitsTold.ContainsKey(key)) return null;
+        var ask = _raiseAsks.GetOrAdd(session.Origin + " " + key, k => AskRaiseOnceAsync(k, session.Origin, kind, limit, needed));
+        decimal? raised;
+        try
+        {
+            raised = await ask.WaitAsync(ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            return null;                                     // this call ran out of time; the question stays for the calls after it
+        }
+
+        if (raised is null) session.LimitsTold.TryAdd(key, true);
+        if (kind == "budget" && raised is { } budget) session.Budget = budget;
+        return raised;
+    }
+
+    /// <summary>The question itself, asked once for every call that waits for it: shows it, and stores the raise the visitor chose.</summary>
+    async Task<decimal?> AskRaiseOnceAsync(string key, string origin, string kind, decimal limit, decimal needed)
+    {
+        try
+        {
+            await Task.Yield();                              // the caller's GetOrAdd returns first, then the question goes up
+            Origins.TryParse(origin, out var host, out _);
+            if (host.Length == 0) host = origin;
+            var model = RaiseModelOf(origin, host, kind, limit, needed);
+            if (model.Raises.Count == 0) return null;
+            using var unanswered = new CancellationTokenSource(RaiseQuestionLifetime);
+            var chosen = await _ui.AskRaiseAsync(model, unanswered.Token).ConfigureAwait(false);
+            if (chosen is not { } value || value <= limit) return null;
+            _store.Update(s =>
+            {
+                if (kind == "wallet day") s.Limits.WalletPerDay = Money.ToSpec(value);
+                else if (s.Site(origin) is { } record)
+                {
+                    if (kind == "site day") record.PerDay = Money.ToSpec(value);
+                    else record.Budget = Money.ToSpec(value);
+                }
+            });
+            // every session of the site that runs now gets a raised budget at once (each also reads it from the settings at its next call)
+            if (kind == "budget") foreach (var live in _sessions.Values.Where(x => x.Origin == origin)) live.Budget = value;
+            Log(new ActivityEntry { Origin = origin, Kind = "change", Outcome = "ok", Change = "Raised " + LimitWords(kind, limit) + " to " + Money.Show(value) });
+            return value;
+        }
+        finally
+        {
+            _raiseAsks.TryRemove(key, out _);
+        }
+    }
+
+    /// <summary>How long a limit question waits for the visitor before it closes as a no.</summary>
+    internal TimeSpan RaiseQuestionLifetime { get; set; } = TimeSpan.FromMinutes(10);
+
+    /// <summary>The question's words and raises: whose limit, what it is now, and the new amounts (rounded up to a cent).</summary>
+    public static RaiseModel RaiseModelOf(string origin, string host, string kind, decimal limit, decimal needed)
+    {
+        var raises = new List<RaiseChoice>();
+        foreach (var factor in RaiseFactors)
+        {
+            var value = Math.Ceiling(Math.Max(limit * factor, needed) * 100) / 100;
+            if (value <= limit || raises.Any(r => r.Value == value)) continue;
+            var label = limit > 0 ? "+" + Math.Round((value / limit - 1) * 100).ToString("0", CultureInfo.InvariantCulture) + "%" : "Raise";
+            raises.Add(new RaiseChoice(label, Money.Show(value), value));
+        }
+
+        var name = kind == "budget" ? "budget per session" : "money per day";
+        return new RaiseModel(origin, host, kind == "wallet day" ? "wallet" : "site", name, Money.Show(limit), raises,
+            kind == "wallet day" ? "limits" : "limits:" + origin);
+    }
+
+    /// <summary>A limit in the words of the notices: "its budget of $0.10 per session".</summary>
+    static string LimitWords(string kind, decimal limit) => kind switch
+    {
+        "wallet day" => "the whole wallet's money per day, " + Money.Show(limit),
+        "site day" => "its money per day, " + Money.Show(limit),
+        _ => "its budget of " + Money.Show(limit) + " per session",
+    };
 
     void ReleaseDaily(DailyHold hold)
     {
@@ -2200,13 +2343,30 @@ public sealed partial class WalletEngine
         }
     }
 
+    /// <summary>
+    /// Tells the visitor once that a site's calls stop at a limit (once more when that limit was changed and is reached again): which limit,
+    /// and where it is changed. The button opens that place: the site's own limits, the wallet's, or (calls per minute) the site's settings.
+    /// </summary>
     void TellLimit(GrantSession session, SiteRecord site, string kind, string what)
     {
-        if (session.LimitNoticeShown) return;
-        session.LimitNoticeShown = true;
+        if (!session.LimitsTold.TryAdd(kind + " " + what, true)) return;
         Origins.TryParse(site.Origin, out var host, out _);
         if (host.Length == 0) host = site.Origin;
-        _ui.ShowInfo(new InfoModel(host + " reached a limit", "It is limited by " + what + ". Its calls get no answer until you change the limit.", "Detailed settings…", kind == "rate" ? "sites" : "limits"));
+        // the wallet's own callers (Everywhere, a test from the settings) have no page of their own: they go by the limits of every site
+        var own = session.Origin is OwnOrigin or TestOrigin;
+        var where = kind == "wallet day" ? "Limits → Whole wallet → Money per day"
+            : own ? "Limits → Every site"
+            : kind switch
+            {
+                "rate" => "Sites → " + host,
+                "calls per day" => "Limits → This site: " + host + " → Calls per day",
+                "site day" => "Limits → This site: " + host + " → Money per day",
+                _ => "Limits → This site: " + host + " → Budget per session",
+            };
+        var page = kind == "rate" && !own ? "sites" : kind == "wallet day" || own ? "limits" : "limits:" + site.Origin;
+        _ui.ShowInfo(new InfoModel(host + " reached a limit",
+            "It is limited by " + what + ". Its calls get no answer until you raise it in " + where + "; a new limit counts at once.",
+            "Change the limit…", page));
     }
 
     static string Short(Exception e) => e switch

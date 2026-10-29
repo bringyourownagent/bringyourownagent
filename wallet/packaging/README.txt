@@ -25,16 +25,19 @@ Install
 1. Unzip the whole package (right click the zip file, "Extract All...").
 2. Open the folder byoa-wallet-{VERSION}-win-x64 inside the folder that Extract All made (the zip holds one folder),
    and double-click Install.cmd in it.
-   It copies the wallet into %LOCALAPPDATA%\BYOA\wallet-app and registers, for your Windows user only:
+   It copies the wallet into %LOCALAPPDATA%\BYOA\wallet-app, adds "Agent wallet" to the Start menu, registers, for
+   your Windows user only:
      - the native messaging host for Chrome and Chromium (so the extension can reach the wallet),
-     - the bringyourownagent:// links (so a site can start the wallet without the extension).
+     - the bringyourownagent:// links (so a site can start the wallet without the extension),
+   and opens the wallet.
    To start the wallet with Windows as well, run in this folder:  Install.cmd -StartWithWindows
 3. Optional, for sites that use the extension: open chrome://extensions, turn on "Developer mode", press
    "Load unpacked" and choose the folder the installer prints (%LOCALAPPDATA%\BYOA\wallet-app\extension).
-4. Add a model: install the Llama app (https://llama.app), let it load a model, then in the wallet open Sources
-   and press Add a model. Optional: add an OpenRouter key for the paid fallback in the Sources page.
+4. Add a model: in the wallet open My models. "Sign in with OpenRouter" (a free account, many models), a free demo
+   model, or a model on this PC (the Llama app https://llama.app, LM Studio or Ollama) with Add a model.
 
-The wallet starts by itself when a site asks for it. Its icon lives in the tray; a click opens the settings
+The wallet starts by itself when a site asks for it, and opens from the Start menu (Agent wallet). Its icon lives in
+the tray; a click opens the settings
 (Sites, Sources, Skills & fallbacks, Limits, Activity, Agents, and Connect your AI agent). The package also carries
 byoa-mcp.exe. Add its path from the Connect page to Claude Code, Codex, or OpenCode; the wallet asks before an agent
 can manage it.

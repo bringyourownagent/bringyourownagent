@@ -232,7 +232,7 @@ public sealed class OpenRouterTextSource : ITextSource, IStreamingTextSource
         var (input, output) = ChatCompletions.Tokens(usage);
         var reply = ChatCompletions.First(json)?["message"];
         var answer = request.Choices is null
-            ? Texts.CleanAnswer(ChatCompletions.Str(reply?["content"]) ?? "")
+            ? Texts.CleanAnswer(ChatCompletions.Content(reply?["content"]) ?? "")
             : ChatCompletions.ExtractChoice(reply, request.Choices) ?? "";
         if (answer.Length == 0)
         {

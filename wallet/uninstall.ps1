@@ -8,10 +8,11 @@
       HKCU\Software\Chromium\NativeMessagingHosts\org.bringyourownagent.wallet         (registry key)
       HKCU\Software\Classes\bringyourownagent   (registry key with its DefaultIcon and shell\open\command
                                                  subkeys; only while its command is this wallet's)
+      the Start menu shortcut "Agent wallet.lnk" (one file)
       the Startup shortcut "BYOA agent wallet.lnk", only if install.ps1 -StartWithWindows made one (one file)
     Nothing else.
 
-    Apart from that one shortcut it deletes no files: it prints the folders the wallet used (the app, its data with
+    Apart from those two shortcuts it deletes no files: it prints the folders the wallet used (the app, its data with
     your settings and DPAPI-protected keys), so that you can remove them yourself if you want to.
     Remove the unpacked extension in chrome://extensions.
 
@@ -62,9 +63,13 @@ if ($null -eq $command) {
     }
 }
 
-$link = Join-Path ([Environment]::GetFolderPath('Startup')) 'BYOA agent wallet.lnk'
-if (Test-Path $link) {
-    if ($PSCmdlet.ShouldProcess($link, 'Remove the Startup shortcut')) {
+$links = @(
+    (Join-Path ([Environment]::GetFolderPath('Programs')) 'Agent wallet.lnk'),
+    (Join-Path ([Environment]::GetFolderPath('Startup')) 'BYOA agent wallet.lnk')
+)
+foreach ($link in $links) {
+    if (-not (Test-Path $link)) { continue }
+    if ($PSCmdlet.ShouldProcess($link, 'Remove the shortcut')) {
         Remove-Item -LiteralPath $link
         Write-Host "Removed $link"
     }

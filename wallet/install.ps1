@@ -45,7 +45,9 @@ param(
     [string]$InstallDir = (Join-Path $env:LOCALAPPDATA 'BYOA\wallet-app'),
     [switch]$StartWithWindows,
     [switch]$NoBuild,
-    [switch]$FromPackage
+    [switch]$FromPackage,
+    # do not open the wallet at the end (a script that installs it and starts it its own way)
+    [switch]$NoStart
 )
 
 $ErrorActionPreference = 'Stop'
@@ -194,6 +196,16 @@ $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey("$protocolKey\shell\
 try { $key.SetValue('', "`"$walletExe`" --url `"%1`"") } finally { $key.Close() }
 Write-Host "Registered HKCU\$protocolKey (bringyourownagent:// links)"
 
+# A Start menu entry, so the wallet is found and opened like any other program.
+$menuLink = Join-Path ([Environment]::GetFolderPath('Programs')) 'Agent wallet.lnk'
+$menuShell = New-Object -ComObject WScript.Shell
+$menuShortcut = $menuShell.CreateShortcut($menuLink)
+$menuShortcut.TargetPath = $walletExe
+$menuShortcut.WorkingDirectory = $InstallDir
+$menuShortcut.Description = 'Agent wallet: your own AI for the sites you allow'
+$menuShortcut.Save()
+Write-Host "Start menu: $menuLink"
+
 if ($StartWithWindows) {
     $startup = [Environment]::GetFolderPath('Startup')
     $link = Join-Path $startup 'BYOA agent wallet.lnk'
@@ -223,5 +235,13 @@ if ($FromPackage) {
     Write-Host ''
     Write-Host 'The unzipped package folder is not needed any more.'
     Write-Host "To remove the wallet later: $(Join-Path $InstallDir 'Uninstall.cmd')"
-    Write-Host '(it removes the registry keys and the Startup shortcut, and leaves your files for you to delete).'
+    Write-Host '(it removes the registry keys and the shortcuts, and leaves your files for you to delete).'
+}
+
+# The wallet opens now, so the visitor sees it was installed (its icon then stays in the tray, next to the clock).
+if ($FromPackage -and -not $NoStart) {
+    Start-Process -FilePath $walletExe -WorkingDirectory $InstallDir
+    Write-Host ''
+    Write-Host 'The wallet is open now: add your models in My models. Next time open it from the Start menu: Agent wallet.'
+    Write-Host 'A site can also start it by itself, with its Connect button.'
 }

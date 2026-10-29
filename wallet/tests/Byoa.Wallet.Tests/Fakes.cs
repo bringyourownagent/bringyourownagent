@@ -237,6 +237,16 @@ sealed class ScriptedUi : IWalletUi
 
     public void ShowInfo(InfoModel model) => Infos.Add(model);
 
+    /// <summary>The limit questions shown, and the raise the visitor picks: its index among the offered raises, or null for «No».</summary>
+    public List<RaiseModel> RaiseModels { get; } = [];
+    public int? RaisePick { get; set; }
+
+    public Task<decimal?> AskRaiseAsync(RaiseModel model, CancellationToken ct)
+    {
+        lock (RaiseModels) RaiseModels.Add(model);
+        return Task.FromResult(RaisePick is { } n && n < model.Raises.Count ? model.Raises[n].Value : (decimal?)null);
+    }
+
     /// <summary>What the guard showed the visitor, and what he answers (one answer per question, then "refuse").</summary>
     public List<GuardPrompt> GuardPrompts { get; } = [];
     public Queue<GuardAnswer> GuardAnswers { get; } = new();

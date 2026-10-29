@@ -606,4 +606,86 @@ public class TextEngineTests
         Assert.Equal("limit", log.Recent()[0].Outcome);           // the wallet never spends past the budget silently
         Assert.Equal(1, _ui.PaidQuestions);
     }
+
+    // ------------------------------------------------------------------ a limit reached: the visitor is asked to raise it
+
+    (WalletEngine Engine, ActivityLog Log, string Grant) PaidSession(decimal costPerCall)
+    {
+        var expensive = new FakeTextSource("t-expensive", Runs.ApiKey, costPerCall: costPerCall) { Answers = new Queue<string>(["Paris"]) };
+        var log = new ActivityLog(null, _time.Now);
+        var engine = new WalletEngine(_store, [], log, _ui, _time, [expensive]);
+        _store.Update(s => Router.EnsureTextChain(s, [expensive]));
+        var request = Assert.IsType<JsonObject>(engine.HandleAsync(Clips.Request(Site, click: true, QuizManifest)).GetAwaiter().GetResult());
+        _ui.Paid = PaidAnswer.Always;
+        return (engine, log, request["grantId"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task ABudgetReachedAsksToRaiseIt_AndTheCallGoesOnWithTheRaise()
+    {
+        var (engine, log, grant) = PaidSession(0.03m);
+        Assert.True(Ok(await engine.HandleAsync(TextCall(Site, grant))));    // 0.03 of the 0.05 budget
+
+        _ui.RaisePick = 0;                                                  // the first raise offered
+        Assert.True(Ok(await engine.HandleAsync(TextCall(Site, grant))));    // 0.06 would pass 0.05: asked, raised, answered
+        var question = Assert.Single(_ui.RaiseModels);
+        Assert.Equal("site", question.Whose);
+        Assert.Equal("budget per session", question.Name);
+        Assert.Equal("$0.05", question.Now);
+        Assert.All(question.Raises, r => Assert.True(r.Value >= 0.06m));    // every raise lets this call through
+        Assert.Equal(question.Raises[0].Value, Money.Parse(_store.Read(s => s.Site(Site)!.Budget), 0));
+        Assert.Contains(log.Recent(), e => e.Kind == "change" && e.Change!.StartsWith("Raised its budget of $0.05 per session", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ARaiseRefusedIsNotAskedAgain_ButABudgetRaisedInTheSettingsCountsAtOnce()
+    {
+        var (engine, log, grant) = PaidSession(0.03m);
+        Assert.True(Ok(await engine.HandleAsync(TextCall(Site, grant))));
+
+        _ui.RaisePick = null;                                               // «No»
+        Assert.False(Ok(await engine.HandleAsync(TextCall(Site, grant))));
+        Assert.False(Ok(await engine.HandleAsync(TextCall(Site, grant))));
+        Assert.Single(_ui.RaiseModels);                                     // the same limit is not asked about twice in a session
+        Assert.Equal("limit", log.Recent()[0].Outcome);
+
+        _store.Update(s => s.Site(Site)!.Budget = "1.00 USD");              // Limits → This site → Budget per session, no reconnection
+        Assert.True(Ok(await engine.HandleAsync(TextCall(Site, grant))));
+    }
+
+    [Fact]
+    public async Task AMoneyPerDayQuestionSaysWhoseLimitItIs()
+    {
+        var (engine, _, grant) = PaidSession(0.03m);
+        _store.Update(s => s.Site(Site)!.Budget = "5.00 USD");
+        _store.Update(s => s.Site(Site)!.PerDay = "0.04 USD");
+        Assert.True(Ok(await engine.HandleAsync(TextCall(Site, grant))));
+
+        // the call needs 0.06 of a 0.04 day: +10% and +30% would not do, so the raises are +50% ($0.06) and +100% ($0.08)
+        _ui.RaisePick = 1;
+        Assert.True(Ok(await engine.HandleAsync(TextCall(Site, grant))));
+        var site = Assert.Single(_ui.RaiseModels);
+        Assert.Equal(("site", "money per day", "limits:" + Site), (site.Whose, site.Name, site.SettingsPage));
+        Assert.Equal(["+50%", "+100%"], site.Raises.Select(r => r.Label));
+        Assert.Equal(0.08m, Money.Parse(_store.Read(s => s.Site(Site)!.PerDay), 0));
+
+        _store.Update(s => s.Limits.WalletPerDay = "0.07 USD");
+        Assert.True(Ok(await engine.HandleAsync(TextCall(Site, grant))));
+        var wallet = _ui.RaiseModels[^1];
+        Assert.Equal(("wallet", "money per day", "limits"), (wallet.Whose, wallet.Name, wallet.SettingsPage));
+    }
+
+    [Fact]
+    public void TheRaisesAreTenThirtyAndAHundredPercent_NeverLessThanTheCallNeeds()
+    {
+        var plain = WalletEngine.RaiseModelOf("https://a.example", "a.example", "budget", 0.10m, 0.101m);
+        Assert.Equal(["+10% → $0.11", "+30% → $0.13", "+100% → $0.20"], plain.Raises.Select(r => r.Label + " → " + r.NewText));
+
+        // the call needs 0.13: the smaller raises would not let it through, so they are not offered
+        var needy = WalletEngine.RaiseModelOf("https://a.example", "a.example", "budget", 0.10m, 0.1294m);
+        Assert.Equal([0.13m, 0.20m], needy.Raises.Select(r => r.Value));
+        Assert.Equal("+30%", needy.Raises[0].Label);
+
+        Assert.Equal("Raise", WalletEngine.RaiseModelOf("https://a.example", "a.example", "site day", 0m, 0.004m).Raises.Single().Label);
+    }
 }

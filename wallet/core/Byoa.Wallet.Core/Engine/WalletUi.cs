@@ -145,6 +145,19 @@ public sealed record PreparingModel(string Origin, string Host, IReadOnlyList<st
 /// <summary>A short message that needs no answer, with an optional button that opens a settings page.</summary>
 public sealed record InfoModel(string Title, string Text, string? ActionText = null, string? OpenPage = null);
 
+/// <summary>One raise offered for a limit: its words ("+30%"), the new limit in words ("$0.13") and as a number.</summary>
+public sealed record RaiseChoice(string Label, string NewText, decimal Value);
+
+/// <summary>
+/// "host reached a limit: raise it?" A call of a site would pass a limit, and waits for the answer.
+/// </summary>
+/// <param name="Whose">"site" when it is the site's own limit, "wallet" when it is the whole wallet's (for every site).</param>
+/// <param name="Name">The limit in words: "budget per session", "money per day".</param>
+/// <param name="Now">The limit as it is now, in words ("$0.10").</param>
+/// <param name="Raises">The raises offered, smallest first; each is at least what the waiting call needs.</param>
+/// <param name="SettingsPage">The page where the limit is set by hand ("limits:origin" for the site's own card).</param>
+public sealed record RaiseModel(string Origin, string Host, string Whose, string Name, string Now, IReadOnlyList<RaiseChoice> Raises, string SettingsPage);
+
 /// <summary>
 /// What the engine needs from the desktop UI. Every method may be called from any thread; the UI marshals to its
 /// own thread. Cancellation means "no answer in time": the window closes and the engine treats it as a no.
@@ -156,6 +169,9 @@ public interface IWalletUi
     Task<ConsentAnswer> ShowConsentAsync(ConsentModel model, CancellationToken ct);
 
     Task<PaidAnswer> AskPaidAsync(PaidModel model, CancellationToken ct);
+
+    /// <summary>A site reached a limit: raise it? The answer is the chosen new limit, or null (no, closed, or no answer in time).</summary>
+    Task<decimal?> AskRaiseAsync(RaiseModel model, CancellationToken ct) => Task.FromResult<decimal?>(null);
 
     void ShowInfo(InfoModel model);
 

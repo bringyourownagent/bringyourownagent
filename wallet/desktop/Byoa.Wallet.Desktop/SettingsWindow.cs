@@ -49,6 +49,7 @@ sealed partial class SettingsWindow : Window
     readonly ProgressBar _todayBar = new() { Minimum = 0, Maximum = 1 };
     readonly DispatcherTimer _refresh;
     string _page = "sites";
+    string? _limitsFirst;                                   // the site whose limits the Limits page shows first (it reached one)
     bool _dirty;
     DateTimeOffset _rendered;
 
@@ -182,6 +183,9 @@ sealed partial class SettingsWindow : Window
     public void Show(string? page)
     {
         if (page == "agents") page = "connect";                       // the list of managing agents is part of My MCP now
+        // "limits:<origin>": a site reached one of its limits; its own card comes first on the Limits page
+        _limitsFirst = page?.StartsWith("limits:", StringComparison.Ordinal) == true ? page["limits:".Length..] : null;
+        if (_limitsFirst is not null) page = "limits";
         var wanted = Pages.Any(p => p.Id == page) ? page! : _page;
         if (!VisiblePages(_w.Store.Read(s => s.ShowAllSettings)).Any(p => p.Id == wanted))
         {
@@ -603,17 +607,29 @@ sealed partial class SettingsWindow : Window
                     "It works with programs that say what is in memory: the Llama app, LM Studio and Ollama. For another server the wallet cannot tell, and it does not hold the model back.", "muted", "small"))));
     }
 
-    /// <summary>Left part of a model's line: its «Use it» switch, its name, and a short state that is cut off rather than wrapped.</summary>
+    /// <summary>
+    /// Left part of a model's line: its «Use it» switch, its name, and a short state that is cut off rather than wrapped. A name too long for the
+    /// line goes on in a second line (the state then has no room and is not shown) instead of running over the chip and the arrow.
+    /// </summary>
     static Control ModelLine(CheckBox enabled, string name, string state)
     {
+        enabled.VerticalAlignment = VerticalAlignment.Center;
         var title = Ui.Text(name, "strong");
         title.VerticalAlignment = VerticalAlignment.Center;
         title.Margin = new Thickness(6, 0, 0, 0);
+        title.TextWrapping = TextWrapping.Wrap;
         var detail = Ui.Text(state, "muted", "small");
         detail.TextTrimming = TextTrimming.CharacterEllipsis;
         detail.VerticalAlignment = VerticalAlignment.Center;
         detail.Margin = new Thickness(14, 0, 0, 0);
-        return Ui.Columns("Auto,Auto,*", enabled, title, detail);
+        // A dock panel measures each part with the room the ones before it left, so the name never gets more than the line has
+        var line = new DockPanel();
+        DockPanel.SetDock(enabled, Dock.Left);
+        DockPanel.SetDock(title, Dock.Left);
+        line.Children.Add(enabled);
+        line.Children.Add(title);
+        line.Children.Add(detail);
+        return line;
     }
 
     /// <summary>A model the visitor added, in one line; its settings open with the arrow.</summary>
@@ -936,6 +952,15 @@ sealed partial class SettingsWindow : Window
         Head(page, "Limits", "Limits for each site and for the whole wallet. A call goes ahead only within all of them, and within the limits the site declared itself.");
         var settings = _w.Store.Snapshot();
         var now = DateTimeOffset.UtcNow;
+        var allowed = settings.Sites.Where(s => s.Status == SiteStatus.Allowed).ToList();
+
+        // A site that reached a limit (the notice's button) comes first, so the limit to raise is the first thing on the page
+        var first = allowed.FirstOrDefault(s => s.Origin == _limitsFirst);
+        if (first is not null)
+        {
+            SiteLimits(page, first, settings, now, reached: true);
+            allowed.Remove(first);
+        }
 
         page.Children.Add(Section("Whole wallet, all sites"));
         var (allSpent, allCalls) = _w.Activity.Today(now);
@@ -952,19 +977,24 @@ sealed partial class SettingsWindow : Window
         page.Children.Add(Section("Text, every site: size, length, wait"));
         page.Children.Add(TextLimitsCard(null));
 
-        foreach (var site in settings.Sites.Where(s => s.Status == SiteStatus.Allowed))
-        {
-            Origins.TryParse(site.Origin, out var host, out _);
-            var (spent, calls) = _w.Activity.Today(now, site.Origin);
-            page.Children.Add(Section("This site: " + host));
-            page.Children.Add(Ui.Box("card", Ui.Column(10,
-                MoneyLimit("Budget per session", site.Budget, null, v => _w.Store.Update(s => s.Site(site.Origin)!.Budget = v), "LimitBudget-" + host),
-                MoneyLimit("Money per day", site.PerDay ?? settings.Limits.SitePerDay, spent, v => _w.Store.Update(s => s.Site(site.Origin)!.PerDay = v), "LimitDay-" + host),
-                CountLimit("Calls per day", site.CallsPerDay ?? settings.Limits.SiteCallsPerDay, calls, v => _w.Store.Update(s => s.Site(site.Origin)!.CallsPerDay = v), "LimitCalls-" + host),
-                Ui.Wrap("A new budget per session applies to the site's next session.", "muted", "small"))));
-            page.Children.Add(Section("Text for this site: " + host));
-            page.Children.Add(TextLimitsCard(site));
-        }
+        foreach (var site in allowed) SiteLimits(page, site, settings, now, reached: false);
+    }
+
+    /// <summary>One site's money and call limits, and its text limits.</summary>
+    void SiteLimits(StackPanel page, SiteRecord site, WalletSettings settings, DateTimeOffset now, bool reached)
+    {
+        Origins.TryParse(site.Origin, out var host, out _);
+        var (spent, calls) = _w.Activity.Today(now, site.Origin);
+        page.Children.Add(Section("This site: " + host));
+        var card = Ui.Column(10,
+            MoneyLimit("Budget per session", site.Budget, null, v => _w.Store.Update(s => s.Site(site.Origin)!.Budget = v), "LimitBudget-" + host),
+            MoneyLimit("Money per day", site.PerDay ?? settings.Limits.SitePerDay, spent, v => _w.Store.Update(s => s.Site(site.Origin)!.PerDay = v), "LimitDay-" + host),
+            CountLimit("Calls per day", site.CallsPerDay ?? settings.Limits.SiteCallsPerDay, calls, v => _w.Store.Update(s => s.Site(site.Origin)!.CallsPerDay = v), "LimitCalls-" + host),
+            Ui.Wrap("A change counts at once, for the session that is running too.", "muted", "small"));
+        if (reached) card.Children.Insert(0, Ui.Wrap("This site reached one of these limits. Raise it, and its calls go on.", "strong"));
+        page.Children.Add(Ui.Box("card", card));
+        page.Children.Add(Section("Text for this site: " + host));
+        page.Children.Add(TextLimitsCard(site));
     }
 
     Control MoneyLimit(string label, string value, decimal? used, Action<string> set, string id)
