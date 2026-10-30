@@ -110,7 +110,38 @@ public class KeychainSecretProtector(ISecretKeyItem keyItem, string purpose = "s
     byte[] Associated => [.. Magic, .. Encoding.UTF8.GetBytes(purpose)];
     const int NonceSize = 12;
     const int TagSize = 16;
-    const int KeySize = 32;
+    protected const int KeySize = 32;
+
+    /// <summary>The key from the store; null when it holds none. A copy, because the caller wipes it after use.</summary>
+    /// <exception cref="CryptographicException">The store cannot be read.</exception>
+    protected virtual byte[]? ReadKey()
+    {
+        try { return keyItem.Get(); }
+        catch (IOException e)
+        {
+            throw new CryptographicException("the " + KeyStoreName + " did not give the key of the secrets file: " + e.Message, e);
+        }
+    }
+
+    /// <summary>Stores a new key.</summary>
+    /// <exception cref="CryptographicException">The store cannot be written.</exception>
+    protected virtual void WriteKey(byte[] key)
+    {
+        try { keyItem.Set(key); }
+        catch (IOException e)
+        {
+            throw new CryptographicException("the " + KeyStoreName + " would not keep the key of the secrets file: " + e.Message, e);
+        }
+    }
+
+    /// <summary>
+    /// A second key to try when the first does not open a file: a key file that was used before a Secret Service appeared. Null when the
+    /// protector has only one store.
+    /// </summary>
+    protected virtual byte[]? FallbackKey() => null;
+
+    /// <summary>The fallback key opened the file: the primary store may keep it now, so that the next run finds it there too.</summary>
+    protected virtual void FallbackKeyOpened(byte[] key) { }
 
     public byte[] Protect(byte[] plain)
     {
@@ -138,26 +169,31 @@ public class KeychainSecretProtector(ISecretKeyItem keyItem, string purpose = "s
     {
         if (sealedBytes.Length < Magic.Length + NonceSize + TagSize || !sealedBytes.AsSpan(0, Magic.Length).SequenceEqual(Magic))
             throw new CryptographicException("the secrets file is not in the format of this wallet");
-        byte[]? key;
-        try
-        {
-            key = keyItem.Get();
-        }
-        catch (IOException e)
-        {
-            throw new CryptographicException("the " + KeyStoreName + " did not give the key of the secrets file: " + e.Message, e);
-        }
-
+        var key = ReadKey();
         if (key is null || key.Length != KeySize) throw new CryptographicException("the " + KeyStoreName + " has no key for the secrets file");
         try
         {
-            var nonce = sealedBytes.AsSpan(Magic.Length, NonceSize);
-            var tag = sealedBytes.AsSpan(Magic.Length + NonceSize, TagSize);
-            var cipher = sealedBytes.AsSpan(Magic.Length + NonceSize + TagSize);
-            var plain = new byte[cipher.Length];
-            using var aes = new AesGcm(key, TagSize);
-            aes.Decrypt(nonce, cipher, tag, plain, Associated);
-            return plain;
+            try
+            {
+                return Decrypt(key, sealedBytes);
+            }
+            catch (CryptographicException)
+            {
+                // A key file from before a Secret Service appeared may be the one the file was sealed with: try it, and let the primary
+                // store keep it when it works, so that the file never becomes unreadable while one of the two stores has the right key.
+                var fallback = FallbackKey();
+                if (fallback is not { Length: KeySize } || CryptographicOperations.FixedTimeEquals(key, fallback)) throw;
+                try
+                {
+                    var plain = Decrypt(fallback, sealedBytes);
+                    FallbackKeyOpened(fallback);
+                    return plain;
+                }
+                finally
+                {
+                    CryptographicOperations.ZeroMemory(fallback);
+                }
+            }
         }
         finally
         {
@@ -165,29 +201,31 @@ public class KeychainSecretProtector(ISecretKeyItem keyItem, string purpose = "s
         }
     }
 
+    byte[] Decrypt(byte[] key, byte[] sealedBytes)
+    {
+        var nonce = sealedBytes.AsSpan(Magic.Length, NonceSize);
+        var tag = sealedBytes.AsSpan(Magic.Length + NonceSize, TagSize);
+        var cipher = sealedBytes.AsSpan(Magic.Length + NonceSize + TagSize);
+        var plain = new byte[cipher.Length];
+        using var aes = new AesGcm(key, TagSize);
+        aes.Decrypt(nonce, cipher, tag, plain, Associated);
+        return plain;
+    }
+
     /// <summary>The key, or a new random one stored first. When the store cannot be written the error goes up: a key that is not kept would make the file unreadable.</summary>
     byte[] KeyOrNew()
     {
-        byte[]? key;
-        try
-        {
-            key = keyItem.Get();
-        }
-        catch (IOException e)
-        {
-            throw new CryptographicException("the " + KeyStoreName + " did not give the key of the secrets file: " + e.Message, e);
-        }
-
+        var key = ReadKey();
         if (key is { Length: KeySize }) return key;
         key = RandomNumberGenerator.GetBytes(KeySize);
         try
         {
-            keyItem.Set(key);
+            WriteKey(key);
         }
-        catch (IOException e)
+        catch (CryptographicException)
         {
             CryptographicOperations.ZeroMemory(key);
-            throw new CryptographicException("the " + KeyStoreName + " would not keep the key of the secrets file: " + e.Message, e);
+            throw;
         }
 
         return key;

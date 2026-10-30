@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using Byoa.Wallet.Protocol;
 using Tmds.DBus.Protocol;
 
@@ -5,8 +6,9 @@ namespace Byoa.Wallet.Secrets;
 
 /// <summary>
 /// How the Linux build keeps the random key of the sealed files: in the Secret Service of the desktop session (D-Bus
-/// <c>org.freedesktop.secrets</c>), or, when the session has none, in <c>secrets.key</c> in the data folder with mode 0600. The choice is
-/// worked out once and is the same for the rest of the run; <see cref="SecretProtectors.StorageSentence"/> tells the person which one it is.
+/// <c>org.freedesktop.secrets</c>), or, when the session has none, in <c>secrets.key</c> in the data folder with mode 0600. A key file from
+/// before a Secret Service appeared is imported into it; a key file is never deleted or rewritten. The choice is worked out once and is the
+/// same for the rest of the run; <see cref="SecretProtectors.StorageSentence"/> tells the person which one it is.
 /// </summary>
 public static class LinuxSecrets
 {
@@ -21,21 +23,12 @@ public static class LinuxSecrets
     /// <summary>Where the key is kept now.</summary>
     public static SecretStorage Storage => Service.Value is null ? SecretStorage.KeyFile : SecretStorage.SecretService;
 
-    /// <summary>The item of one purpose ("secrets", "pairings"): the state's Secret Service, or the key file of the current data folder.</summary>
-    public static ISecretKeyItem CreateItem()
-    {
-        if (Service.Value is { } service) return service;
-        return new FileSecretKeyStore(Path.Combine(WalletPaths.Home, "secrets.key"));
-    }
-
-    /// <summary>The protector for this system, named after the store it really uses.</summary>
-    public static ISecretProtector CreateProtector(string purpose)
-    {
-        var item = CreateItem();
-        return item is SecretServiceKeyStore
-            ? new LinuxSecretProtector(item, "Secret Service", purpose)
-            : new LinuxSecretProtector(item, "key file", purpose);
-    }
+    /// <summary>
+/// The protector for this system: both stores when there is a Secret Service, so that a key file from an earlier run is imported and can
+/// open the files when the service's key cannot; the key file alone when there is no Secret Service.
+/// </summary>
+public static ISecretProtector CreateProtector(string purpose) =>
+        new LinuxSecretProtector(Service.Value, new FileSecretKeyStore(Path.Combine(WalletPaths.Home, "secrets.key")), purpose);
 
     static SecretServiceKeyStore? ConnectService()
     {
@@ -55,13 +48,170 @@ public static class LinuxSecrets
 }
 
 /// <summary>
-/// The Linux protector: the same AES-256-GCM file as the macOS one, under a key kept in the Secret Service or in <c>secrets.key</c>. Its
-/// messages name the store that is really in use, so that a person reading an error knows where to look.
+/// The Linux protector: the same AES-256-GCM file as the macOS one, under a key kept in the Secret Service or in <c>secrets.key</c>. When both
+/// stores are there, the Secret Service is the primary one:
+/// <list type="bullet">
+/// <item>only one of them has a key: that key is used;</item>
+/// <item>the key file has one and the Secret Service has none: the file's key is imported into the Secret Service once, and the file is left where it is;</item>
+/// <item>both have a key and they differ: the Secret Service is tried first; when it cannot open the file, the key file's key is tried and, when
+/// it works, stored in the Secret Service instead, so that no sealed file becomes unreadable while one of the two stores has the right key.</item>
+/// </list>
+/// The key file is never deleted or rewritten by this class.
 /// </summary>
-public sealed class LinuxSecretProtector(ISecretKeyItem keyItem, string storeName, string purpose = "secrets")
-    : KeychainSecretProtector(keyItem, purpose)
+public sealed class LinuxSecretProtector : KeychainSecretProtector
 {
-    protected override string KeyStoreName => storeName;
+    enum PrimaryStore
+    {
+        Service,
+        File,
+    }
+
+    readonly ISecretKeyItem? _service;
+    readonly ISecretKeyItem _file;
+    readonly object _gate = new();
+    bool _resolved;
+    byte[]? _key;
+    byte[]? _fileKey;
+    PrimaryStore _primary;
+
+    public LinuxSecretProtector(ISecretKeyItem? service, ISecretKeyItem file, string purpose = "secrets") : base(file, purpose)
+    {
+        _service = service;
+        _file = file;
+    }
+
+    protected override string KeyStoreName => _service is null ? "key file" : "Secret Service";
+
+    protected override byte[]? ReadKey()
+    {
+        Resolve();
+        lock (_gate) return _key?.ToArray();
+    }
+
+    protected override void WriteKey(byte[] key)
+    {
+        lock (_gate)
+        {
+            if (_service is not null && _primary == PrimaryStore.Service)
+            {
+                try
+                {
+                    _service.Set(key);
+                    _key = key.ToArray();
+                    return;
+                }
+                catch (IOException e)
+                {
+                    throw new CryptographicException("the Secret Service would not keep the key of the secrets file: " + e.Message, e);
+                }
+            }
+
+            try
+            {
+                _file.Set(key);
+                _primary = PrimaryStore.File;
+                _key = key.ToArray();
+            }
+            catch (IOException e)
+            {
+                throw new CryptographicException("the key file would not keep the key of the secrets file: " + e.Message, e);
+            }
+        }
+    }
+
+    protected override byte[]? FallbackKey()
+    {
+        lock (_gate) return _primary == PrimaryStore.Service ? _fileKey?.ToArray() : null;
+    }
+
+    protected override void FallbackKeyOpened(byte[] key)
+    {
+        lock (_gate)
+        {
+            _key = key.ToArray();
+            if (_service is not null)
+            {
+                try
+                {
+                    _service.Set(key);
+                    _primary = PrimaryStore.Service;
+                    _fileKey = key.ToArray();
+                    return;
+                }
+                catch (IOException)
+                {
+                    // The service cannot take it now (locked, for example): this run keeps using the key file.
+                }
+            }
+
+            _primary = PrimaryStore.File;
+        }
+    }
+
+    /// <summary>
+    /// Looks at both stores once. The Secret Service wins when it has a key; without one it takes the key file's key; without either it waits
+    /// for the first new key, which goes to the Secret Service when there is one.
+    /// </summary>
+    void Resolve()
+    {
+        lock (_gate)
+        {
+            if (_resolved) return;
+            _resolved = true;
+
+            byte[]? serviceKey = null;
+            IOException? serviceError = null;
+            if (_service is not null)
+            {
+                try { serviceKey = _service.Get(); }
+                catch (IOException e) { serviceError = e; }
+            }
+
+            byte[]? fileKey = null;
+            IOException? fileError = null;
+            try { fileKey = _file.Get(); }
+            catch (IOException e) { fileError = e; }
+            _fileKey = fileKey;
+
+            if (serviceKey is not null)
+            {
+                _key = serviceKey;
+                _primary = PrimaryStore.Service;
+                return;
+            }
+
+            if (fileKey is not null)
+            {
+                if (_service is not null)
+                {
+                    try
+                    {
+                        _service.Set(fileKey);              // import: the file keeps its copy
+                        _key = fileKey;
+                        _primary = PrimaryStore.Service;
+                        return;
+                    }
+                    catch (IOException)
+                    {
+                        // The service cannot take the key now: the file's key is used for this run.
+                    }
+                }
+
+                _key = fileKey;
+                _primary = PrimaryStore.File;
+                return;
+            }
+
+            if (serviceError is not null)
+                throw new CryptographicException("the Secret Service did not give the key of the secrets file: " + serviceError.Message, serviceError);
+            if (fileError is not null && _service is null)
+                throw new CryptographicException("the key file did not give the key of the secrets file: " + fileError.Message, fileError);
+            // A damaged key file next to a working Secret Service is left alone; a new key goes to the service.
+
+            _key = null;
+            _primary = _service is not null ? PrimaryStore.Service : PrimaryStore.File;
+        }
+    }
 }
 
 /// <summary>

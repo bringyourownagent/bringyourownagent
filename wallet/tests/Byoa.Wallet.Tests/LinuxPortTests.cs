@@ -14,66 +14,203 @@ public class LinuxSecretProtectorTests
 {
     static readonly byte[] Plain = Encoding.UTF8.GetBytes("{\"openrouter\":\"test-secret-0123456789abcdef\"}");
 
-    [Fact]
-    public void AFileSealedUnderASecretServiceKeyOpensAgainAndHoldsNoPlainText()
+    /// <summary>A file sealed the way a wallet without a Secret Service sealed it: its key lives in the file only.</summary>
+    static (byte[] Sealed, MemoryKeychainItem File) SealWithTheFileAlone()
     {
-        var item = new MemoryKeychainItem();
-        var protector = new LinuxSecretProtector(item, "Secret Service");
+        var file = new MemoryKeychainItem();
+        return (new LinuxSecretProtector(null, file).Protect(Plain), file);
+    }
+
+    [Fact]
+    public void WithOnlyAKeyFileTheKeyIsMadeThereOnceAndTheFileOpensAgain()
+    {
+        var file = new MemoryKeychainItem();
+        var protector = new LinuxSecretProtector(null, file);
         var sealedBytes = protector.Protect(Plain);
         Assert.DoesNotContain("test-secret", Encoding.UTF8.GetString(sealedBytes));
         Assert.Equal(Plain, protector.Unprotect(sealedBytes));
-        Assert.Equal(1, item.Writes);                                                       // the key is made once and kept
+        Assert.Equal(1, file.Writes);                                                       // the key is made once and kept
         protector.Protect(Plain);
-        Assert.Equal(1, item.Writes);
-        Assert.Equal(Plain, new LinuxSecretProtector(item, "Secret Service").Unprotect(sealedBytes));
+        Assert.Equal(1, file.Writes);
+        Assert.Equal(Plain, new LinuxSecretProtector(null, file).Unprotect(sealedBytes));
         Assert.NotEqual(protector.Protect(Plain), protector.Protect(Plain));                // a fresh nonce each time
+    }
+
+    [Fact]
+    public void WithOnlyASecretServiceTheKeyIsMadeThereAndTheFileStaysEmpty()
+    {
+        var service = new MemoryKeychainItem();
+        var file = new MemoryKeychainItem();
+        var protector = new LinuxSecretProtector(service, file);
+        var sealedBytes = protector.Protect(Plain);
+        Assert.Equal(1, service.Writes);
+        Assert.Equal(0, file.Writes);
+        Assert.Equal(Plain, new LinuxSecretProtector(service, file).Unprotect(sealedBytes));
+        Assert.Equal(1, service.Writes);
+        Assert.Equal(0, file.Writes);
+    }
+
+    [Fact]
+    public void AKeyFileFromBeforeTheSecretServiceIsImportedOnceAndStaysWhereItIs()
+    {
+        var (sealedBytes, file) = SealWithTheFileAlone();
+        var fileKey = file.Get();
+        var service = new MemoryKeychainItem();
+
+        var protector = new LinuxSecretProtector(service, file);
+        Assert.Equal(Plain, protector.Unprotect(sealedBytes));
+        Assert.Equal(fileKey, service.Get());                                              // the file's key, imported
+        Assert.Equal(1, service.Writes);
+        Assert.Equal(1, file.Writes);                                                      // the file was read, never rewritten
+
+        Assert.Equal(Plain, new LinuxSecretProtector(service, file).Unprotect(sealedBytes));
+        Assert.Equal(1, service.Writes);
+        Assert.Equal(1, file.Writes);
+    }
+
+    [Fact]
+    public void AKeyFileIsImportedWhenTheFirstNewKeyIsStoredAfterTheServiceAppears()
+    {
+        var file = new MemoryKeychainItem();
+        var fileKey = RandomNumberGenerator.GetBytes(32);
+        file.Set(fileKey);
+        var service = new MemoryKeychainItem();
+
+        var protector = new LinuxSecretProtector(service, file);
+        var sealedBytes = protector.Protect(Plain);                                        // no sealed file yet
+        Assert.Equal(fileKey, service.Get());
+        Assert.Equal(Plain, protector.Unprotect(sealedBytes));
+        Assert.Equal(1, file.Writes);
+    }
+
+    [Fact]
+    public void WithTheSameKeyInBothStoresNeitherStoreIsChanged()
+    {
+        var key = RandomNumberGenerator.GetBytes(32);
+        var service = new MemoryKeychainItem();
+        service.Set(key);
+        var file = new MemoryKeychainItem();
+        file.Set(key);
+        var sealedBytes = new LinuxSecretProtector(null, file).Protect(Plain);
+
+        var protector = new LinuxSecretProtector(service, file);
+        Assert.Equal(Plain, protector.Unprotect(sealedBytes));
+        protector.Protect(Plain);
+        Assert.Equal(1, service.Writes);
+        Assert.Equal(1, file.Writes);
+    }
+
+    [Fact]
+    public void WithDifferentKeysTheServiceIsTriedFirstThenTheFilesKeyIsStoredInTheService()
+    {
+        var (sealedBytes, file) = SealWithTheFileAlone();
+        var fileKey = file.Get();
+        var service = new MemoryKeychainItem();
+        service.Set(RandomNumberGenerator.GetBytes(32));                                    // a key that does not open the file
+
+        var protector = new LinuxSecretProtector(service, file);
+        Assert.Equal(Plain, protector.Unprotect(sealedBytes));                              // the file's key opens it
+        Assert.Equal(fileKey, service.Get());                                               // and is stored in the service instead
+        Assert.Equal(2, service.Writes);                                                    // the wrong key, then the right one
+        Assert.Equal(1, file.Writes);
+
+        Assert.Equal(Plain, new LinuxSecretProtector(service, file).Unprotect(sealedBytes));
+        Assert.Equal(2, service.Writes);
+    }
+
+    [Fact]
+    public void WithDifferentKeysAndTheRightOneInTheServiceTheFileIsLeftAlone()
+    {
+        var service = new MemoryKeychainItem();
+        var throwawayFile = new MemoryKeychainItem();
+        var sealedBytes = new LinuxSecretProtector(service, throwawayFile).Protect(Plain);   // sealed with the service's key
+        var serviceKey = service.Get();
+        var file = new MemoryKeychainItem();
+        file.Set(RandomNumberGenerator.GetBytes(32));
+
+        var protector = new LinuxSecretProtector(service, file);
+        Assert.Equal(Plain, protector.Unprotect(sealedBytes));
+        Assert.Equal(serviceKey, service.Get());
+        Assert.Equal(1, service.Writes);                                                    // not replaced
+        Assert.Equal(1, file.Writes);
+    }
+
+    [Fact]
+    public void NeitherKeyOpensTheFileIsAnErrorAndNothingIsOverwritten()
+    {
+        var (sealedBytes, file) = SealWithTheFileAlone();
+        file.Set(RandomNumberGenerator.GetBytes(32));
+        var fileWrites = file.Writes;
+        var service = new MemoryKeychainItem();
+        service.Set(RandomNumberGenerator.GetBytes(32));
+        var serviceWrites = service.Writes;
+
+        var protector = new LinuxSecretProtector(service, file);
+        Assert.ThrowsAny<CryptographicException>(() => protector.Unprotect(sealedBytes));
+        Assert.Equal(fileWrites, file.Writes);
+        Assert.Equal(serviceWrites, service.Writes);
     }
 
     [Fact]
     public void ADamagedFileOrOneForAnotherPurposeDoesNotOpen()
     {
-        var item = new MemoryKeychainItem();
-        var protector = new LinuxSecretProtector(item, "key file");
+        var file = new MemoryKeychainItem();
+        var protector = new LinuxSecretProtector(null, file);
         var sealedBytes = protector.Protect(Plain);
         var flipped = sealedBytes.ToArray();
         flipped[^1] ^= 0x01;
         Assert.ThrowsAny<CryptographicException>(() => protector.Unprotect(flipped));
         Assert.ThrowsAny<CryptographicException>(() => protector.Unprotect(Encoding.UTF8.GetBytes("not a sealed file")));
-        Assert.ThrowsAny<CryptographicException>(() => new LinuxSecretProtector(item, "key file", "pairings").Unprotect(sealedBytes));
+        Assert.ThrowsAny<CryptographicException>(() => new LinuxSecretProtector(null, file, "pairings").Unprotect(sealedBytes));
     }
 
     [Fact]
     public void AStoreThatSaysNoIsAnErrorTheSecretStoreCanHandleNeverAnOverwrite()
     {
-        var item = new MemoryKeychainItem();
-        var sealedBytes = new LinuxSecretProtector(item, "key file").Protect(Plain);
-        Assert.ThrowsAny<CryptographicException>(() => new LinuxSecretProtector(new MemoryKeychainItem(), "key file").Unprotect(sealedBytes));   // no key
-        item.RefuseReads = true;
-        Assert.ThrowsAny<CryptographicException>(() => new LinuxSecretProtector(item, "key file").Unprotect(sealedBytes));                       // the store refuses
-        Assert.ThrowsAny<CryptographicException>(() => new LinuxSecretProtector(item, "key file").Protect(Plain));
-        item.RefuseReads = false;
+        var file = new MemoryKeychainItem();
+        var sealedBytes = new LinuxSecretProtector(null, file).Protect(Plain);
+        Assert.ThrowsAny<CryptographicException>(() => new LinuxSecretProtector(null, new MemoryKeychainItem()).Unprotect(sealedBytes));   // no key
+        file.RefuseReads = true;
+        Assert.ThrowsAny<CryptographicException>(() => new LinuxSecretProtector(null, file).Unprotect(sealedBytes));                       // the store refuses
+        Assert.ThrowsAny<CryptographicException>(() => new LinuxSecretProtector(null, file).Protect(Plain));
+        file.RefuseReads = false;
 
         var closed = new MemoryKeychainItem { RefuseWrites = true };
-        Assert.ThrowsAny<CryptographicException>(() => new LinuxSecretProtector(closed, "Secret Service").Protect(Plain));                      // nothing is sealed
+        Assert.ThrowsAny<CryptographicException>(() => new LinuxSecretProtector(null, closed).Protect(Plain));                             // nothing is sealed
     }
 
     [Fact]
     public void TheSecretStoreRunsOverTheLinuxProtectorAndKeepsAnUnreadableFile()
     {
         var dir = TestFolder.New();
-        var file = Path.Combine(dir, "secrets.dat");
+        var path = Path.Combine(dir, "secrets.dat");
         var item = new MemoryKeychainItem();
-        var store = new SecretStore(file, new LinuxSecretProtector(item, "key file"));
+        var store = new SecretStore(path, new LinuxSecretProtector(null, item));
         store.Set("openrouter", "test-secret-0123456789abcdef");
-        Assert.DoesNotContain("test-secret", File.ReadAllText(file, Encoding.Latin1));
-        Assert.Equal("test-secret-0123456789abcdef", new SecretStore(file, new LinuxSecretProtector(item, "key file")).Get("openrouter"));
+        Assert.DoesNotContain("test-secret", File.ReadAllText(path, Encoding.Latin1));
+        Assert.Equal("test-secret-0123456789abcdef", new SecretStore(path, new LinuxSecretProtector(null, item)).Get("openrouter"));
 
-        var lost = new SecretStore(file, new LinuxSecretProtector(new MemoryKeychainItem(), "key file"));
+        var lost = new SecretStore(path, new LinuxSecretProtector(null, new MemoryKeychainItem()));
         Assert.False(lost.Has("openrouter"));
         Assert.True(lost.Unreadable);
         lost.Set("openrouter", "test-secret-new-value-0123456789");
         Assert.False(lost.Unreadable);
         Assert.Single(Directory.GetFiles(dir, "secrets.dat.unreadable-*"));
+    }
+
+    [Fact]
+    public void ASecretsFileSealedWithTheKeyFileOpensWhenTheServiceAppearsAndTheServiceGetsTheKey()
+    {
+        var dir = TestFolder.New();
+        var path = Path.Combine(dir, "secrets.dat");
+        var file = new MemoryKeychainItem();
+        new SecretStore(path, new LinuxSecretProtector(null, file)).Set("openrouter", "test-secret-0123456789abcdef");
+
+        var service = new MemoryKeychainItem();
+        var after = new SecretStore(path, new LinuxSecretProtector(service, file));
+        Assert.Equal("test-secret-0123456789abcdef", after.Get("openrouter"));
+        Assert.False(after.Unreadable);
+        Assert.Equal(file.Get(), service.Get());
     }
 }
 
@@ -115,14 +252,10 @@ public class FileSecretKeyStoreTests
 public class LinuxSecretsTests
 {
     [LinuxFact]
-    public void TheStorageChoiceIsTheSecretServiceOrTheKeyFileAndTheItemFollowsIt()
+    public void TheStorageChoiceIsTheSecretServiceOrTheKeyFileAndTheProtectorIsTheLinuxOne()
     {
-        var item = LinuxSecrets.CreateItem();
-        if (LinuxSecrets.Storage == SecretStorage.KeyFile)
-            Assert.IsType<FileSecretKeyStore>(item);
-        else
-            Assert.IsType<SecretServiceKeyStore>(item);
         Assert.Contains(SecretProtectors.Storage, new[] { SecretStorage.SecretService, SecretStorage.KeyFile });
+        Assert.IsType<LinuxSecretProtector>(LinuxSecrets.CreateProtector("secrets"));
     }
 }
 
