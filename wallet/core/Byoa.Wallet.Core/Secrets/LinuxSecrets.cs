@@ -260,6 +260,7 @@ sealed class SecretServiceKeyStore : ISecretKeyItem
     const string ServiceName = "org.freedesktop.secrets";
     const string ServicePath = "/org/freedesktop/secrets";
     const string ServiceInterface = "org.freedesktop.Secret.Service";
+    const string CollectionInterface = "org.freedesktop.Secret.Collection";
     const string ItemInterface = "org.freedesktop.Secret.Item";
     const string Label = "BYOA agent wallet: key of the secrets file";
     const string ContentType = "application/octet-stream";
@@ -287,13 +288,13 @@ sealed class SecretServiceKeyStore : ISecretKeyItem
 
     public void Set(byte[] value) => WithSession((connection, session) =>
     {
-        // CreateItem(properties a{sv}, collection o, replace b) with replace=true replaces the secret of an item with the same attributes;
-        // there is never a second copy. The secret itself goes in the properties as org.freedesktop.Secret.Item.Secret (oayays), and the
-        // collection is the service's default one (ReadAlias("default")), as the Secret Service specification says.
+        // CreateItem is a method of the collection, not of the service: the default collection comes from ReadAlias("default"), and the
+        // call is Collection.CreateItem(properties a{sv}, secret (oayays), replace b). With replace=true an item with the same attributes
+        // gets the new secret; there is never a second copy.
         var collection = DefaultCollection(connection);
         if (collection == "/") throw new IOException("the Secret Service has no default collection to keep the key in");
         var writer = connection.GetMessageWriter();
-        writer.WriteMethodCallHeader(ServiceName, ServicePath, ServiceInterface, "CreateItem", "a{sv}ob");
+        writer.WriteMethodCallHeader(ServiceName, collection, CollectionInterface, "CreateItem", "a{sv}(oayays)b");
         var properties = writer.WriteDictionaryStart();
         writer.WriteDictionaryEntryStart();
         writer.WriteString("org.freedesktop.Secret.Item.Label");
@@ -302,16 +303,12 @@ sealed class SecretServiceKeyStore : ISecretKeyItem
         writer.WriteString("org.freedesktop.Secret.Item.Attributes");
         writer.WriteSignature("a{ss}");
         WriteAttributes(ref writer);
-        writer.WriteDictionaryEntryStart();
-        writer.WriteString("org.freedesktop.Secret.Item.Secret");
-        writer.WriteSignature("(oayays)");
+        writer.WriteDictionaryEnd(properties);
         writer.WriteStructureStart();
         writer.WriteObjectPath(session);
         writer.WriteArray(Array.Empty<byte>());
         writer.WriteArray(value);
         writer.WriteString(ContentType);
-        writer.WriteDictionaryEnd(properties);
-        writer.WriteObjectPath(collection);
         writer.WriteBool(true);
         var reply = Call(connection, writer.CreateMessage(), static (message, _) =>
         {
