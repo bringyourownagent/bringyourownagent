@@ -7,6 +7,7 @@ using System.Text.Json;
 using Byoa.Wallet.Desktop;
 using Byoa.Wallet.Direct;
 using Byoa.Wallet.Protocol;
+using Byoa.Wallet.Registry;
 using Byoa.Wallet.Secrets;
 using Byoa.Wallet.Sources;
 
@@ -231,22 +232,31 @@ public class SingleInstanceTests
 
 public class UnixWalletPathsTests
 {
-    [Fact]
+    [UnixFact]
     public void SocketsLiveInAFolderOfTheUsersOwnNeverUnderTmpdirAndFitTheLimit()
     {
-        if (OperatingSystem.IsWindows()) return;
         var pipe = WalletPaths.PipeName();
         var mcp = WalletPaths.McpPipeName();
-        Assert.Equal(Path.Combine(WalletPaths.RunFolder, "wallet.sock"), pipe);
-        Assert.Equal(Path.Combine(WalletPaths.RunFolder, "mcp.sock"), mcp);
-        Assert.True(pipe.Length <= 103 && mcp.Length <= 103);
+        if (OperatingSystem.IsLinux() && RuntimeFolder() is { } runtime)
+        {
+            // the Linux session's own runtime folder is the usual place for sockets
+            Assert.Equal(Path.Combine(runtime, "byoa", "wallet.sock"), pipe);
+            Assert.Equal(Path.Combine(runtime, "byoa", "mcp.sock"), mcp);
+        }
+        else
+        {
+            Assert.Equal(Path.Combine(WalletPaths.RunFolder, "wallet.sock"), pipe);
+            Assert.Equal(Path.Combine(WalletPaths.RunFolder, "mcp.sock"), mcp);
+        }
+
+        Assert.False(pipe.StartsWith(Path.GetTempPath(), StringComparison.Ordinal));
+        Assert.True(pipe.Length <= (OperatingSystem.IsLinux() ? 107 : 103) && mcp.Length <= (OperatingSystem.IsLinux() ? 107 : 103));
         Assert.NotEqual(pipe, mcp);
     }
 
-    [Fact]
+    [UnixFact]
     public void ASeparateDataFolderGetsShortSocketNamesOfItsOwn()
     {
-        if (OperatingSystem.IsWindows()) return;
         var home = Path.Combine(TestFolder.New(), new string('x', 80));       // a long data folder must not make a long socket name
         var one = WalletPaths.PipeName(home);
         Assert.StartsWith(Path.GetTempPath(), one);
@@ -255,21 +265,42 @@ public class UnixWalletPathsTests
         Assert.NotEqual(one, WalletPaths.McpPipeName(home));
     }
 
-    [Fact]
+    [UnixFact]
     public void ThePrepareStepClosesTheFolderToOtherUsersAndRefusesAPathThatIsTooLong()
     {
-        if (OperatingSystem.IsWindows()) return;
         Assert.Throws<IOException>(() => WalletPaths.PrepareSocketFolder("/" + new string('a', 120) + ".sock"));
         var folder = Path.Combine(Path.GetTempPath(), "byoa-prep-" + Guid.NewGuid().ToString("N")[..10]);   // short: a socket path is limited
         WalletPaths.PrepareSocketFolder(Path.Combine(folder, "x.sock"));
         Assert.True(Directory.Exists(folder));
     }
 
-    [Fact]
+    [LinuxFact]
+    public void ASocketPathMayBe107CharactersOnLinuxAndTheRuntimeFolderIsClosedToOtherUsers()
+    {
+        var runtime = Path.Combine(Path.GetTempPath(), "byoa-xdg-" + Guid.NewGuid().ToString("N")[..10]);
+        Directory.CreateDirectory(runtime);
+        var old = Environment.GetEnvironmentVariable("XDG_RUNTIME_DIR");
+        Environment.SetEnvironmentVariable("XDG_RUNTIME_DIR", runtime);
+        try
+        {
+            var pipe = WalletPaths.PipeName();
+            Assert.Equal(Path.Combine(runtime, "byoa", "wallet.sock"), pipe);
+            WalletPaths.PrepareSocketFolder(pipe);
+            var folder = Path.Combine(runtime, "byoa");
+            Assert.True(Directory.Exists(folder));
+            var mode = File.GetUnixFileMode(folder);
+            Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute, mode);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("XDG_RUNTIME_DIR", old);
+        }
+    }
+
+    [UnixFact]
     public async Task AWalletSocketCarriesAFrameBothWaysForItsOwnUserAndReportsTheSameProcessAtTheOtherEnd()
     {
-        if (OperatingSystem.IsWindows()) return;
-        var path = Path.Combine(Path.GetTempPath(), "byoa-w-" + Guid.NewGuid().ToString("N")[..10] + ".sock");   // short: a socket path is limited to 103 characters
+        var path = Path.Combine(Path.GetTempPath(), "byoa-w-" + Guid.NewGuid().ToString("N")[..10] + ".sock");   // short: a socket path is limited
         using var server = new NamedPipeServerStream(path, PipeDirection.InOut, 2, PipeTransmissionMode.Byte, PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
         var accepted = server.WaitForConnectionAsync();
         using var client = new NamedPipeClientStream(".", path, PipeDirection.InOut, PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
@@ -278,23 +309,28 @@ public class UnixWalletPathsTests
         await Framing.WriteAsync(client, Encoding.UTF8.GetBytes("{\"hello\":1}"));
         Assert.Equal("{\"hello\":1}", Encoding.UTF8.GetString((await Framing.ReadAsync(server))!));
 
-        if (!OperatingSystem.IsMacOS()) return;
         // the process at the other end is this one: the same path the system reports for the running test host, and its parent
-        var seen = new MacAgentProcessInfo().Read(server.SafePipeHandle);
+        IAgentProcessInfo info = OperatingSystem.IsMacOS() ? new MacAgentProcessInfo() : new LinuxAgentProcessInfo();
+        var seen = info.Read(server.SafePipeHandle);
         Assert.NotNull(seen);
         Assert.Equal((uint)Environment.ProcessId, seen.ClientProcessId);
         Assert.Equal(Process.GetCurrentProcess().MainModule!.FileName, seen.ClientImagePath);
         Assert.False(string.IsNullOrEmpty(seen.ParentImagePath));
         Assert.True(seen.ClientStartTime is { } started && Math.Abs((started - Process.GetCurrentProcess().StartTime).TotalSeconds) < 5);
     }
+
+    static string? RuntimeFolder()
+    {
+        var runtime = Environment.GetEnvironmentVariable("XDG_RUNTIME_DIR");
+        return string.IsNullOrWhiteSpace(runtime) || !Directory.Exists(runtime) ? null : runtime;
+    }
 }
 
 public class UnixAgentProgramsTests
 {
-    [Fact]
+    [UnixFact]
     public void AProgramIsFoundByNameInTheUsualFoldersOnlyWhenItCanBeRun()
     {
-        if (OperatingSystem.IsWindows()) return;
         var sh = AgentPrograms.Resolve("sh");
         Assert.NotNull(sh);
         Assert.EndsWith("/sh", sh);
@@ -307,10 +343,9 @@ public class UnixAgentProgramsTests
         Assert.Equal(plain, AgentPrograms.Resolve(plain));                     // a full path is the person's own choice
     }
 
-    [Fact]
+    [MacFact]
     public void OnAMacTheSearchIncludesTheFoldersAnAppStartedFromTheDockDoesNotHave()
     {
-        if (!OperatingSystem.IsMacOS()) return;
         var all = AgentPrograms.SearchDirectories();
         Assert.Contains("/opt/homebrew/bin", all);
         Assert.Contains("/usr/local/bin", all);
@@ -348,10 +383,9 @@ public class UnixAgentProgramsTests
 
 public class MacKeychainTests
 {
-    [Fact]
+    [MacFact]
     public void ARealKeychainFileOfTheTestsOwnKeepsAnItemAcrossInstancesAndNeverTouchesTheLoginKeychain()
     {
-        if (!OperatingSystem.IsMacOS()) return;
         var dir = TestFolder.New();
         var keychain = Path.Combine(dir, "test.keychain-db");
         MacKeychainItem.CreateKeychainFile(keychain, Guid.NewGuid().ToString("N"));

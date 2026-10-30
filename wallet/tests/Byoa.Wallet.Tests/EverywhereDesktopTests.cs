@@ -56,10 +56,9 @@ public class EverywhereDesktopTests
         Assert.Equal(8, IntPtr.Size);
     }
 
-    [Fact]
+    [WindowsFact]
     public void WindowsTellsUsWhenAnotherProgramHoldsAHotkey()
     {
-        if (!OperatingSystem.IsWindows()) return;     // user32 and the hotkey probe are Windows only
         // An unlikely combination, held for a moment by this test and let go at once.
         var hotkey = new Hotkey(HotkeyModifiers.Ctrl | HotkeyModifiers.Alt | HotkeyModifiers.Shift, 0x87);   // Ctrl+Alt+Shift+F24
         var probe = new WinHotkeyProbe();

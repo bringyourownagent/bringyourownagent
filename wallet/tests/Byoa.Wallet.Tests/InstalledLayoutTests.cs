@@ -11,7 +11,7 @@ namespace Byoa.Wallet.Tests;
 /// </summary>
 public class InstalledLayoutTests
 {
-    [Theory]
+    [WindowsTheory]
     [InlineData(@"C:\Users\v\AppData\Local\BYOA\wallet-app\", @"C:\Users\v\AppData\Local\BYOA\wallet-app\byoa-mcp.exe", true)]
     [InlineData(@"C:\Users\v\AppData\Local\BYOA\wallet-app", @"C:\Users\v\AppData\Local\BYOA\wallet-app\byoa-mcp.exe", true)]
     [InlineData(@"C:\Users\v\AppData\Local\BYOA\wallet-app\", @"c:\users\v\appdata\local\byoa\WALLET-APP\BYOA-MCP.EXE", true)]
@@ -23,24 +23,21 @@ public class InstalledLayoutTests
     [InlineData(@"C:\Users\v\AppData\Local\BYOA\wallet-app\", @"byoa-mcp.exe", false)]
     public void TheWalletRecognisesItsOwnBridgeOnlyInItsOwnFolder(string walletFolder, string clientImage, bool expected)
     {
-        if (!OperatingSystem.IsWindows()) return;
         Assert.Equal(expected, AgentPipeServer.IsBridgeIn(clientImage, walletFolder));
     }
 
-    [Fact]
+    [WindowsFact]
     public void TheFolderOfTheRunningWalletIsAcceptedAsAppContextSpellsIt()
     {
-        if (!OperatingSystem.IsWindows()) return;
         // AppContext.BaseDirectory always ends in a separator; this is the string the installed wallet compares with.
         var folder = AppContext.BaseDirectory;
         Assert.True(folder.EndsWith(Path.DirectorySeparatorChar) || folder.EndsWith(Path.AltDirectorySeparatorChar));
         Assert.True(AgentPipeServer.IsBridgeIn(Path.Combine(folder, "byoa-mcp.exe"), folder));
     }
 
-    [Fact]
+    [WindowsFact]
     public void InstalledBridgeCheckUsesAppContextWhenNoTestOverrideIsPresent()
     {
-        if (!OperatingSystem.IsWindows()) return;
         var old = Environment.GetEnvironmentVariable("BYOA_WALLET_MCP_PATH");
         Environment.SetEnvironmentVariable("BYOA_WALLET_MCP_PATH", null);
         try
