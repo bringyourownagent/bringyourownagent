@@ -9,7 +9,10 @@ namespace Byoa.Wallet.Desktop;
 /// <summary>The reader of the management pipe client's process facts for the operating system the wallet runs on.</summary>
 static class AgentProcessInfo
 {
-    public static IAgentProcessInfo ForThisSystem() => OperatingSystem.IsMacOS() ? new MacAgentProcessInfo() : new WindowsAgentProcessInfo();
+    public static IAgentProcessInfo ForThisSystem() =>
+        OperatingSystem.IsWindows() ? new WindowsAgentProcessInfo()
+        : OperatingSystem.IsMacOS() ? new MacAgentProcessInfo()
+        : new LinuxAgentProcessInfo();
 }
 
 /// <summary>Reads the management pipe client's image and its direct parent from Windows.</summary>
