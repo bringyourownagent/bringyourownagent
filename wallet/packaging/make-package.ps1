@@ -31,8 +31,10 @@
        site's feed into <OutDir>\release, so that vpk also makes a small delta package from it (an update then downloads a few MB).
        Upload all of <OutDir>\release (publish-installer.sh in the scratch folder does it; releases.win.json goes last).
        Beside it the script writes AgentWallet-win-Setup.zip (the same Setup.exe alone in a zip, for browsers and mail filters that
-       hold back an .exe), each with a .sha256. With -Msi, vpk also compiles AgentWallet-win.msi (WiX; the same app and updates as
-       Setup.exe, per user or for all users, chosen in the installer's UI; silent: msiexec /i AgentWallet-win.msi /qn).
+       hold back an .exe), each with a .sha256. With -Msi, vpk also compiles AgentWallet-win.msi (WiX; the same app and install
+       hooks as Setup.exe, for administrators). A silent install needs the folder, otherwise it goes to the root of C:\ :
+       msiexec /i AgentWallet-win.msi /qn VELOPACK_INSTALLDIR="C:\Program Files\BYOA\Agent wallet"; msiexec /x <ProductCode> /qn
+       removes it with its registry keys (tested on Windows 11).
 
     Nothing is overwritten: -OutDir must not hold an earlier package of the same version. Needs the .NET 10 SDK.
 
