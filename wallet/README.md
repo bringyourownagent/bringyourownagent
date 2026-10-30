@@ -1,4 +1,4 @@
-# BYOA agent wallet 0.1 (Windows and macOS)
+# BYOA agent wallet 0.1 (Windows, macOS and Linux)
 
 The first working agent wallet for [BYOA](../README.md): a tray app on your computer, a small native messaging host and a Chrome extension. A web page asks for your AI with `window.byoa`; the wallet shows a short notice, then a short consent window, and answers the page's calls with **your** models: a model in a program on your computer, a compatible home server, or your own API key as a paid fallback that asks first.
 
@@ -69,6 +69,23 @@ Needs macOS 12 or later on an M1 or newer; nothing else (the app carries its own
 To update, quit the wallet from its menu-bar icon and replace the app. To remove it, drag the app to the Trash; the data folder `~/Library/Application Support/BYOA`, the Keychain item and the host manifests stay for you to delete yourself (the README in the package lists them).
 
 To build the package yourself, on a Mac with the .NET 10 SDK: `wallet/packaging/make-macos-package.sh --out <new folder> [--sign none|adhoc|identity] [--notarize]`. It publishes the three programs self-contained for osx-arm64 as single files, builds the bundle, checks it, signs it (with a Developer ID identity named by `BYOA_SIGN_IDENTITY`; `--notarize` also sends it to Apple and staples the ticket), zips it and prints the SHA-256. The tests: the unit tests run on a Mac too (`dotnet test`); `tests/e2e/mac_smoke.py` drives the built app and its real host and bridge, and `tests/e2e/mac_chrome_e2e.mjs` drives a real Chrome with the extension through the real host (both run on a data folder and a browser profile of their own).
+
+## On Linux (x64 desktops)
+
+The wallet is the same program as on Windows and macOS, with the system parts replaced. It keeps API keys sealed under a key in the **Secret Service** of the desktop session (GNOME Keyring, KWallet and the like); where the session has no Secret Service it keeps the key instead in `secrets.key` in the data folder, readable only by you, and the My models page and Help say which of the two is in use. The native host and the MCP bridge are reached over Unix sockets in `$XDG_RUNTIME_DIR/byoa` (or `~/.local/share/BYOA/run` when the session has no runtime folder). It tells every Chromium browser it finds where its host is, copies the extension to `~/.local/share/BYOA/extension` for "Load unpacked", registers `bringyourownagent://` links, and puts its icon in the user's icon folder. **Everywhere** (dictation and the check of selected text) is Windows only; its page is hidden.
+
+The tray icon is a StatusNotifierItem. Many GNOME sessions show no such icons: with no tray host the wallet still runs, and starting it again from the launcher brings its window back; closing the window leaves the wallet running in the background. GNOME needs the **AppIndicator and KStatusNotifierItem Support** extension to show the icon.
+
+**Start at login** is a tick box at the foot of the tab list; it writes `~/.config/autostart/org.bringyourownagent.wallet.desktop`.
+
+To build and run from the source, on a Linux machine with the .NET 10 SDK:
+
+```sh
+cd wallet
+dotnet build Byoa.Wallet.slnx
+dotnet test tests/Byoa.Wallet.Tests
+dotnet run --project desktop/Byoa.Wallet.Desktop
+```
 
 ## Install from the source code
 
