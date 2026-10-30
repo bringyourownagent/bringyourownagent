@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Text;
 using Avalonia.Platform;
 using Byoa.Wallet.Protocol;
@@ -73,8 +74,20 @@ static class LinuxInstall
             File.CreateSymbolicLink(pending, target);
         }
 
-        File.Move(pending, current, overwrite: true);
+        // rename(2), not File.Move: a .NET move looks for a file at the source, and a link to a folder is not one.
+        if (OperatingSystem.IsWindows())
+        {
+            File.Move(pending, current, overwrite: true);
+            return;
+        }
+
+        if (Rename(pending, current) != 0)
+            throw new IOException("The new version is unpacked, but current could not be pointed at it (rename failed, error "
+                + Marshal.GetLastPInvokeError() + ").");
     }
+
+    [DllImport("libc", SetLastError = true, EntryPoint = "rename")]
+    static extern int Rename(string oldPath, string newPath);
 }
 
 /// <summary>
