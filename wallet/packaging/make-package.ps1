@@ -30,6 +30,9 @@
        releases.win.json that the wallet's "Check for updates" reads. With -WithDeltas it first fetches the latest release from the
        site's feed into <OutDir>\release, so that vpk also makes a small delta package from it (an update then downloads a few MB).
        Upload all of <OutDir>\release (publish-installer.sh in the scratch folder does it; releases.win.json goes last).
+       Beside it the script writes AgentWallet-win-Setup.zip (the same Setup.exe alone in a zip, for browsers and mail filters that
+       hold back an .exe), each with a .sha256. With -Msi, vpk also compiles AgentWallet-win.msi (WiX; the same app and updates as
+       Setup.exe, per user or for all users, chosen in the installer's UI; silent: msiexec /i AgentWallet-win.msi /qn).
 
     Nothing is overwritten: -OutDir must not hold an earlier package of the same version. Needs the .NET 10 SDK.
 
@@ -48,6 +51,8 @@ param(
     [switch]$Installer,
     # with -Installer: fetch the latest release from the feed first, so that vpk can make a delta package
     [switch]$WithDeltas,
+    # with -Installer: also compile the MSI (AgentWallet-win.msi) next to Setup.exe
+    [switch]$Msi,
     [string]$FeedUrl = 'https://bringyourownagent.org/downloads/win',
     # the installer's identity: the folder under %LOCALAPPDATA%, the Start menu entry and the name of Setup.exe. Another id makes a
     # copy that lives beside the real wallet without touching it (a test of the installer and the updater)
@@ -240,18 +245,47 @@ if ($Installer) {
         & vpk download http --url $FeedUrl --outputDir $release
         if ($LASTEXITCODE -ne 0) { throw 'vpk download failed' }
     }
-    & vpk pack --packId $PackId --packVersion $Version --packDir $input --mainExe Byoa.Wallet.exe `
-        --packTitle $PackTitle --packAuthors 'BYOA' --shortcuts $Shortcuts `
-        --icon (Join-Path $wallet 'desktop\Byoa.Wallet.Desktop\Assets\app.ico') --outputDir $release
+    $packArgs = @('--packId', $PackId, '--packVersion', $Version, '--packDir', $input, '--mainExe', 'Byoa.Wallet.exe',
+        '--packTitle', $PackTitle, '--packAuthors', 'BYOA', '--shortcuts', $Shortcuts,
+        '--icon', (Join-Path $wallet 'desktop\Byoa.Wallet.Desktop\Assets\app.ico'), '--outputDir', $release)
+    if ($Msi) { $packArgs += '--msi' }
+    & vpk pack @packArgs
     if ($LASTEXITCODE -ne 0) { throw 'vpk pack failed' }
     $setup = Join-Path $release "$PackId-win-Setup.exe"
     if (-not (Test-Path -LiteralPath $setup)) { throw "vpk did not make $setup" }
     $setupHash = (Get-FileHash -LiteralPath $setup -Algorithm SHA256).Hash.ToLowerInvariant()
     [System.IO.File]::WriteAllText("$setup.sha256", "$setupHash  $PackId-win-Setup.exe`n", (New-Object System.Text.ASCIIEncoding))
+
+    # The same installer alone in a zip: browsers and mail filters often hold back an .exe, and let a zip through.
+    Add-Type -AssemblyName System.IO.Compression
+    $setupZip = Join-Path $release "$PackId-win-Setup.zip"
+    $zipStream = [System.IO.File]::Open($setupZip, [System.IO.FileMode]::CreateNew)
+    try {
+        $zipArchive = New-Object System.IO.Compression.ZipArchive($zipStream, [System.IO.Compression.ZipArchiveMode]::Create)
+        try {
+            $entry = $zipArchive.CreateEntry("$PackId-win-Setup.exe", [System.IO.Compression.CompressionLevel]::Optimal)
+            $entryOut = $entry.Open()
+            try {
+                $setupIn = [System.IO.File]::OpenRead($setup)
+                try { $setupIn.CopyTo($entryOut) } finally { $setupIn.Dispose() }
+            } finally { $entryOut.Dispose() }
+        } finally { $zipArchive.Dispose() }
+    } finally { $zipStream.Dispose() }
+    $setupZipHash = (Get-FileHash -LiteralPath $setupZip -Algorithm SHA256).Hash.ToLowerInvariant()
+    [System.IO.File]::WriteAllText("$setupZip.sha256", "$setupZipHash  $PackId-win-Setup.zip`n", (New-Object System.Text.ASCIIEncoding))
+
+    $msiFile = Join-Path $release "$PackId-win.msi"
+    if ($Msi) {
+        if (-not (Test-Path -LiteralPath $msiFile)) { throw "vpk did not make $msiFile" }
+        $msiHash = (Get-FileHash -LiteralPath $msiFile -Algorithm SHA256).Hash.ToLowerInvariant()
+        [System.IO.File]::WriteAllText("$msiFile.sha256", "$msiHash  $PackId-win.msi`n", (New-Object System.Text.ASCIIEncoding))
+    }
     Write-Host ''
     Write-Host "Installer: $setup"
     Write-Host ("Size:      {0:N1} MB" -f ((Get-Item -LiteralPath $setup).Length / 1MB))
     Write-Host "SHA-256:   $setupHash"
+    Write-Host ("In a zip:  {0}  {1:N1} MB  {2}" -f $setupZip, ((Get-Item -LiteralPath $setupZip).Length / 1MB), $setupZipHash)
+    if ($Msi) { Write-Host ("MSI:       {0}  {1:N1} MB  {2}" -f $msiFile, ((Get-Item -LiteralPath $msiFile).Length / 1MB), $msiHash) }
     Write-Host "Feed:      $release (upload all of it)"
 }
 
