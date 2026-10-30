@@ -74,7 +74,7 @@ sealed class AddModelWindow : Window
         MinHeight = 520;
         Background = Brushes.White;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
-        Icon = new WindowIcon(Avalonia.Platform.AssetLoader.Open(new Uri("avares://Byoa.Wallet/Assets/app.ico")));
+        Icon = Ui.AppIcon;
         MaxHeight = WindowLayout.MaxHeight(this, 520);
 
         foreach (var skill in new[] { Vocabulary.Transcribe, Vocabulary.Generate })

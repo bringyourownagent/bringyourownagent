@@ -20,6 +20,9 @@ sealed class WalletServices : IDisposable
     {
         var home = WalletPaths.Home;
         Directory.CreateDirectory(home);
+        // A Linux session bus is asked about the Secret Service while the windows are still being made, so that the first page that
+        // says how keys are protected does not wait for it.
+        if (OperatingSystem.IsLinux()) _ = Task.Run(() => _ = SecretProtectors.Storage);
         Store = new SettingsStore(Path.Combine(home, "settings.json"));
         Secrets = new SecretStore(Path.Combine(home, "secrets.dat"));
         Activity = new ActivityLog(home, DateTimeOffset.UtcNow);
@@ -58,13 +61,17 @@ sealed class WalletServices : IDisposable
         // "Check for updates": the installer's own updater on Windows; a copy it did not install only points to the download page
         Updater = new WalletUpdater(OperatingSystem.IsWindows() ? new VelopackEngine() : new NoUpdateEngine(), () => Quit());
         Registration = OperatingSystem.IsWindows() && !WalletPaths.IsCustomHome ? new WindowsRegistration(new UserRegistry()) : null;
+        LinuxRegistration = OperatingSystem.IsLinux() ? Byoa.Wallet.Desktop.LinuxRegistration.ForThisUser() : null;
     }
 
     /// <summary>The wallet's check for a newer version, and its button in the settings.</summary>
     public WalletUpdater Updater { get; }
 
-    /// <summary>What an installed wallet registers for the current user (Windows); null on a Mac and in a test wallet.</summary>
+    /// <summary>What an installed wallet registers for the current user (Windows); null on a Mac, on Linux and in a test wallet.</summary>
     public WindowsRegistration? Registration { get; }
+
+    /// <summary>What the wallet registers for the current Linux user (browsers, links, icons, start at login); null elsewhere and in a test wallet.</summary>
+    public LinuxRegistration? LinuxRegistration { get; }
 
     /// <summary>Closes the wallet the way the tray's Quit does; the application sets it once it is up.</summary>
     public Action Quit { get; set; } = () => Environment.Exit(0);

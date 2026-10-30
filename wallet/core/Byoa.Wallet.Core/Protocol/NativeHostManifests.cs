@@ -5,16 +5,20 @@ using System.Text.Json;
 namespace Byoa.Wallet.Protocol;
 
 /// <summary>
-/// The native messaging host registration of the wallet's browser extension on macOS. Chromium browsers find a native host by a small JSON
-/// file in <c>~/Library/Application Support/&lt;browser&gt;/NativeMessagingHosts/</c> (Windows keeps the same thing in the registry; install.ps1
-/// writes it there). The wallet writes its own file for every installed browser that has a folder there, each time it starts: a copy that
-/// moved, or a browser installed later, is picked up without an installer.
+/// The native messaging host registration of the wallet's browser extension on macOS and Linux. Chromium browsers find a native host by a small
+/// JSON file in <c>&lt;browser folder&gt;/NativeMessagingHosts/</c> (<c>~/Library/Application Support</c> on macOS, <c>~/.config</c> and the
+/// sandbox folders on Linux; Windows keeps the same thing in the registry, and install.ps1 writes it there). The wallet writes its own file for
+/// every installed browser that has a folder there, each time it starts: a copy that moved, or a browser installed later, is picked up without an
+/// installer.
 /// </summary>
 public static class NativeHostManifests
 {
     public const string HostName = "org.bringyourownagent.wallet";
 
-    /// <summary>A variable that points the registration at another "Application Support" folder (tests and tries never touch the person's browsers).</summary>
+    /// <summary>
+    /// A variable that points the registration at another folder (tests and tries never touch the person's browsers): the "Application Support"
+    /// folder on macOS, the home folder on Linux.
+    /// </summary>
     public const string RootVariable = "BYOA_NATIVE_HOST_ROOT";
 
     /// <summary>A browser's data folder under <c>Application Support</c>, as Chromium browsers name it.</summary>
@@ -31,6 +35,28 @@ public static class NativeHostManifests
         new("Vivaldi", "Vivaldi"),
         new("Arc", "Arc/User Data"),
         new("Opera", "com.operasoftware.Opera"),
+    ];
+
+    /// <summary>
+    /// A Chromium browser's config folder on Linux, under <c>$XDG_CONFIG_HOME</c> (usually <c>~/.config</c>), as the browser names it.
+    /// </summary>
+    public static readonly IReadOnlyList<Browser> LinuxBrowsers =
+    [
+        new("Google Chrome", "google-chrome"),
+        new("Google Chrome Beta", "google-chrome-beta"),
+        new("Google Chrome Unstable", "google-chrome-unstable"),
+        new("Chromium", "chromium"),
+        new("Microsoft Edge", "microsoft-edge"),
+        new("Brave", "BraveSoftware/Brave-Browser"),
+        new("Vivaldi", "vivaldi"),
+        new("Opera", "opera"),
+    ];
+
+    /// <summary>The config folders of Chromium browsers that live outside <c>~/.config</c>: the snap and the Chrome Flatpak.</summary>
+    public static readonly IReadOnlyList<Browser> LinuxSandboxedBrowsers =
+    [
+        new("Chromium (snap)", Path.Combine("snap", "chromium", "common", "chromium")),
+        new("Google Chrome (Flatpak)", Path.Combine(".var", "app", "com.google.Chrome", "config", "google-chrome")),
     ];
 
     /// <summary>
@@ -113,16 +139,39 @@ public static class NativeHostManifests
     /// <returns>For each browser it wrote or checked: its name and what happened ("written", "up to date").</returns>
     public static IReadOnlyList<(string Browser, string Result)> Register(string hostPath, string extensionManifestJson, string applicationSupport)
     {
+        var folders = MacBrowsers.Select(browser => (browser.Name, Path.Combine(applicationSupport, browser.Folder)));
+        return WriteManifests(hostPath, extensionManifestJson, folders);
+    }
+
+    /// <summary>
+    /// Writes the host manifest for each Chromium browser whose folder exists on a Linux desktop: the ones under
+    /// <paramref name="configRoot"/> (the XDG config folder, usually <c>~/.config</c>) and the snap and Flatpak ones under
+    /// <paramref name="home"/>. Nothing is created for a browser that is not installed, and nothing is deleted.
+    /// </summary>
+    /// <returns>For each browser it wrote or checked: its name and what happened ("written", "up to date").</returns>
+    public static IReadOnlyList<(string Browser, string Result)> RegisterLinux(string hostPath, string extensionManifestJson, string home, string configRoot)
+    {
+        var folders = LinuxBrowsers.Select(browser => (browser.Name, Path.Combine(configRoot, browser.Folder)))
+            .Concat(LinuxSandboxedBrowsers.Select(browser => (browser.Name, Path.Combine(home, browser.Folder))));
+        return WriteManifests(hostPath, extensionManifestJson, folders);
+    }
+
+    /// <summary>
+    /// Writes the manifest for every browser folder that exists; a file that already says the same is left as it is. Nothing is created for a
+    /// browser that is not installed, and nothing is deleted.
+    /// </summary>
+    static IReadOnlyList<(string Browser, string Result)> WriteManifests(string hostPath, string extensionManifestJson,
+        IEnumerable<(string Name, string Folder)> browsers)
+    {
         var manifest = ManifestJson(hostPath, ExtensionId(extensionManifestJson));
         var results = new List<(string, string)>();
-        foreach (var browser in MacBrowsers)
+        foreach (var (name, folder) in browsers)
         {
-            var folder = Path.Combine(applicationSupport, browser.Folder);
             if (!Directory.Exists(folder)) continue;
             var target = Path.Combine(folder, "NativeMessagingHosts", HostName + ".json");
             if (File.Exists(target) && File.ReadAllText(target, Encoding.UTF8) == manifest)
             {
-                results.Add((browser.Name, "up to date"));
+                results.Add((name, "up to date"));
                 continue;
             }
 
@@ -130,7 +179,7 @@ public static class NativeHostManifests
             var temp = target + ".tmp";
             File.WriteAllText(temp, manifest, new UTF8Encoding(false));
             File.Move(temp, target, overwrite: true);
-            results.Add((browser.Name, "written"));
+            results.Add((name, "written"));
         }
 
         return results;

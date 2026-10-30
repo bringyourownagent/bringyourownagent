@@ -69,6 +69,7 @@ namespace Byoa.Wallet.Host
             try
             {
                 if (OperatingSystem.IsMacOS()) return StartOnMac(exe);
+                if (OperatingSystem.IsLinux()) return StartOnLinux(exe);
                 using var p = Process.Start(new ProcessStartInfo(exe, "--background") { UseShellExecute = true });
                 return p is not null;
             }
@@ -109,6 +110,24 @@ namespace Byoa.Wallet.Host
 
             info.UseShellExecute = false;
             info.CreateNoWindow = true;
+            using var p = Process.Start(info);
+            if (p is null) return false;
+            p.WaitForExit(5000);
+            return true;
+        }
+
+        /// <summary>
+        /// Linux: the wallet is started detached from this host and from its pipes, because this program's standard output is the extension's
+        /// channel: the shell starts it in the background with all three streams away from the browser.
+        /// </summary>
+        static bool StartOnLinux(string exe)
+        {
+            var info = new ProcessStartInfo("/bin/sh")
+            {
+                ArgumentList = { "-c", "nohup \"$0\" --background >/dev/null 2>&1 </dev/null &", exe },
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
             using var p = Process.Start(info);
             if (p is null) return false;
             p.WaitForExit(5000);

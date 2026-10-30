@@ -38,6 +38,6 @@
     <PackageReference Include="Velopack" Version="1.2.0" />
   </ItemGroup>
 
-  <!-- Windows and macOS (the Everywhere page is Windows only for now); the Windows-only classes carry their own SupportedOSPlatform. -->
+  <!-- Windows, macOS and Linux (the Everywhere page is Windows only for now); the Windows-only classes carry their own SupportedOSPlatform. -->
 
 </Project>

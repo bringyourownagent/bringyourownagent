@@ -6,7 +6,7 @@ using Byoa.Wallet.Protocol;
 
 namespace Byoa.Wallet.Desktop;
 
-/// <summary>The foot of the tab list: the version, "Check for updates", and "Start with Windows".</summary>
+/// <summary>The foot of the tab list: the version, "Check for updates", and "Start with Windows" or "Start at login".</summary>
 sealed partial class SettingsWindow
 {
     /// <summary>Where a copy that cannot update itself sends the person.</summary>
@@ -68,6 +68,14 @@ sealed partial class SettingsWindow
             var startup = new CheckBox { Content = "Start with Windows", IsChecked = registration.StartsWithWindows(folder), Margin = new Avalonia.Thickness(0, 6, 0, 0) };
             AutomationProperties.SetAutomationId(startup, "StartWithWindows");
             startup.IsCheckedChanged += (_, _) => registration.SetStartWithWindows(folder, startup.IsChecked == true);
+            _updateBox.Children.Add(startup);
+        }
+        else if (_w.LinuxRegistration is { } linux)
+        {
+            var folder = AppContext.BaseDirectory;
+            var startup = new CheckBox { Content = "Start at login", IsChecked = linux.StartsAtLogin(folder), Margin = new Avalonia.Thickness(0, 6, 0, 0) };
+            AutomationProperties.SetAutomationId(startup, "StartAtLogin");
+            startup.IsCheckedChanged += (_, _) => linux.SetStartAtLogin(folder, startup.IsChecked == true);
             _updateBox.Children.Add(startup);
         }
     }

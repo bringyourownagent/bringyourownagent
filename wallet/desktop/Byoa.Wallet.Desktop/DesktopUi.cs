@@ -37,41 +37,44 @@ sealed class DesktopUi : IWalletUi, IAgentConsentUi, IEndpointConfirmationUi, IS
     /// <summary>Creates the tray icon; called once the Avalonia application is up.</summary>
     public void CreateTray(Application app, Action quit)
     {
-        // the menu bar of macOS takes a plain picture (44 px: 22 points on a Retina screen), Windows its .ico
-        var type = OperatingSystem.IsMacOS() ? "png" : "ico";
+        // the menu bar of macOS and the Linux tray take a plain picture (44 px: 22 points on a Retina screen), Windows its .ico
+        var type = OperatingSystem.IsWindows() ? "ico" : "png";
         _icon = new WindowIcon(AssetLoader.Open(new Uri("avares://Byoa.Wallet/Assets/tray." + type)));
         _badgeIcon = new WindowIcon(AssetLoader.Open(new Uri("avares://Byoa.Wallet/Assets/tray-badge." + type)));
-        var menu = new NativeMenu();
-        var open = new NativeMenuItem("Open the wallet");
-        open.Click += (_, _) => OpenSettings("sites");
-        var activity = new NativeMenuItem("Activity");
-        activity.Click += (_, _) => OpenSettings("activity");
-        var help = new NativeMenuItem("Help");
-        help.Click += (_, _) => OpenHelp();
-        var agent = new NativeMenuItem("My MCP");
-        agent.Click += (_, _) => OpenSettings("connect");
-        var update = new NativeMenuItem("Check for updates");
-        update.Click += (_, _) =>
+        if (LinuxDesktop.ShowTrayIcon)
         {
-            OpenSettings("sites");
-            if (_w.Updater.CanUpdateItself) _ = _w.Updater.CheckAsync();
-        };
-        var exit = new NativeMenuItem("Quit");
-        exit.Click += (_, _) => quit();
-        menu.Items.Add(open);
-        menu.Items.Add(activity);
-        menu.Items.Add(help);
-        menu.Items.Add(agent);
-        menu.Items.Add(update);
-        menu.Items.Add(new NativeMenuItemSeparator());
-        menu.Items.Add(exit);
-        _tray = new TrayIcon { Icon = _icon, ToolTipText = "Agent wallet", Menu = menu, IsVisible = true };
-        _tray.Clicked += (_, _) =>
-        {
-            _w.Engine.ClearBadge();
-            OpenSettings("sites");
-        };
-        TrayIcon.SetIcons(app, [_tray]);
+            var menu = new NativeMenu();
+            var open = new NativeMenuItem("Open the wallet");
+            open.Click += (_, _) => OpenSettings("sites");
+            var activity = new NativeMenuItem("Activity");
+            activity.Click += (_, _) => OpenSettings("activity");
+            var help = new NativeMenuItem("Help");
+            help.Click += (_, _) => OpenHelp();
+            var agent = new NativeMenuItem("My MCP");
+            agent.Click += (_, _) => OpenSettings("connect");
+            var update = new NativeMenuItem("Check for updates");
+            update.Click += (_, _) =>
+            {
+                OpenSettings("sites");
+                if (_w.Updater.CanUpdateItself) _ = _w.Updater.CheckAsync();
+            };
+            var exit = new NativeMenuItem("Quit");
+            exit.Click += (_, _) => quit();
+            menu.Items.Add(open);
+            menu.Items.Add(activity);
+            menu.Items.Add(help);
+            menu.Items.Add(agent);
+            menu.Items.Add(update);
+            menu.Items.Add(new NativeMenuItemSeparator());
+            menu.Items.Add(exit);
+            _tray = new TrayIcon { Icon = _icon, ToolTipText = "Agent wallet", Menu = menu, IsVisible = true };
+            _tray.Clicked += (_, _) =>
+            {
+                _w.Engine.ClearBadge();
+                OpenSettings("sites");
+            };
+            TrayIcon.SetIcons(app, [_tray]);
+        }
         _w.Engine.SitesChanged += () => PostSafe(UpdateBadge);
         _w.Store.Changed += () => PostSafe(() => _settings?.Invalidate());
         _w.Activity.Added += _ => PostSafe(() => _settings?.Invalidate());

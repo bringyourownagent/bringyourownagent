@@ -26,7 +26,7 @@ static class Program
     [STAThread]
     public static int Main(string[] args)
     {
-        if (!OperatingSystem.IsWindows() && !OperatingSystem.IsMacOS()) return 1;
+        if (!OperatingSystem.IsWindows() && !OperatingSystem.IsMacOS() && !OperatingSystem.IsLinux()) return 1;
         // Setup.exe and its updater start this program with a hook argument after an install or an update and before an uninstall:
         // the hook runs and the program ends here, before anything of the wallet starts. After an install or an update the registration
         // (host for the browser extension, links) is put in place for the folder the program now runs from; before an uninstall it is taken
@@ -81,10 +81,12 @@ static class Program
         var builder = AppBuilder.Configure<App>().UsePlatformDetect().LogToTrace();
         // a menu-bar program: no Dock icon and no application menu (the bundle's LSUIElement says the same, but a build run from a folder has no bundle)
         if (OperatingSystem.IsMacOS()) builder = builder.With(new MacOSPlatformOptions { ShowInDock = false, DisableDefaultApplicationMenuItems = true });
+        // the class the desktop entry names, so that "start at login" and a running wallet are the same application to the desktop
+        if (OperatingSystem.IsLinux()) builder = builder.With(new X11PlatformOptions { WmClass = LinuxRegistration.WindowClass });
         return builder;
     }
 
-    /// <summary>A message for the person before there is any window of the wallet: a message box on Windows, an alert on macOS.</summary>
+    /// <summary>A message for the person before there is any window of the wallet: a message box on Windows, an alert on macOS, the error stream on Linux.</summary>
     static void Say(string text)
     {
         if (OperatingSystem.IsWindows())
@@ -99,6 +101,10 @@ static class Program
                 using var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("osascript") { ArgumentList = { "-e", script }, UseShellExecute = false, CreateNoWindow = true });
             }
             catch (Exception e) when (e is System.ComponentModel.Win32Exception or InvalidOperationException) { /* no alert; nothing else to do */ }
+        }
+        else
+        {
+            Console.Error.WriteLine("Agent wallet: " + text);
         }
     }
 

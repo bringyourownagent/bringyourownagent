@@ -28,7 +28,7 @@ sealed class HelpWindow : Window
         MinHeight = 480;
         Background = Brushes.White;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
-        Icon = new WindowIcon(Avalonia.Platform.AssetLoader.Open(new Uri("avares://Byoa.Wallet/Assets/app.ico")));
+        Icon = Ui.AppIcon;
 
         foreach (var name in HelpCatalog.Topics)
         {

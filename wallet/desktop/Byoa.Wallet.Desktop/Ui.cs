@@ -14,6 +14,10 @@ static class Ui
 
     public static FontFamily SignFace => (FontFamily)Application.Current!.FindResource("SignFace")!;
 
+    /// <summary>The picture in a window's title bar and the task switcher: the multi-size .ico on Windows and macOS, a PNG on Linux.</summary>
+    public static WindowIcon AppIcon => new(Avalonia.Platform.AssetLoader.Open(new Uri(
+        OperatingSystem.IsLinux() ? "avares://Byoa.Wallet/Assets/icon-256.png" : "avares://Byoa.Wallet/Assets/app.ico")));
+
     public static TextBlock Text(string text, params string[] classes)
     {
         var t = new TextBlock { Text = text, VerticalAlignment = VerticalAlignment.Center };

@@ -12,6 +12,7 @@ using Byoa.Wallet.Engine;
 using Byoa.Wallet.Providers;
 using Byoa.Wallet.Protocol;
 using Byoa.Wallet.Registry;
+using Byoa.Wallet.Secrets;
 using Byoa.Wallet.Settings;
 using Byoa.Wallet.Sources;
 
@@ -69,7 +70,7 @@ sealed partial class SettingsWindow : Window
         MinWidth = 720;
         MinHeight = 480;
         Background = Brushes.White;
-        Icon = new WindowIcon(Avalonia.Platform.AssetLoader.Open(new Uri("avares://Byoa.Wallet/Assets/app.ico")));
+        Icon = Ui.AppIcon;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
 
         _tabs = new ListBox { SelectionMode = SelectionMode.Single };
@@ -566,7 +567,7 @@ sealed partial class SettingsWindow : Window
         }
 
         rows.Add(() => SpeechSourceRow(_w.Sources.OpenRouter, settings,
-            () => Ui.Wrap("ElevenLabs Scribe v2 through OpenRouter, with your own key. Stored with Windows DPAPI for your account only; never shown, never logged.", "muted"), KeyExtras));
+            () => Ui.Wrap("ElevenLabs Scribe v2 through OpenRouter, with your own key. " + SecretProtectors.StorageSentence + " Never shown, never logged.", "muted"), KeyExtras));
         var pages = (rows.Count + RowsPerPage - 1) / RowsPerPage;
         _sourcesPage = Math.Clamp(_sourcesPage, 0, pages - 1);
         foreach (var row in rows.Skip(_sourcesPage * RowsPerPage).Take(RowsPerPage)) page.Children.Add(row());
@@ -1127,11 +1128,13 @@ sealed partial class SettingsWindow : Window
         var file = AgentPipeServer.BridgeFileName;
         var candidates = OperatingSystem.IsMacOS()
             ? new[] { Path.Combine(AppContext.BaseDirectory, file), Path.Combine("/Applications", MacBundle.FolderName, "Contents", "MacOS", file) }
-            : new[]
-            {
-                Path.Combine(AppContext.BaseDirectory, file),
-                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BYOA", "wallet-app", file),
-            };
+            : OperatingSystem.IsLinux()
+                ? new[] { Path.Combine(LinuxInstall.Current(WalletPaths.DataRoot), file), Path.Combine(AppContext.BaseDirectory, file) }
+                : new[]
+                {
+                    Path.Combine(AppContext.BaseDirectory, file),
+                    Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BYOA", "wallet-app", file),
+                };
         return candidates.FirstOrDefault(File.Exists) ?? candidates[0];
     }
 
