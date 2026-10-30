@@ -20,6 +20,7 @@ import argparse
 import hashlib
 import json
 import os
+import shutil
 import signal
 import socket
 import struct
@@ -174,6 +175,53 @@ def activity_lines():
                     out += [json.loads(line) for line in f if line.strip()]
     return out
 
+
+def check_secret_service():
+    """Optional: a real gnome-keyring Secret Service in a session bus of its own, when the machine has one.
+
+    The parent session (this test) stays without one, so the key step above still tests the key file. The child session
+    has an isolated home and its own wallet home: one key must go into the service with no secrets.key, and a second
+    import must reuse the same item (one item, no unreadable copy)."""
+    if not shutil.which("gnome-keyring-daemon") or not shutil.which("dbus-run-session"):
+        print("--   the real Secret Service step is skipped: no gnome-keyring-daemon or dbus-run-session", flush=True)
+        return
+    base = os.path.join(a.work, "secret-service")
+    home = os.path.join(base, "home")
+    runtime = os.path.join(base, "run")
+    wallet_home = os.path.join(base, "wallet")
+    os.makedirs(home)
+    os.makedirs(runtime)
+    os.chmod(runtime, 0o700)
+    key = os.path.join(base, "key.txt")
+    with open(key, "w", encoding="utf-8") as f:
+        f.write("test-secret-0123456789abcdef\n")
+    child_env = dict(env, HOME=home, XDG_DATA_HOME=os.path.join(home, ".local", "share"),
+                     XDG_CONFIG_HOME=os.path.join(home, ".config"), XDG_RUNTIME_DIR=runtime,
+                     BYOA_WALLET_HOME=wallet_home, WALLET=WALLET, KEY=key)
+    script = r"""
+set -e
+printf '\n' | gnome-keyring-daemon --unlock --components=secrets > /dev/null 2>&1 || true
+for i in $(seq 1 50); do
+  gdbus call --session --dest org.freedesktop.DBus --object-path /org/freedesktop/DBus --method org.freedesktop.DBus.NameHasOwner org.freedesktop.secrets 2> /dev/null | grep -q true && break
+  sleep 0.2
+done
+gdbus call --session --dest org.freedesktop.DBus --object-path /org/freedesktop/DBus --method org.freedesktop.DBus.NameHasOwner org.freedesktop.secrets | grep -q true
+"$WALLET" --import-key openrouter "$KEY"
+test -f "$BYOA_WALLET_HOME/secrets.dat"
+test ! -e "$BYOA_WALLET_HOME/secrets.key"
+"$WALLET" --import-key openrouter "$KEY"
+test ! -e "$BYOA_WALLET_HOME/secrets.key"
+test -z "$(ls "$BYOA_WALLET_HOME"/secrets.dat.unreadable-* 2> /dev/null)"
+count=$(gdbus call --session --dest org.freedesktop.secrets --object-path /org/freedesktop/secrets --method org.freedesktop.Secret.Service.SearchItems "{'application': 'org.bringyourownagent.wallet', 'kind': 'secrets-key'}" | grep -o "/org/freedesktop/secrets/collection/[^']*" | wc -l)
+test "$count" -eq 1
+"""
+    result = subprocess.run(["dbus-run-session", "--", "bash", "-c", script], env=child_env,
+                            capture_output=True, text=True, timeout=120)
+    check("the real Secret Service keeps the key (no secrets.key, one item, a second import reuses it)",
+          result.returncode == 0, (result.stdout + result.stderr).strip()[-300:])
+
+
+check_secret_service()
 
 try:
     # ------------------------------------------------------------------------------------------------- 1. start
