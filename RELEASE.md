@@ -50,7 +50,10 @@ code.
    fails on a missing file, a package with no license file, an app that is not self-contained, a file that is not an
    x86-64 ELF, or a package that holds `.pdb` files or macOS libraries. It writes
    `byoa-wallet-<version>-linux-x64.tar.gz`, its `.sha256` and `latest.json` into the folder; the archive has sorted
-   names, owner 0 and a fixed time, so the same content gives the same archive.
+   names, owner 0 and a fixed time. Note that a clean build is not byte-identical to another clean build: the .NET
+   regex source generator names its generated classes with a fresh value on each compilation, so
+   `Byoa.Wallet.Core.dll` differs and the archive hash follows it. A rebuild that reuses the build's intermediate
+   output is byte-identical; the tar flags add no variability of their own.
 2. Read the printed size and SHA-256 and keep them.
 3. Install on a **clean** Linux machine (no earlier install, no .NET), as a normal user, with a fresh `HOME`:
    `sha256sum -c byoa-wallet-<version>-linux-x64.tar.gz.sha256`, unpack, `cd` into the package and run `./install.sh`.

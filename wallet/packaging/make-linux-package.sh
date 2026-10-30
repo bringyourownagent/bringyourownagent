@@ -17,6 +17,8 @@
 #      byoa-wallet-<version>-linux-x64.tar.gz
 #      byoa-wallet-<version>-linux-x64.tar.gz.sha256
 #      latest.json              {"version","file","sha256","size"} for the wallet's own updater
+#    The tar adds no variability, but a clean .NET compilation is not byte-identical to another one: the regex source
+#    generator gives its generated classes a new name each time (Byoa.Wallet.Core.dll). See RELEASE.md.
 #
 # The script deletes, moves and renames nothing: --out must be a folder that does not exist yet.
 
