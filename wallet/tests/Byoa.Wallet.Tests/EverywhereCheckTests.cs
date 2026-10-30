@@ -17,7 +17,9 @@ public class EverywhereCheckTests
 
     SelectionCheckController Make() => new(_reader, _own, _inserter, _clipboard, _windows, _popup, () => _settings);
 
-    static async Task Showing(SelectionCheckController c, CheckPhase phase) => await Wait.Until(() => c.Current == phase);
+    // The state and the popup are set in that order: wait for both, so a test never reads the view from before the change.
+    async Task Showing(SelectionCheckController c, CheckPhase phase) =>
+        await Wait.Until(() => c.Current == phase && _popup.Views.Count > 0 && _popup.Last.Phase == phase);
 
     // ------------------------------------------------------------------ which action runs
 
