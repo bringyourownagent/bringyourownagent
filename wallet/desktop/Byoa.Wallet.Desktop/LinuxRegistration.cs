@@ -112,7 +112,7 @@ sealed class LinuxRegistration
     /// The registration of the person running the wallet; null for a wallet with a data folder of its own (a test) unless
     /// <see cref="NativeHostManifests.RootVariable"/> names a folder made for it, so that no test touches the real desktop.
     /// </summary>
-    public static LinuxRegistration? ForThisUser()
+    public static LinuxRegistration? ForThisUser(Func<IReadOnlyList<(int Size, byte[] Png)>>? icons = null)
     {
         if (!OperatingSystem.IsLinux()) return null;
         var root = Environment.GetEnvironmentVariable(NativeHostManifests.RootVariable);
@@ -120,7 +120,7 @@ sealed class LinuxRegistration
         var home = string.IsNullOrWhiteSpace(root) ? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile) : Path.GetFullPath(root);
         var config = string.IsNullOrWhiteSpace(root) ? Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData) : Path.Combine(home, ".config");
         var data = string.IsNullOrWhiteSpace(root) ? WalletPaths.DataRoot : Path.Combine(home, ".local", "share");
-        return new LinuxRegistration(new FileLoginItemStore(), new SessionTools(), home, config, data);
+        return new LinuxRegistration(new FileLoginItemStore(), new SessionTools(), home, config, data, icons);
     }
 
     /// <summary>
@@ -299,14 +299,14 @@ sealed class SessionTools : ISessionTools
 /// <summary>The PNG icons the wallet carries, read from its own resources; nothing is read from a folder the person controls.</summary>
 static class DesktopIcons
 {
+    /// <summary>The icons from the assembly, for the running wallet (Avalonia's asset loader is set up by then).</summary>
     public static IReadOnlyList<(int Size, byte[] Png)> Read()
     {
         var icons = new List<(int, byte[])>();
         foreach (var uri in AssetLoader.GetAssets(new Uri("avares://Byoa.Wallet/Assets/"), null))
         {
             var name = Path.GetFileName(uri.AbsolutePath);
-            if (!name.StartsWith("icon-", StringComparison.Ordinal) || !name.EndsWith(".png", StringComparison.Ordinal)) continue;
-            if (!int.TryParse(name["icon-".Length..^".png".Length], out var size) || size <= 0) continue;
+            if (Size(name) is not { } size) continue;
             using var stream = AssetLoader.Open(uri);
             using var memory = new MemoryStream();
             stream.CopyTo(memory);
@@ -314,5 +314,29 @@ static class DesktopIcons
         }
 
         return icons;
+    }
+
+    /// <summary>
+    /// The same icons from the <c>icons</c> folder beside the program, for <c>--register</c>, which runs before Avalonia starts and so has no
+    /// asset loader. The package and every build put them there (the desktop project links the PNGs of its Assets folder).
+    /// </summary>
+    public static IReadOnlyList<(int Size, byte[] Png)> ReadFromFiles(string appDir)
+    {
+        var icons = new List<(int, byte[])>();
+        var folder = Path.Combine(appDir, "icons");
+        if (!Directory.Exists(folder)) return icons;
+        foreach (var file in Directory.EnumerateFiles(folder, "icon-*.png"))
+        {
+            if (Size(Path.GetFileName(file)) is not { } size) continue;
+            icons.Add((size, File.ReadAllBytes(file)));
+        }
+
+        return icons;
+    }
+
+    static int? Size(string name)
+    {
+        if (!name.StartsWith("icon-", StringComparison.Ordinal) || !name.EndsWith(".png", StringComparison.Ordinal)) return null;
+        return int.TryParse(name["icon-".Length..^".png".Length], out var size) && size > 0 ? size : null;
     }
 }

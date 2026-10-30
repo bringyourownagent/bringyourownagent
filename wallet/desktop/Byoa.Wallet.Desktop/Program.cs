@@ -47,7 +47,7 @@ static class Program
                 return 2;
             }
 
-            var registration = LinuxRegistration.ForThisUser();
+            var registration = LinuxRegistration.ForThisUser(() => DesktopIcons.ReadFromFiles(AppContext.BaseDirectory));
             if (registration is null)
             {
                 Console.WriteLine("This wallet keeps its data in a folder of its own, so nothing was registered for the desktop.");

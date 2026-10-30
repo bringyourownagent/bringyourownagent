@@ -466,6 +466,23 @@ public class LinuxRegistrationTests
         Assert.Contains(QuoteForEntry(Path.Combine(l.Data, "AgentWallet", "current", "Byoa.Wallet")), l.Login.Files[Path.Combine(l.Config, "autostart", "org.bringyourownagent.wallet.desktop")]);
     }
 
+    [Fact]
+    public void TheIconsBesideTheProgramAreReadWithoutAvalonia()
+    {
+        var dir = TestFolder.New();
+        var icons = Path.Combine(dir, "icons");
+        Directory.CreateDirectory(icons);
+        File.WriteAllBytes(Path.Combine(icons, "icon-16.png"), [1, 2]);
+        File.WriteAllBytes(Path.Combine(icons, "icon-256.png"), [3, 4]);
+        File.WriteAllText(Path.Combine(icons, "tray.png"), "not an icon");
+
+        var read = DesktopIcons.ReadFromFiles(dir).OrderBy(icon => icon.Size).ToArray();
+        Assert.Equal([16, 256], read.Select(icon => icon.Size).ToArray());
+        Assert.Equal([1, 2], read[0].Png);
+        Assert.Equal([3, 4], read[1].Png);
+        Assert.Empty(DesktopIcons.ReadFromFiles(TestFolder.New()));
+    }
+
     [LinuxFact]
     public void ATestWalletWithoutAFolderForItRegistersNothing()
     {

@@ -19,6 +19,9 @@
 
   <ItemGroup>
     <AvaloniaResource Include="Assets\**" />
+    <!-- The PNGs beside the program too: the register switch writes the desktop icons without a window, so it cannot use Avalonia's loader. -->
+    <Content Include="Assets\icon-*.png" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest"
+             Link="icons\%(Filename)%(Extension)" />
   </ItemGroup>
 
   <ItemGroup>
