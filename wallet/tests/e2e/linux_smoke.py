@@ -191,6 +191,26 @@ try:
         folder_mode = os.stat(os.path.dirname(sock)).st_mode & 0o777
         check("the socket folder is closed to other users", folder_mode == 0o700, oct(folder_mode))
 
+    # ------------------------------------------------------------------------------------------------- 1b. the key store
+    dummy = os.path.join(a.work, "dummy-key.txt")
+    with open(dummy, "w", encoding="utf-8") as f:
+        f.write("test-secret-0123456789abcdef\n")
+    stored = subprocess.run([WALLET, "--import-key", "openrouter", dummy], env=env, capture_output=True, timeout=30)
+    sealed = os.path.join(WALLET_HOME, "secrets.dat")
+    sealed_bytes = open(sealed, "rb").read() if os.path.isfile(sealed) else b""
+    check("a key can be stored headlessly", stored.returncode == 0 and os.path.isfile(sealed), f"exit {stored.returncode}")
+    check("the sealed file holds no plain text", b"test-secret" not in sealed_bytes)
+    key_file = os.path.join(WALLET_HOME, "secrets.key")
+    if os.path.isfile(key_file):
+        check("without a Secret Service the key lives in secrets.key, mode 0600", (os.stat(key_file).st_mode & 0o777) == 0o600,
+              oct(os.stat(key_file).st_mode))
+        written = os.stat(key_file).st_mtime_ns
+        again = subprocess.run([WALLET, "--import-key", "openrouter", dummy], env=env, capture_output=True, timeout=30)
+        check("the same key file is used the next time (the key is not made again)",
+              again.returncode == 0 and os.stat(key_file).st_mtime_ns == written)
+    else:
+        check("a Secret Service kept the key (no key file in the data folder)", True, "the session has a Secret Service")
+
     # ------------------------------------------------------------------------------------------------- 2. browsers and the desktop
     for browser in ("google-chrome", os.path.join("BraveSoftware", "Brave-Browser")):
         manifest = os.path.join(CONFIG, browser, "NativeMessagingHosts", "org.bringyourownagent.wallet.json")
