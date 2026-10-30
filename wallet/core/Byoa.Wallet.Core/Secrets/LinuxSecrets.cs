@@ -287,9 +287,13 @@ sealed class SecretServiceKeyStore : ISecretKeyItem
 
     public void Set(byte[] value) => WithSession((connection, session) =>
     {
-        // CreateItem with replace=true replaces the secret of an item with the same attributes; there is never a second copy.
+        // CreateItem(properties a{sv}, collection o, replace b) with replace=true replaces the secret of an item with the same attributes;
+        // there is never a second copy. The secret itself goes in the properties as org.freedesktop.Secret.Item.Secret (oayays), and the
+        // collection is the service's default one (ReadAlias("default")), as the Secret Service specification says.
+        var collection = DefaultCollection(connection);
+        if (collection == "/") throw new IOException("the Secret Service has no default collection to keep the key in");
         var writer = connection.GetMessageWriter();
-        writer.WriteMethodCallHeader(ServiceName, ServicePath, ServiceInterface, "CreateItem", "a{sv}(oayays)b");
+        writer.WriteMethodCallHeader(ServiceName, ServicePath, ServiceInterface, "CreateItem", "a{sv}ob");
         var properties = writer.WriteDictionaryStart();
         writer.WriteDictionaryEntryStart();
         writer.WriteString("org.freedesktop.Secret.Item.Label");
@@ -298,12 +302,16 @@ sealed class SecretServiceKeyStore : ISecretKeyItem
         writer.WriteString("org.freedesktop.Secret.Item.Attributes");
         writer.WriteSignature("a{ss}");
         WriteAttributes(ref writer);
-        writer.WriteDictionaryEnd(properties);
+        writer.WriteDictionaryEntryStart();
+        writer.WriteString("org.freedesktop.Secret.Item.Secret");
+        writer.WriteSignature("(oayays)");
         writer.WriteStructureStart();
         writer.WriteObjectPath(session);
         writer.WriteArray(Array.Empty<byte>());
         writer.WriteArray(value);
         writer.WriteString(ContentType);
+        writer.WriteDictionaryEnd(properties);
+        writer.WriteObjectPath(collection);
         writer.WriteBool(true);
         var reply = Call(connection, writer.CreateMessage(), static (message, _) =>
         {
@@ -314,6 +322,15 @@ sealed class SecretServiceKeyStore : ISecretKeyItem
             throw new IOException("the Secret Service needs the collection unlocked before the wallet can keep its key");
         return 0;
     });
+
+    /// <summary>The collection the service calls its default (usually the login keyring); "/" when it has none.</summary>
+    static string DefaultCollection(Connection connection)
+    {
+        var writer = connection.GetMessageWriter();
+        writer.WriteMethodCallHeader(ServiceName, ServicePath, ServiceInterface, "ReadAlias", "s");
+        writer.WriteString("default");
+        return Call(connection, writer.CreateMessage(), static (message, _) => message.GetBodyReader().ReadObjectPathAsString());
+    }
 
     static (string[] Unlocked, string[] Locked) Search(Connection connection)
     {
