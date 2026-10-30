@@ -47,8 +47,8 @@ public static class AgentPrograms
     }
 
     /// <summary>
-    /// The folders a program name is looked for in: PATH, and on macOS also where agent programs usually live. A program started from the
-    /// Dock or by a browser gets a short PATH (the system's), without Homebrew, npm or the folder of Claude Code's own installer.
+    /// The folders a program name is looked for in: PATH, and on macOS and Linux also where agent programs usually live. A program started from
+    /// the Dock or by a browser gets a short PATH (the system's), without Homebrew, npm or the folder of Claude Code's own installer.
     /// </summary>
     public static IReadOnlyList<string> SearchDirectories()
     {
@@ -62,14 +62,17 @@ public static class AgentPrograms
         }
 
         foreach (var directory in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)) Add(directory);
-        if (!OperatingSystem.IsMacOS()) return all;
+        if (OperatingSystem.IsWindows()) return all;
         var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        foreach (var directory in new[]
-                 {
-                     "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin",
-                     Path.Combine(home, ".local", "bin"), Path.Combine(home, ".claude", "local"), Path.Combine(home, ".npm-global", "bin"),
-                     Path.Combine(home, ".bun", "bin"), Path.Combine(home, ".cargo", "bin"),
-                 }) Add(directory);
+        var usual = OperatingSystem.IsMacOS()
+            ? new[] { "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin" }
+            : new[] { "/usr/local/bin", "/usr/bin", "/bin", "/snap/bin" };
+        foreach (var directory in usual
+                     .Concat(new[]
+                     {
+                         Path.Combine(home, ".local", "bin"), Path.Combine(home, ".claude", "local"), Path.Combine(home, ".npm-global", "bin"),
+                         Path.Combine(home, ".bun", "bin"), Path.Combine(home, ".cargo", "bin"),
+                     })) Add(directory);
         // nvm and similar tools keep each version of node in a folder of its own
         var nvm = Path.Combine(home, ".nvm", "versions", "node");
         try

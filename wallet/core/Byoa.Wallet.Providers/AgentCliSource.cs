@@ -58,7 +58,7 @@ public sealed class ProcessAgentRunner : IAgentRunner
         }
 
         // A program started from the Dock or by a browser has the system's short PATH; a script that starts with "#!/usr/bin/env node" needs the usual folders.
-        if (OperatingSystem.IsMacOS()) info.Environment["PATH"] = AgentPrograms.SearchPath();
+        if (!OperatingSystem.IsWindows()) info.Environment["PATH"] = AgentPrograms.SearchPath();
 
         using var process = new Process { StartInfo = info };
         process.Start();
