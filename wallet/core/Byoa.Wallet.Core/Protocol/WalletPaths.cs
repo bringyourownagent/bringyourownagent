@@ -27,9 +27,9 @@ public static class WalletPaths
 
     /// <summary>
     /// Where per-user application data lives: <c>%LOCALAPPDATA%</c> on Windows, <c>~/Library/Application Support</c> on macOS (.NET would
-    /// say <c>~/.local/share</c> there, which is the Linux place).
+    /// say <c>~/.local/share</c> there, which is the Linux place), and <c>$XDG_DATA_HOME</c> or <c>~/.local/share</c> on Linux.
     /// </summary>
-    static string DataRoot => OperatingSystem.IsMacOS()
+    public static string DataRoot => OperatingSystem.IsMacOS()
         ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Library", "Application Support")
         : Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
 
@@ -52,7 +52,9 @@ public static class WalletPaths
     /// The pipe the native host uses to reach the running wallet. On Windows it is a named pipe, per user (the name carries a hash of
     /// the account) and per data folder. On macOS and Linux .NET makes a pipe a Unix socket, and the name is the full path of its file:
     /// in a folder of the user's own (<see cref="RunFolder"/>), never under TMPDIR, because an agent's sandbox may give a program another
-    /// TMPDIR and then the MCP bridge would look for the wallet in the wrong place. Both ends open it with <c>PipeOptions.CurrentUserOnly</c>.
+    /// TMPDIR and then the MCP bridge would look for the wallet in the wrong place. A data folder of the wallet's own (a test) gets a short
+    /// name in the temp folder instead, so that a long folder does not break the socket path limit. Both ends open it with
+    /// <c>PipeOptions.CurrentUserOnly</c>.
     /// </summary>
     public static string PipeName(string? home = null)
     {
@@ -76,18 +78,31 @@ public static class WalletPaths
     /// <summary>The file that keeps a second wallet from running on the same data folder (macOS and Linux; Windows uses a mutex).</summary>
     public static string InstanceLockPath => Path.Combine(Home, "instance.lock");
 
-    /// <summary>Where the wallet's sockets are (macOS and Linux): a folder only this user can open.</summary>
-    public static string RunFolder => Path.Combine(DataRoot, "BYOA", "run");
+    /// <summary>
+    /// Where the wallet's sockets are (macOS and Linux): a folder only this user can open. On Linux it is <c>$XDG_RUNTIME_DIR/byoa</c> when
+    /// the session has a runtime folder (the usual place for sockets), and <c>BYOA/run</c> under the data root when it does not.
+    /// </summary>
+    public static string RunFolder
+    {
+        get
+        {
+            if (OperatingSystem.IsLinux() && Environment.GetEnvironmentVariable("XDG_RUNTIME_DIR") is { Length: > 0 } runtime
+                && Directory.Exists(runtime))
+                return Path.Combine(runtime, "byoa");
+            return Path.Combine(DataRoot, "BYOA", "run");
+        }
+    }
 
     /// <summary>
     /// Makes sure the folder of a socket exists and is closed to other users. Called by the wallet before it listens; it does nothing on
-    /// Windows, where pipes have no folder. A socket path is limited to 103 characters, which this reports as a clear error instead of
-    /// the runtime's.
+    /// Windows, where pipes have no folder. A Unix socket path is limited to 107 characters on Linux and 103 on macOS, which this reports
+    /// as a clear error instead of the runtime's.
     /// </summary>
     public static void PrepareSocketFolder(string pipeName)
     {
         if (OperatingSystem.IsWindows() || !Path.IsPathRooted(pipeName)) return;
-        if (pipeName.Length > 103) throw new IOException("The wallet's socket path is too long for this system (103 characters at most): " + pipeName);
+        var limit = OperatingSystem.IsLinux() ? 107 : 103;
+        if (pipeName.Length > limit) throw new IOException($"The wallet's socket path is too long for this system ({limit} characters at most): " + pipeName);
         var folder = Path.GetDirectoryName(pipeName)!;
         Directory.CreateDirectory(folder);
         if (string.Equals(Path.TrimEndingDirectorySeparator(folder), Path.TrimEndingDirectorySeparator(RunFolder), StringComparison.Ordinal))
