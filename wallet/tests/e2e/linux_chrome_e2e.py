@@ -138,19 +138,22 @@ class Cdp:
 
 
 def spawn_chrome():
-    """Chrome reads the DevTools protocol on fd 3 and writes it on fd 4; the pipe ends are moved out of that range first."""
-    child_in, to_child = os.pipe()
-    from_child, child_out = os.pipe()
-    high_in = fcntl.fcntl(child_in, fcntl.F_DUPFD, 50)
-    os.close(child_in)
-    high_out = fcntl.fcntl(child_out, fcntl.F_DUPFD, 50)
-    os.close(child_out)
+    """Chrome reads the DevTools protocol on descriptor 3 and writes it on 4.
 
-    def preexec():
-        os.dup2(high_in, 3)
-        os.dup2(high_out, 4)
-        os.close(high_in)
-        os.close(high_out)
+    The two ends are made fds 3 and 4 in this process before the fork and passed with pass_fds, so the child keeps
+    them across the exec; a preexec dup would be closed again by subprocess's own close-fds step.
+    """
+    child_in, to_child = os.pipe()          # the child reads child_in; this process writes to_child
+    from_child, child_out = os.pipe()       # the child writes child_out; this process reads from_child
+    high = []
+    for fd in (child_in, child_out, to_child, from_child):
+        high.append(fcntl.fcntl(fd, fcntl.F_DUPFD, 50))
+        os.close(fd)
+    high_in, high_out, high_write, high_read = high
+    os.dup2(high_in, 3)
+    os.dup2(high_out, 4)
+    os.close(high_in)
+    os.close(high_out)
 
     log = open(os.path.join(WORK, "chrome.log"), "wb")
     process = subprocess.Popen(
@@ -158,10 +161,10 @@ def spawn_chrome():
          "--no-first-run", "--no-default-browser-check", "--password-store=basic", "--disable-gpu",
          "--disable-dev-shm-usage", "--window-size=1280,800", "about:blank"],
         env=ENV, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
-        pass_fds=(high_in, high_out), preexec_fn=preexec, start_new_session=True)
-    os.close(high_in)
-    os.close(high_out)
-    return process, to_child, from_child
+        pass_fds=(3, 4), start_new_session=True)
+    os.close(3)
+    os.close(4)
+    return process, high_write, high_read
 
 
 def stop_process(process):
