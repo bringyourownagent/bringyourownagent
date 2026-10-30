@@ -112,6 +112,19 @@ public static class WalletPaths
         }
     }
 
+    /// <summary>
+    /// Makes the socket file itself readable only by this user. Some systems create it with the process's umask (a socket in a folder of
+    /// 0700 is already reachable only by this user, but the file says so too). Called by the wallet right after it starts listening.
+    /// </summary>
+    public static void CloseSocketToOtherUsers(string pipeName)
+    {
+        if (!OperatingSystem.IsWindows() && Path.IsPathRooted(pipeName))
+        {
+            try { File.SetUnixFileMode(pipeName, UnixFileMode.UserRead | UnixFileMode.UserWrite); }
+            catch (Exception e) when (e is UnauthorizedAccessException or IOException) { /* the socket itself is user-only through its folder */ }
+        }
+    }
+
     static string SocketPath(string kind, string? home)
     {
         if (!IsCustomHome && home is null) return Path.Combine(RunFolder, kind + ".sock");

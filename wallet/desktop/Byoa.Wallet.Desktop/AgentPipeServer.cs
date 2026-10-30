@@ -80,6 +80,7 @@ sealed class AgentPipeServer : IDisposable
 
             var pipe = new NamedPipeServerStream(name, PipeDirection.InOut, MaxAllowedServerInstances,
                 PipeTransmissionMode.Byte, PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
+            WalletPaths.CloseSocketToOtherUsers(name);
             try
             {
                 await pipe.WaitForConnectionAsync(_stop.Token).ConfigureAwait(false);

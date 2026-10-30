@@ -274,6 +274,15 @@ public class UnixWalletPathsTests
         Assert.True(Directory.Exists(folder));
     }
 
+    [UnixFact]
+    public void TheSocketFileItselfIsClosedToOtherUsers()
+    {
+        var path = Path.Combine(Path.GetTempPath(), "byoa-m-" + Guid.NewGuid().ToString("N")[..10] + ".sock");   // short: a socket path is limited
+        using var server = new NamedPipeServerStream(path, PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
+        WalletPaths.CloseSocketToOtherUsers(path);
+        Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(path));
+    }
+
     [LinuxFact]
     public void ASocketPathMayBe107CharactersOnLinuxAndTheRuntimeFolderIsClosedToOtherUsers()
     {
