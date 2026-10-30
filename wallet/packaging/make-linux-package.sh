@@ -73,7 +73,7 @@ for project in desktop/Byoa.Wallet.Desktop/Byoa.Wallet.Desktop.csproj host/Byoa.
     -p:Version="$VERSION" \
     --artifacts-path "$ARTIFACTS" -o "$PUBLISH/app" --nologo -v quiet
 done
-for file in Byoa.Wallet byoa-host byoa-mcp libcoreclr.so libAvaloniaNative.so libSkiaSharp.so; do
+for file in Byoa.Wallet byoa-host byoa-mcp libcoreclr.so libSkiaSharp.so libHarfBuzzSharp.so; do
   [ -e "$PUBLISH/app/$file" ] || die "$file is missing in $PUBLISH/app"
 done
 
