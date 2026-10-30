@@ -1,8 +1,10 @@
+using System.Diagnostics;
 using System.Formats.Tar;
 using System.IO.Compression;
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading;
 using Byoa.Wallet.Desktop;
 
 namespace Byoa.Wallet.Tests;
@@ -297,6 +299,25 @@ public class LinuxUpdateEngineTests
             File.GetUnixFileMode(Path.Combine(installed, "libSkiaSharp.so")) & ~UnixFileMode.UserWrite);
         Assert.Equal([(Path.Combine(l.DataRoot, "AgentWallet"), 4242)], restarted);
         Assert.Equal("old 0.30.1", Text(Path.Combine(l.OldVersion, "Byoa.Wallet")));   // the old version stays
+    }
+
+    [LinuxFact]
+    public void TheRestartHelperWaitsForTheOldProcessThenStartsCurrent()
+    {
+        var root = Path.Combine(TestFolder.New(), "AgentWallet");
+        var current = Path.Combine(root, "current");
+        Directory.CreateDirectory(current);
+        var marker = Path.Combine(root, "started.txt");
+        var wallet = Path.Combine(current, "Byoa.Wallet");
+        File.WriteAllText(wallet, "#!/bin/sh\necho started > " + LinuxRestart.ShellQuote(marker) + "\n");
+        File.SetUnixFileMode(wallet, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+
+        using var old = Process.Start(new ProcessStartInfo("/bin/sleep") { ArgumentList = { "0.4" }, UseShellExecute = false })!;
+        LinuxRestart.StartDetached(root, old.Id);
+        old.WaitForExit();                                         // reaped: kill -0 now says the process is gone
+
+        for (var tries = 0; tries < 100 && !File.Exists(marker); tries++) Thread.Sleep(100);
+        Assert.True(File.Exists(marker), "the helper did not start current/Byoa.Wallet after the old process ended");
     }
 
     [UnixFact]
