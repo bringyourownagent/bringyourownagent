@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   tests:
-    # The wallet is a Windows program (DPAPI, UI Automation names, the registry): its tests run on Windows.
+    # The Windows system parts (DPAPI, UI Automation names, the registry) are tested here; the linux job runs the same suite on Ubuntu.
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
