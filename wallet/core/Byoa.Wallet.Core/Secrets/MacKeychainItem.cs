@@ -21,14 +21,19 @@ public static class KeychainStatus
     public const int InteractionNotAllowed = -25308;
 }
 
-/// <summary>One secret value the wallet keeps in a place of its own, never in a file as plain text.</summary>
-public interface IKeychainItem
+/// <summary>One secret value the wallet keeps in a place of its own (a Keychain item, a Secret Service item, a key file).</summary>
+public interface ISecretKeyItem
 {
-    /// <summary>The stored bytes; null when there is none. Throws <see cref="KeychainException"/> when the store cannot be read.</summary>
+    /// <summary>The stored bytes; null when there is none. Throws <see cref="IOException"/> when the store cannot be read.</summary>
     byte[]? Get();
 
     /// <summary>Stores the bytes, replacing an earlier value. Never deletes anything.</summary>
     void Set(byte[] value);
+}
+
+/// <summary>One secret value of the macOS Keychain.</summary>
+public interface IKeychainItem : ISecretKeyItem
+{
 }
 
 /// <summary>

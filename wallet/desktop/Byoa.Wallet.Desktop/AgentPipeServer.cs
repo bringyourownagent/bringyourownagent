@@ -7,6 +7,7 @@ using Byoa.Wallet.Engine;
 using Byoa.Wallet.Help;
 using Byoa.Wallet.Protocol;
 using Byoa.Wallet.Registry;
+using Byoa.Wallet.Secrets;
 using Byoa.Wallet.Settings;
 using Byoa.Wallet.Sources;
 
@@ -254,10 +255,27 @@ sealed class AgentPipeServer : IDisposable
         {
             var folder = walletFolder;
             if (OperatingSystem.IsWindows() && string.Equals(Path.GetExtension(folder), ".exe", StringComparison.OrdinalIgnoreCase)) folder = Path.GetDirectoryName(folder)!;
-            static string Normal(string value) => Path.TrimEndingDirectorySeparator(Path.GetFullPath(value));
             return string.Equals(Normal(Path.GetDirectoryName(path)!), Normal(folder), comparison);
         }
         catch (Exception e) when (e is ArgumentException or IOException or NotSupportedException) { return false; }
+
+        static string Normal(string value)
+        {
+            var full = Path.GetFullPath(value);
+            // An installed Linux wallet runs through the `current` symlink while the kernel reports the real version folder for the
+            // bridge: both are the same folder.
+            if (OperatingSystem.IsLinux())
+            {
+                try
+                {
+                    var info = new DirectoryInfo(full);
+                    if (info.LinkTarget is not null && info.ResolveLinkTarget(returnFinalTarget: true) is { } resolved) full = resolved.FullName;
+                }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException) { /* not resolvable: compare as it is */ }
+            }
+
+            return Path.TrimEndingDirectorySeparator(full);
+        }
     }
 
     async Task<AgentAccess> AuthorizeAsync(AgentIdentity identity, CancellationToken ct)
@@ -429,9 +447,7 @@ sealed class AgentPipeServer : IDisposable
         }
         catch (CryptographicException)
         {
-            return Failure(OperatingSystem.IsWindows()
-                ? "Windows could not protect the wallet data for this user profile. Try again in the wallet."
-                : "The wallet could not protect its data with the Keychain of this user. Try again in the wallet.");
+            return Failure(SecretProtectors.FailureSentence);
         }
         catch (IOException)
         {

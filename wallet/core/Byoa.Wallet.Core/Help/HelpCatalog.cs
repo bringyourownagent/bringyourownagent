@@ -41,8 +41,12 @@ public static class HelpCatalog
         using var stream = Assembly.GetManifestResourceStream(name)
             ?? throw new InvalidOperationException("The embedded help article is missing: " + key);
         using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
-        return reader.ReadToEnd().Trim() + Environment.NewLine;
+        return reader.ReadToEnd().Trim().Replace(KeyProtectionToken, Byoa.Wallet.Secrets.SecretProtectors.StorageSentence, StringComparison.Ordinal)
+            + Environment.NewLine;
     }
+
+    /// <summary>Where an article says how keys are protected, the build says what this system really does.</summary>
+    const string KeyProtectionToken = "{{key-protection}}";
 
     /// <summary>Overview text for MCP: it includes the topic list and the complete add-a-model route.</summary>
     public static string OverviewForAgent()

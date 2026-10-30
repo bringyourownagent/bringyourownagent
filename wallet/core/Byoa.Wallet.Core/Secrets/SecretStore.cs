@@ -4,9 +4,10 @@ using System.Text.Json;
 namespace Byoa.Wallet.Secrets;
 
 /// <summary>
-/// API keys, sealed for the current user (<c>secrets.dat</c> in the data folder): with Windows DPAPI, or on macOS under a key kept in
-/// the user's Keychain (see <see cref="SecretProtectors"/>). The file never holds plain text; keys are decrypted only for the moment a
-/// request needs them, and are never logged, shown or sent anywhere except to their own provider.
+/// API keys, sealed for the current user (<c>secrets.dat</c> in the data folder): with Windows DPAPI, on macOS under a key kept in
+/// the user's Keychain, or on Linux under a key kept in the Secret Service (or a key file when the session has none); see
+/// <see cref="SecretProtectors"/>. The file never holds plain text; keys are decrypted only for the moment a request needs them, and are
+/// never logged, shown or sent anywhere except to their own provider.
 /// </summary>
 public sealed class SecretStore
 {
