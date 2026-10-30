@@ -76,7 +76,7 @@ public class LinuxUpdateEngineTests
     }
 
     static Layout Make(string runningVersion = "0.30.1", string? offeredVersion = null, byte[]? package = null,
-        string? sha256 = null, long? size = null, bool installed = true, Action<string, int>? restarted = null)
+        string? sha256 = null, long? size = null, bool installed = true, bool runningInside = false, Action<string, int>? restarted = null)
     {
         var dataRoot = TestFolder.New();
         var old = Path.Combine(dataRoot, "AgentWallet", "versions", runningVersion);
@@ -101,7 +101,7 @@ public class LinuxUpdateEngineTests
             Http = new HttpClient(site),
             FeedBase = Feed,
             DataRoot = dataRoot,
-            RunningFolder = installed ? old : dataRoot,
+            RunningFolder = installed || runningInside ? old : dataRoot,
             RunningVersion = runningVersion,
             ProcessId = 4242,
             StartRestarted = restarted ?? ((_, _) => { }),
@@ -270,7 +270,7 @@ public class LinuxUpdateEngineTests
     {
         var package = Package("0.30.2");
         var restarted = new List<(string Root, int ProcessId)>();
-        var l = Make(offeredVersion: "0.30.2", package: package, installed: false, restarted: (root, pid) => restarted.Add((root, pid)));
+        var l = Make(offeredVersion: "0.30.2", package: package, installed: false, runningInside: true, restarted: (root, pid) => restarted.Add((root, pid)));
         Directory.CreateSymbolicLink(l.Current, l.OldVersion);                   // what install.sh leaves: current -> versions/0.30.1
         Assert.True(l.Engine.CanUpdateItself);
 
