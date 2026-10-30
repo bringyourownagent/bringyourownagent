@@ -100,7 +100,7 @@ If the key file exists from an earlier session without a Secret Service and a Se
 wallet imports that key into the service and keeps the file; it never makes a new key over it. If both have a key and
 they differ, the Secret Service is tried first; when it cannot open the wallet's files, the file's key is tried and,
 when that opens them, stored in the Secret Service instead, so no sealed file becomes unreadable while either store
-has the right key. A damaged secrets.key is refused rather than replaced.
+has the right key. A damaged secrets.key is refused rather than replaced. A locked keyring that cannot take the key leaves the wallet on a key file when it has one; a wallet with no key file yet cannot store a key while the keyring is locked, says so, and keeps the sealed file.
 
 
 Removing it

@@ -15,6 +15,9 @@ What it checks, with the real programs:
   4. a second wallet process with --url hands the link over and ends; a second plain start ends at once (one wallet per data folder);
   5. after a crash (kill -9) the socket file is stale, and a new wallet still starts and is reached by the host again;
   6. SIGTERM ends the wallet and takes its socket away.
+
+When the machine has gnome-keyring-daemon, an optional step starts it in a child session bus with an isolated home and
+checks the real Secret Service path: a key goes into the service with no secrets.key, and a second import reuses it.
 """
 import argparse
 import hashlib
