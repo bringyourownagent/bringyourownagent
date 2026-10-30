@@ -6,8 +6,8 @@ code.
 
 ## 1. Before anything is built
 
-- The change is on `main` and the CI runs are green: `SDK tests` and `Wallet tests` (the wallet's unit tests, the license
-  check of the packaging script, and a package build from a clean checkout).
+- The change is on `main` and the CI runs are green: `SDK tests` and `Wallet tests` (the wallet's unit tests on Windows
+  and Linux, the license check of the packaging script, and a package build from a clean checkout).
 - `git diff <previous release>..HEAD` has been read for the files that ship: `wallet/`, `sdk/`, `spec/`.
 - The texts that make promises (the window texts, `docs/wallet-0.1.md`, `wallet/README.md`, `spec/CONTRACT-DIRECT.md` section 3 and 4)
   say what the code does. A wording change goes with the code change that needs it, not after.
@@ -41,14 +41,43 @@ code.
    of the folder (the page links to it). The wallet page reads the size, the hash and the version from these files, so check
    it shows the numbers of step 2. Keep the last Setup.exe and feed of the old release before replacing them.
 
-## 3. The SDK packages
+## 3. The wallet package (Linux x64)
+
+1. Raise `<Version>` in `wallet/Directory.Build.props` (the updater only offers a higher version). Then run
+   `wallet/packaging/make-linux-package.sh --out <empty folder>` (add `--version <x.y.z>` to build a version other than
+   the one in the props file, for example a second package for the update test). The script publishes the three programs
+   self-contained for linux-x64, stages `app/`, `extension/`, the scripts, the readme, the licenses and the notices, and
+   fails on a missing file, a package with no license file, an app that is not self-contained, a file that is not an
+   x86-64 ELF, or a package that holds `.pdb` files or macOS libraries. It writes
+   `byoa-wallet-<version>-linux-x64.tar.gz`, its `.sha256` and `latest.json` into the folder; the archive has sorted
+   names, owner 0 and a fixed time, so the same content gives the same archive.
+2. Read the printed size and SHA-256 and keep them.
+3. Install on a **clean** Linux machine (no earlier install, no .NET), as a normal user, with a fresh `HOME`:
+   `sha256sum -c byoa-wallet-<version>-linux-x64.tar.gz.sha256`, unpack, `cd` into the package and run `./install.sh`.
+   Check, by hand:
+   - the wallet starts from the applications menu and from a `bringyourownagent://` link, and
+     `xdg-mime query default x-scheme-handler/bringyourownagent` answers `org.bringyourownagent.wallet.desktop`;
+   - the desktop entry, the icons and the host manifest of each installed Chromium browser point into
+     `~/.local/share/AgentWallet/current`, and the extension copy is `~/.local/share/BYOA/extension`;
+   - `./uninstall.sh --dry-run` lists only the registrations it made, and the folders it prints are the ones that stay;
+   - the key is in the Secret Service of the session, or the wallet says it keeps `secrets.key` when the session has none.
+4. Test the update: build a second package whose `--version` is higher, serve its folder with `python3 -m http.server`,
+   and run the first copy with `BYOA_WALLET_HOME` set to an empty folder and
+   `BYOA_UPDATE_FEED=http://127.0.0.1:<port>`: `Byoa.Wallet --self-update-test`. It must print every state, end with
+   `current` pointing at the new version, and print the new version from the restarted program. A package whose
+   SHA-256 does not match must be refused (the unit tests cover that, path traversal and link escapes).
+5. Only then publish, to the site's download folder (`/var/www/bringyourownagent.org/downloads`): the archive and its
+   `.sha256` into `linux/` (a `.part` name first, then a rename), then `latest.json` (the wallets that check see the new
+   version only from this file). Keep the old archive and feed before replacing them.
+
+## 4. The SDK packages
 
 - `sdk/CHANGELOG.md` lists the change under the new version.
 - The three libraries pass the shared test vectors (`sdk-tests.yml`): Python, Node (18 and 22), .NET (net8.0, netstandard2.0, .NET Framework 4.8).
 - The owner pushes the version tag; the publish workflows (`publish-*.yml`) use OIDC, no token is stored.
 - After publishing, install the published version in an empty folder and run the library's own check once.
 
-## 4. After the release
+## 5. After the release
 
 - The release notes name the commit, the package size and SHA-256, and what was and was not tested (for example "direct e2e
   not run: no speech clips").

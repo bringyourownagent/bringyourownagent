@@ -23,7 +23,7 @@ The design and the security notes are in [docs/wallet-0.1.md](../docs/wallet-0.1
 
 ## Manage the wallet from your AI agent
 
-The package includes `byoa-mcp.exe`, a small MCP server for Claude Code, Codex, OpenCode, and other MCP clients. Open **Settings → My MCP**, copy the command or config snippet, and keep the wallet running. The bridge uses a per-user named pipe tied to `BYOA_WALLET_HOME`; it does not start the wallet and it does not hold settings or secrets.
+The package includes `byoa-mcp` (`byoa-mcp.exe` on Windows), a small MCP server for Claude Code, Codex, OpenCode, and other MCP clients. Open **Settings → My MCP**, copy the command or config snippet, and keep the wallet running. The bridge uses a per-user pipe tied to `BYOA_WALLET_HOME` (a named pipe on Windows, a Unix socket on macOS and Linux); it does not start the wallet and it does not hold settings or secrets.
 
 On the first connection the wallet shows the agent's announced name and the parent executable path observed by the wallet. **Allow** gives source, route, test and activity tools. **Full access** is a separate visitor choice, and it is off by default. It unlocks `list_sites`, `set_site_access`, `set_limits` and `set_api_key`, and it lets `enable_source` change a built-in source and `remove_source` remove a source with a saved key. No tool allows a site, approves a paid call or approves another agent. Settings → My MCP shows last use, the Full access switch, and Revoke. A program running as you can also start the bridge itself, so read the observed path before allowing it, and allow only the agents you trust. API keys are write-only: prefer `request_api_key_entry`, where the visitor types the key in the wallet. The wallet never sends a key back to the agent.
 
@@ -79,6 +79,27 @@ The wallet is the same program as on Windows and macOS, with the system parts re
 The tray icon is a StatusNotifierItem. Many GNOME sessions show no such icons: with no tray host the wallet still runs, and starting it again from the launcher brings its window back; closing the window leaves the wallet running in the background. GNOME needs the **AppIndicator and KStatusNotifierItem Support** extension to show the icon.
 
 **Start at login** is a tick box at the foot of the tab list; it writes `~/.config/autostart/org.bringyourownagent.wallet.desktop`.
+
+**Install from the package.** Download `byoa-wallet-<version>-linux-x64.tar.gz` from <https://bringyourownagent.org/wallet> and check it in the folder where you saved it: `sha256sum -c byoa-wallet-<version>-linux-x64.tar.gz.sha256`. Unpack it, change into `byoa-wallet-<version>-linux-x64` and run `./install.sh` (add `--start-at-login` to start with the session). It installs for your user only, never asks for root, and prints what it did: the programs in `~/.local/share/AgentWallet/versions/<version>`, the link `~/.local/share/AgentWallet/current` pointing at them, the browser host manifests, the extension copy `~/.local/share/BYOA/extension`, the desktop entry for `bringyourownagent://` links and the icons. Keep the package folder: it holds `uninstall.sh`. The wallet repeats that registration at every start; `~/.local/share/AgentWallet/current/Byoa.Wallet --register` does it by hand, and `--version` prints the version.
+
+**To update**, open the wallet and press **Check for updates** at the foot of the tab list (or in the tray menu). If the site has a newer version, press **Update and restart**: the wallet downloads the package to `~/.local/share/AgentWallet/downloads`, checks the SHA-256 from `https://bringyourownagent.org/downloads/linux/latest.json`, unpacks it into a new folder under `versions`, points `current` at it in one step and starts again. The old version stays on disk. The wallet asks the site only when you press the button, never by itself. A copy the package did not install (a build from the source) shows **Get the latest version**, which opens the download page. The same update can be made by unpacking a newer package and running `./install.sh` again.
+
+**To remove it**: quit the wallet, then in the package folder run `./uninstall.sh --dry-run` to see what it would do and `./uninstall.sh` to do it. It removes only the registrations it made (the browser host manifests that point into `~/.local/share/AgentWallet`, the desktop entry, the wallet's lines in the MIME defaults and the autostart entry) and deletes no files: it prints the folders that stay (the program and every version, the data folder, the extension copy and the icons) for you to remove yourself, and the key in the Secret Service stays too. The extension is removed in `chrome://extensions`.
+
+**Where things are**
+
+| What | Where |
+|---|---|
+| Programs and every installed version | `~/.local/share/AgentWallet/versions/<version>` (`current` beside it points at the newest) |
+| Settings | `~/.local/share/BYOA/wallet/settings.json` (sites, sources, routes, limits; no secrets) |
+| API keys | `~/.local/share/BYOA/wallet/secrets.dat`, sealed under a key in the Secret Service, or under `secrets.key` in the same folder when the session has none |
+| Activity | `~/.local/share/BYOA/wallet/activity-YYYY-MM-DD.jsonl` (no audio, no text) |
+| Extension | `~/.local/share/BYOA/extension` |
+| Sockets | `$XDG_RUNTIME_DIR/byoa` (or `~/.local/share/BYOA/run`) |
+| Desktop entry, icons | `~/.local/share/applications/org.bringyourownagent.wallet.desktop`, `~/.local/share/icons/hicolor/*/apps/` |
+| Start at login | `~/.config/autostart/org.bringyourownagent.wallet.desktop` |
+
+To build the package yourself, on a Linux machine with the .NET 10 SDK: `wallet/packaging/make-linux-package.sh --out <new folder> [--version <x.y.z>]`. It publishes the three programs self-contained for linux-x64 (not single-file, not trimmed), stages `app/`, `extension/`, the scripts, the readme and the licenses, checks the result (the app is an x86-64 ELF and self-contained, no `.pdb`, no macOS libraries, every license file present), and writes the archive with sorted names, owner 0 and a fixed time, then its SHA-256 and `latest.json` beside it.
 
 To build and run from the source, on a Linux machine with the .NET 10 SDK:
 
@@ -169,9 +190,11 @@ host/Byoa.Wallet.Host        byoa-host.exe, the native messaging host
 mcp/Byoa.Wallet.Mcp          byoa-mcp.exe, the stdio MCP bridge for the visitor's own AI agent
 extension/                   the MV3 extension: page.js (MAIN world), bridge.js (isolated world), background.js, popup
 tests/                       unit tests and the end-to-end test
-packaging/                   make-package.ps1 (the zip, and with -Installer the Velopack installer and update feed), Install.cmd, Uninstall.cmd, README.txt and
-                             THIRD-PARTY-NOTICES.txt of the package
+packaging/                   make-package.ps1 (the zip, and with -Installer the Velopack installer and update feed), make-macos-package.sh,
+                             make-linux-package.sh, Install.cmd, Uninstall.cmd, README.txt and THIRD-PARTY-NOTICES.txt of the Windows package,
+                             README.linux.txt and THIRD-PARTY-NOTICES.linux.txt of the Linux package
 install.ps1, uninstall.ps1   install from the source, or (next to app\ in the package) from the package
+install.sh, uninstall.sh     install the Linux package (per user, no root) and remove its registrations (it deletes no files)
 ```
 
 Packages: Avalonia 11.3 (MIT), BringYourOwnAgent 0.0.2 (Apache-2.0), System.Security.Cryptography.ProtectedData (MIT); xunit (Apache-2.0) for the tests. The Barlow fonts are under the SIL Open Font License (`desktop/Byoa.Wallet.Desktop/Assets/Fonts/OFL.txt`). The wallet carries no model weights and no inference engine.

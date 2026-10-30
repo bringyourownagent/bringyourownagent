@@ -58,8 +58,11 @@ sealed class WalletServices : IDisposable
         AgentPipe = new AgentPipeServer(this, Ui);
         // Dictation and the check of selected text listen to the keyboard system-wide: Windows only for now
         Everywhere = OperatingSystem.IsWindows() ? CreateEverywhere() : null;
-        // "Check for updates": the installer's own updater on Windows; a copy it did not install only points to the download page
-        Updater = new WalletUpdater(OperatingSystem.IsWindows() ? new VelopackEngine() : new NoUpdateEngine(), () => Quit());
+        // "Check for updates": the installer's own updater on Windows, the feed of the Linux package on Linux; a copy neither installed only
+        // points to the download page.
+        Updater = new WalletUpdater(OperatingSystem.IsWindows() ? new VelopackEngine()
+            : OperatingSystem.IsLinux() ? new LinuxUpdateEngine()
+            : new NoUpdateEngine(), () => Quit());
         Registration = OperatingSystem.IsWindows() && !WalletPaths.IsCustomHome ? new WindowsRegistration(new UserRegistry()) : null;
         LinuxRegistration = OperatingSystem.IsLinux() ? Byoa.Wallet.Desktop.LinuxRegistration.ForThisUser() : null;
     }

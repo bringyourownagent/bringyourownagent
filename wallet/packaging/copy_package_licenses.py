@@ -33,6 +33,7 @@ NO_LICENSE_FILE = {
     "Avalonia.X11/11.3.22",                  # MIT: AvaloniaUI/Avalonia licence.md at commit 627ae9e
     "MicroCom.Runtime/0.11.0",               # MIT: kekekeks/MicroCom LICENSE on its master branch
     "Tmds.DBus.Protocol/0.21.3",             # MIT: tmds/Tmds.DBus COPYING at commit 8cb04f6
+    "Velopack/1.2.0",                        # MIT: velopack/velopack LICENSE at commit f1c24f8 (the Windows installer library; it is in the wallet's assemblies on every system)
 }
 
 WANTED = re.compile(r"^(LICEN[CS]E|NOTICE|THIRD-PARTY-NOTICES)", re.IGNORECASE)

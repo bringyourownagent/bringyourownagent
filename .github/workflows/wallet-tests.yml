@@ -24,6 +24,20 @@ jobs:
         shell: powershell
         run: powershell -NoProfile -ExecutionPolicy Bypass -File wallet/packaging/test-package-licenses.ps1 -WorkFolder $env:RUNNER_TEMP
 
+  linux:
+    # The wallet also runs on Linux. The platform-neutral projects build there, and the same unit tests run: the tests that only
+    # make sense on Windows skip themselves, with a reason, through the platform facts.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: Build (the engine, the host, the MCP bridge and the Linux desktop app)
+        run: dotnet build wallet/Byoa.Wallet.slnx -c Release
+      - name: Unit tests on Linux
+        run: dotnet test wallet/tests/Byoa.Wallet.Tests/Byoa.Wallet.Tests.csproj -c Release --no-build
+
   package:
     # The ready package must still build from a clean checkout: make-package.ps1 fails when a file is missing,
     # a package has no license file, or the app is not self-contained.

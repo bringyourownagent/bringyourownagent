@@ -21,12 +21,50 @@ static class Program
     /// <c>--background</c> starts it in the tray only;
     /// <c>--url &lt;link&gt;</c> acts on a bringyourownagent:// link (registered by install.ps1); when a wallet is
     /// already running, the link is handed to it over the pipe and this process exits;
-    /// <c>--import-key openrouter &lt;file&gt;</c> stores a key from a text file in the DPAPI store and exits.
+    /// <c>--import-key openrouter &lt;file&gt;</c> stores a key from a text file in the DPAPI store and exits;
+    /// <c>--version</c> prints the version and exits;
+    /// <c>--register</c> (Linux) writes the browser host manifests, the extension copy, the desktop entry and the icons, prints what it
+    /// did and exits (<c>--start-at-login</c> also puts the autostart entry in place);
+    /// <c>--self-update-test</c> (Linux, only with a data folder of the wallet's own) runs a whole update without a window.
     /// </summary>
     [STAThread]
     public static int Main(string[] args)
     {
         if (!OperatingSystem.IsWindows() && !OperatingSystem.IsMacOS() && !OperatingSystem.IsLinux()) return 1;
+
+        // The headless switches come before anything of the wallet starts: no window, no single instance, no update hook.
+        if (args.Length > 0 && args[0] == "--version")
+        {
+            Console.WriteLine(WalletPaths.Version);
+            return 0;
+        }
+
+        if (args.Length > 0 && args[0] == "--register")
+        {
+            if (!OperatingSystem.IsLinux())
+            {
+                Console.Error.WriteLine("--register is for Linux.");
+                return 2;
+            }
+
+            var registration = LinuxRegistration.ForThisUser();
+            if (registration is null)
+            {
+                Console.WriteLine("This wallet keeps its data in a folder of its own, so nothing was registered for the desktop.");
+                return 0;
+            }
+
+            foreach (var line in registration.Apply(AppContext.BaseDirectory)) Console.WriteLine(line);
+            if (args.Contains("--start-at-login", StringComparer.Ordinal))
+            {
+                registration.SetStartAtLogin(AppContext.BaseDirectory, true);
+                Console.WriteLine("start at login: on");
+            }
+
+            return 0;
+        }
+
+        if (WalletPaths.IsCustomHome && args.Contains("--self-update-test", StringComparer.Ordinal)) return SelfUpdateTest.Run();
         // Setup.exe and its updater start this program with a hook argument after an install or an update and before an uninstall:
         // the hook runs and the program ends here, before anything of the wallet starts. After an install or an update the registration
         // (host for the browser extension, links) is put in place for the folder the program now runs from; before an uninstall it is taken

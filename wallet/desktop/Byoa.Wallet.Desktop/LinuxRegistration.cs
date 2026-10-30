@@ -53,6 +53,28 @@ static class LinuxInstall
     /// <summary>The native host to register: through <c>current</c> when installed, otherwise the one next to the wallet.</summary>
     public static string HostPath(string appDir, string dataRoot) =>
         IsInstalled(appDir, dataRoot) ? Path.Combine(Current(dataRoot), "byoa-host") : Path.Combine(appDir, "byoa-host");
+
+    /// <summary>
+    /// Points <c>current</c> at <paramref name="target"/> in one rename (a new link, then <c>mv</c> over the old), so that a reader sees either
+    /// the old version or the new one, never a missing link. A link left by an earlier try is not deleted; a fresh name is used instead.
+    /// </summary>
+    public static void PointCurrent(string dataRoot, string target)
+    {
+        var current = Current(dataRoot);
+        Directory.CreateDirectory(Path.GetDirectoryName(current)!);
+        var pending = current + ".new";
+        try
+        {
+            File.CreateSymbolicLink(pending, target);
+        }
+        catch (IOException)
+        {
+            pending = current + ".new-" + Guid.NewGuid().ToString("N")[..8];
+            File.CreateSymbolicLink(pending, target);
+        }
+
+        File.Move(pending, current, overwrite: true);
+    }
 }
 
 /// <summary>
@@ -101,22 +123,45 @@ sealed class LinuxRegistration
         return new LinuxRegistration(new FileLoginItemStore(), new SessionTools(), home, config, data);
     }
 
-    /// <summary>Writes the browser manifests, the extension copy, the desktop entry and the icons, and tells the desktop about the link scheme.</summary>
-    public void Apply(string appDir)
+    /// <summary>
+    /// Writes the browser manifests, the extension copy, the desktop entry and the icons, and tells the desktop about the link scheme.
+    /// </summary>
+    /// <returns>What it did, one line per thing, for <c>Byoa.Wallet --register</c> to print.</returns>
+    public IReadOnlyList<string> Apply(string appDir)
     {
+        var lines = new List<string>();
         var host = LinuxInstall.HostPath(appDir, _data);
         var extension = Path.Combine(appDir, "extension");
         if (File.Exists(host) && File.Exists(Path.Combine(extension, "manifest.json")))
         {
-            NativeHostManifests.SyncExtension(extension, _data);
-            NativeHostManifests.RegisterLinux(host, File.ReadAllText(Path.Combine(extension, "manifest.json")), _home, _config);
+            var copied = NativeHostManifests.SyncExtension(extension, _data);
+            lines.Add($"extension: {copied} file(s) written to {Path.Combine(_data, "BYOA", "extension")}");
+            var browsers = NativeHostManifests.RegisterLinux(host, File.ReadAllText(Path.Combine(extension, "manifest.json")), _home, _config);
+            if (browsers.Count == 0) lines.Add("browser host: no Chromium browser was found");
+            foreach (var (browser, result) in browsers) lines.Add("browser " + browser + ": " + result);
+        }
+        else
+        {
+            lines.Add("browser host: not found next to the wallet; nothing was registered for browsers");
         }
 
         var applications = Path.Combine(_data, "applications");
-        WriteIfDifferent(Path.Combine(applications, DesktopId), DesktopEntry(LinuxInstall.ProgramPath(appDir, _data)));
-        InstallIcons();
-        if (_tools.Exists("xdg-mime")) _tools.Run("xdg-mime", ["default", DesktopId, "x-scheme-handler/" + LinkScheme], TimeSpan.FromSeconds(10));
+        var entry = Path.Combine(applications, DesktopId);
+        var entryWritten = WriteIfDifferent(entry, DesktopEntry(LinuxInstall.ProgramPath(appDir, _data)));
+        lines.Add("desktop entry: " + (entryWritten ? "written" : "up to date") + " (" + entry + ")");
+        lines.Add("icons: " + InstallIcons() + " file(s) written");
+        if (_tools.Exists("xdg-mime"))
+        {
+            _tools.Run("xdg-mime", ["default", DesktopId, "x-scheme-handler/" + LinkScheme], TimeSpan.FromSeconds(10));
+            lines.Add("link scheme: xdg-mime default " + DesktopId + " x-scheme-handler/" + LinkScheme);
+        }
+        else
+        {
+            lines.Add("link scheme: xdg-mime is not installed; the desktop entry is written but not made the default");
+        }
+
         if (_tools.Exists("update-desktop-database")) _tools.Run("update-desktop-database", [applications], TimeSpan.FromSeconds(10));
+        return lines;
     }
 
     /// <summary>True when the autostart entry starts this copy of the wallet in the background.</summary>
@@ -166,8 +211,10 @@ sealed class LinuxRegistration
         "\"" + program.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("\"", "\\\"", StringComparison.Ordinal)
             .Replace("%", "%%", StringComparison.Ordinal) + "\"";
 
-    void InstallIcons()
+    /// <summary>Writes the icons that are missing or different; returns how many files it wrote.</summary>
+    int InstallIcons()
     {
+        var written = 0;
         foreach (var (size, png) in _icons())
         {
             if (size <= 0 || png.Length == 0) continue;
@@ -178,18 +225,25 @@ sealed class LinuxRegistration
             var temp = target + ".tmp";
             File.WriteAllBytes(temp, png);
             File.Move(temp, target, overwrite: true);
+            written++;
         }
+
+        return written;
     }
 
-    /// <summary>Writes the text with LF line ends when the file is missing or says something else; a file of the person's own is never touched.</summary>
-    internal static void WriteIfDifferent(string path, string text)
+    /// <summary>
+    /// Writes the text with LF line ends when the file is missing or says something else; a file of the person's own is never touched.
+    /// </summary>
+    /// <returns>True when it wrote the file, false when it already said the same.</returns>
+    internal static bool WriteIfDifferent(string path, string text)
     {
         text = text.Replace("\r\n", "\n", StringComparison.Ordinal);
-        if (File.Exists(path) && File.ReadAllText(path, Encoding.UTF8) == text) return;
+        if (File.Exists(path) && File.ReadAllText(path, Encoding.UTF8) == text) return false;
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         var temp = path + ".tmp";
         File.WriteAllText(temp, text, new UTF8Encoding(false));
         File.Move(temp, path, overwrite: true);
+        return true;
     }
 }
 
@@ -202,7 +256,7 @@ sealed class FileLoginItemStore : ILoginItemStore
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return null; }
     }
 
-    public void Write(string path, string text) => LinuxRegistration.WriteIfDifferent(path, text);
+    public void Write(string path, string text) => _ = LinuxRegistration.WriteIfDifferent(path, text);
 
     public void Remove(string path)
     {
