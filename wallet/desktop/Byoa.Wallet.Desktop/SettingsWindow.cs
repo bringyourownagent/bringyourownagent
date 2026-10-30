@@ -546,6 +546,7 @@ sealed partial class SettingsWindow : Window
     void SourcesPage(StackPanel page)
     {
         Head(page, "My models", "The programs that run your models, and your keys. The site never learns which one answered, and a key goes only to its own provider. "
+            + SecretProtectors.StorageSentence + " "
             + "Add a model that runs on this PC (or on a home server), or one behind your own key: a short wizard tests it before it changes your route. "
             + "Your own AI agents are on My agents.");
         page.Children.Add(GetStartedCard(sites: false));
