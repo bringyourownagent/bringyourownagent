@@ -133,7 +133,7 @@ sealed partial class ConsentWindow : CornerWindow
         var big = new TextBlock
         {
             Text = code, FontSize = 30, FontWeight = FontWeight.Bold, LetterSpacing = 6,
-            FontFamily = new FontFamily("Cascadia Mono, Menlo, Consolas, monospace"), HorizontalAlignment = HorizontalAlignment.Center,
+            FontFamily = new FontFamily("Cascadia Mono, Menlo, Consolas, DejaVu Sans Mono, Liberation Mono, monospace"), HorizontalAlignment = HorizontalAlignment.Center,
         };
         AutomationProperties.SetAutomationId(big, "ConsentCheckCode");
         AutomationProperties.SetName(big, code);
