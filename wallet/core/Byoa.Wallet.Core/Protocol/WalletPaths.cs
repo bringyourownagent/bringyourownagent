@@ -95,14 +95,14 @@ public static class WalletPaths
 
     /// <summary>
     /// Makes sure the folder of a socket exists and is closed to other users. Called by the wallet before it listens; it does nothing on
-    /// Windows, where pipes have no folder. A Unix socket path is limited to 107 characters on Linux and 103 on macOS, which this reports
+    /// Windows, where pipes have no folder. A Unix socket path is limited to 107 bytes on Linux and 103 on macOS, which this reports
     /// as a clear error instead of the runtime's.
     /// </summary>
     public static void PrepareSocketFolder(string pipeName)
     {
         if (OperatingSystem.IsWindows() || !Path.IsPathRooted(pipeName)) return;
         var limit = OperatingSystem.IsLinux() ? 107 : 103;
-        if (pipeName.Length > limit) throw new IOException($"The wallet's socket path is too long for this system ({limit} characters at most): " + pipeName);
+        if (Encoding.UTF8.GetByteCount(pipeName) > limit) throw new IOException($"The wallet's socket path is too long for this system ({limit} bytes at most): " + pipeName);
         var folder = Path.GetDirectoryName(pipeName)!;
         Directory.CreateDirectory(folder);
         if (string.Equals(Path.TrimEndingDirectorySeparator(folder), Path.TrimEndingDirectorySeparator(RunFolder), StringComparison.Ordinal))
