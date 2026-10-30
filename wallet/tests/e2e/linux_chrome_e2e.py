@@ -14,8 +14,8 @@ Checks: the extension loads with the ID the wallet's manifest allows; its popup 
 host; the wallet is stopped and the popup says "Wallet not running"; the popup's "Open the wallet" button makes the
 host start it again, and the popup says connected again.
 
-Python, not node: the T480 has the browsers and no node; the DevTools protocol is the same over the pipe Chrome is
-given on file descriptors 3 and 4.
+Python, not node: the machine with both browser builds has no node; the DevTools protocol is the same over the pipe
+Chrome is given on file descriptors 3 and 4.
 """
 import base64
 import fcntl
