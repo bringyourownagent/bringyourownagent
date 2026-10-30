@@ -261,9 +261,9 @@ sealed class AgentPipeServer : IDisposable
 
         static string Normal(string value)
         {
-            var full = Path.GetFullPath(value);
+            var full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(value));
             // An installed Linux wallet runs through the `current` symlink while the kernel reports the real version folder for the
-            // bridge: both are the same folder.
+            // bridge: both are the same folder. A trailing separator is trimmed first, because readlink on "link/" follows the link.
             if (OperatingSystem.IsLinux())
             {
                 try
