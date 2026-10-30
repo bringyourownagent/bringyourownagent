@@ -185,8 +185,8 @@ def check_secret_service():
     The parent session (this test) stays without one, so the key step above still tests the key file. The child session
     has an isolated home and its own wallet home: one key must go into the service with no secrets.key, and a second
     import must reuse the same item (one item, no unreadable copy)."""
-    if not shutil.which("gnome-keyring-daemon") or not shutil.which("dbus-run-session"):
-        print("--   the real Secret Service step is skipped: no gnome-keyring-daemon or dbus-run-session", flush=True)
+    if not all(shutil.which(tool) for tool in ("gnome-keyring-daemon", "dbus-run-session", "gdbus")):
+        print("--   the real Secret Service step is skipped: no gnome-keyring-daemon, dbus-run-session or gdbus", flush=True)
         return
     base = os.path.join(a.work, "secret-service")
     home = os.path.join(base, "home")
