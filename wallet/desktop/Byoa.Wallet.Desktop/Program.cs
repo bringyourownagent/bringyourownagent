@@ -89,7 +89,16 @@ static class Program
         if (args.Length >= 3 && args[0] == "--import-key")
         {
             var secrets = new SecretStore(Path.Combine(WalletPaths.Home, "secrets.dat"));
-            return secrets.ImportFromFile(args[1], args[2]) ? 0 : 2;
+            try
+            {
+                return secrets.ImportFromFile(args[1], args[2]) ? 0 : 2;
+            }
+            catch (Exception e) when (e is System.Security.Cryptography.CryptographicException or IOException or UnauthorizedAccessException)
+            {
+                // a locked keyring, for example: say so plainly instead of a stack trace; nothing was deleted
+                Console.Error.WriteLine("The key could not be stored: " + e.Message);
+                return 2;
+            }
         }
 
         if (WalletPaths.IsCustomHome && Environment.GetEnvironmentVariable("BYOA_WALLET_TEST_CRASH") == "1"
