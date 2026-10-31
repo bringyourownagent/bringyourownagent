@@ -76,16 +76,16 @@ Each skill carries parameters (languages, streaming, context size, latency, qual
 
 A model is described by a set of key-value properties. Its real name is one optional property among them. A requester states what it needs as **conditions on properties**, and the wallet checks those conditions against the visitor's models. A requester may state requirements; it does not have to.
 
-**What was adopted** (the contract text is [spec/CONTRACT.md](../spec/CONTRACT.md) sections 3.3 and 3.5): four keys — `input`, `output`, `context`, `runs` — with the grant's own `runs` values (`local`, `home-server`, `api-key`), the operators `includes`, `min` and `oneOf` (an array, a number and an array as the short forms), carried as `needs` inside a skill's `models` block next to `require`/`recommend`, which stay names. The wallet answers with verdicts, never values, in the grant's `can`, at most four keys, and `grant.capabilities` says whether the wallet understood the ask at all. The wallet, not the site, is where the properties live, and a skill's own built-in rule comes before them.
+**What was adopted** (the contract text is [spec/CONTRACT.md](../spec/CONTRACT.md) sections 3.3 and 3.5): four keys — `input`, `output`, `context`, `runs` — with the grant's own `runs` values (`local`, `home-server`, `api-key`), the operators `includes`, `min` and `oneOf` (an array for `includes`, a number for `min`, an array for `oneOf`, as the short forms), carried as `needs` inside a skill's `models` block next to `require`/`recommend`, which stay names. The wallet answers with verdicts, never values, in the grant's `can`, at most four keys, and `grant.capabilities` says whether the wallet understood the ask at all. The wallet, not the site, is where the properties live, and a skill's own built-in rule comes before them.
 
-**What was not adopted:** `name`, `languages`, `latency`, `speed`, `level`, `bench.*` and `cost` as condition keys (`level` and `bench.*` for the reasons of Section 12: a number nobody can measure becomes a vendor's ranking in disguise); several conditions inside one skill (`tasks` with `requires`/`recommends` each); and the spellings `requires`/`recommends` themselves, which are one letter from `require`/`recommend` and would be a typo minefield. Named slots inside `models` remain the way to ask for two different text models, when a real case appears.
+**What was not adopted:** `name`, `languages`, `latency`, `speed`, `level`, `bench.*` and `cost` as condition keys (`level` and `bench.*` for the reasons of Section 12: a number nobody can measure becomes a vendor's ranking in disguise); several conditions inside one skill (`tasks` with `requires`/`recommends` each); and the spellings `requires`/`recommends` themselves, which are one letter from `require`/`recommend` and would be a typo minefield. Named slots inside `models` are reserved for later, when a real case for two different text models appears.
 
 A starter vocabulary of standard keys:
 
 | Key | Meaning | Example value | Typical condition |
 |---|---|---|---|
 | `name` | the model's own name; optional | `"speech-large-v3"` | rarely; requiring a vendor goes against "skills, not vendors" |
-| `runs` | where the model runs | `"this-device"`, `"home-server"`, `"cloud"` | `oneOf` (for example local only for personal photos) |
+| `runs` | where the model runs | `"local"`, `"home-server"`, `"api-key"` | `oneOf` (for example local only for personal photos) |
 | `input` | modalities it accepts | `["text", "audio", "image"]` | `includes` |
 | `output` | modalities it produces | `["text"]` | `includes` |
 | `languages` | languages it handles well (BCP 47 tags) | `["en", "ru", "sk"]` | `includes` |

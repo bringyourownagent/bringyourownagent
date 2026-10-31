@@ -2,6 +2,11 @@
 
 The libraries share one version number and one rule set. Dates are UTC.
 
+## Unreleased (the next shared version)
+
+- Rule change: a skill's `models` block may state `needs` (conditions on `input`, `output`, `context`, `runs`), `kind` (`model`, `agent`, `any`), `onMismatch` (`drop`, `show`) and `abilities`, and a block without `count` is read like any other (rules M22–M28). `purpose.limits.maxFrameBytes` is a known limit. Python, Node.js and .NET implement all of it and pass the same 199 shared test vectors; every manifest the 0.0.3 libraries accept is still accepted.
+- The Node.js and .NET relays pass the grant's `capabilities`, every skill's models and their `can`/`abilities` verdicts on to the page, and the .NET relay's job cancel tells the wallet with the `cancel` frame (wallet 0.36).
+
 ## 0.0.3 (2026-10-28)
 
 The site's side of the wallet connection, released. No change to any rule: the shared test vectors are the same 173. The Python package moves to 0.0.3 only to keep the one shared version number; nothing in it changed.

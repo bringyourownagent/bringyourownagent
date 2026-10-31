@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, List, Mapping, Optional, Sequence, TypedDict
 
 from ._common import (
+    is_array,
     is_blank,
     is_count,
     is_non_negative,
@@ -334,7 +335,7 @@ def _list_of(value: Any, key: str) -> Optional[Any]:
     """The array of a short form, or of the one long form ``key``, or None when the value is neither."""
     if isinstance(value, (list, tuple)):
         return value
-    if is_object(value) and len(present_keys(value)) == 1 and value.get(key) is not None:
+    if is_object(value) and len(present_keys(value)) == 1 and is_array(value.get(key)):
         return value[key]
     return None
 

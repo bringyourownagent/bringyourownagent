@@ -2,7 +2,7 @@
 
 > **DRAFT FOR DISCUSSION.** This is a first proposal, not a standard. Every code, field name and decision below may change before specification v0.1. Comments and objections are welcome as GitHub issues.
 
-This document lists the first rules of BYOA that a program can check, in plain English. Each rule has a stable code. The reference implementations in [`../sdk/`](../sdk/) (Python, Node.js and .NET, version 0.0.2) implement exactly these rules, and the shared test vectors in [`../sdk/test-vectors/`](../sdk/test-vectors/) pin down their behaviour.
+This document lists the first rules of BYOA that a program can check, in plain English. Each rule has a stable code. The reference implementations in [`../sdk/`](../sdk/) (Python, Node.js and .NET) implement all of these rules, including the `models` block (M22–M28) and `maxFrameBytes`; the released 0.0.2 and 0.0.3 packages predate them (the note after the rule table says so). The shared test vectors in [`../sdk/test-vectors/`](../sdk/test-vectors/) pin down their behaviour.
 
 There are two groups of rules:
 
@@ -102,7 +102,7 @@ The manifest shown on the BYOA site is valid and produces no warnings:
 | M22 | `models-invalid` | error | Inside a skill, `models`, if present, must be an object. | The block says who may fill the skill; it cannot be read in another shape. |
 | M23 | `models-kind-invalid` | error | `models.kind`, if present, must be `model`, `agent` or `any`. | An unknown kind would silently mean the opposite of what the site wrote. |
 | M24 | `models-onmismatch-invalid` | error | `models.onMismatch`, if present, must be `drop` or `show`. | A wallet must not guess what to do with a source that does not fit. |
-| M25 | `needs-invalid` | error | `models.needs`, if present, must be an object, and each of the four known keys must have its shape: `input` and `output` an array of at least one of `text`, `image`, `audio`, or `{"includes": [...]}` of those; `context` a number from 0 to 2^53 - 1, or `{"min": n}`; `runs` an array of at least one of `local`, `home-server`, `api-key`, or `{"oneOf": [...]}` of those. | A condition of another shape cannot be checked, and an unchecked condition silently lets an unfit source through. |
+| M25 | `needs-invalid` | error | `models.needs`, if present, must be an object, and each of the four known keys must have its shape: `input` and `output` an array of at least one of `text`, `image`, `audio`, or an object holding only `{"includes": [...]}` of those; `context` a number from 0 to 2^53 - 1, or an object holding only `{"min": n}`; `runs` an array of at least one of `local`, `home-server`, `api-key`, or an object holding only `{"oneOf": [...]}` of those. | A condition of another shape cannot be checked, and an unchecked condition silently lets an unfit source through. |
 | M26 | `needs-unknown` | warning | A `needs` key that is not one of the four properties and does not begin with `x-`. | Forward compatibility; also catches typos such as `ouput`. |
 | M27 | `abilities-invalid` | error | `models.abilities`, if present, must be an array of at least one string. | An ability of another shape is a promise no wallet can read. |
 | M28 | `abilities-unknown` | warning | An ability name that is not in the vocabulary and does not begin with `x-`. | New abilities will appear; `files.read`, `code.run` and the like are not enforced in 0.1 and a wallet must not be made to pretend they are. |
@@ -111,7 +111,7 @@ Where a rule looks at several keys of one object inside `models` (M25 and M26 ov
 
 A `models` block without `count` is valid: the contract's defaults apply (CONTRACT.md section 3.3) and the other keys of the block are read as they are.
 
-The rules of the `models` block (M22–M28) and the limit name `maxFrameBytes` are not in the released 0.0.2 and 0.0.3 libraries, which report `maxFrameBytes` as `limit-unknown` and check nothing inside `models`; they arrive in the libraries' next shared version. Every manifest the older libraries accept is still accepted.
+The rules of the `models` block (M22–M28) and the limit name `maxFrameBytes` are new in the libraries' next shared version: the released 0.0.2 and 0.0.3 packages report `maxFrameBytes` as `limit-unknown` and check nothing inside `models`. Every manifest the older libraries accept is still accepted.
 
 Skill parameters other than `required` and the `models` block (such as `languages` or `size`) are skill-specific and are not checked in this draft. Inside `models`, the rules check only `kind`, `onMismatch`, `needs` and `abilities`; `count`, `distinct`, `require`, `recommend`, `why`, `whyLong` and `names` stay the wallet's to read, as before.
 

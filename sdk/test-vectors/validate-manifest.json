@@ -709,6 +709,65 @@
       "name": "maxFrameBytes over the largest number is refused",
       "manifestPatch": { "purpose": { "limits": { "maxFrameBytes": -1 } } },
       "expect": { "ok": false, "errors": [{ "code": "limit-invalid", "path": "/purpose/limits/maxFrameBytes" }], "warnings": [] }
+    },
+    {
+      "name": "null fields inside a models block count as absent",
+      "manifest": {
+        "byoa": "0.1-draft",
+        "purpose": { "summary": "Family geography game: recognise country names" },
+        "skills": {
+          "text.generate": { "required": true, "models": { "count": null, "kind": null, "onMismatch": null, "needs": null, "abilities": null } }
+        },
+        "privacy": "personal-voice",
+        "expectedCost": { "perSession": "0.06 USD" }
+      },
+      "expect": { "ok": true, "errors": [], "warnings": [] }
+    },
+    {
+      "name": "a needs condition whose value is null is not a condition",
+      "manifest": {
+        "byoa": "0.1-draft",
+        "purpose": { "summary": "Family geography game: recognise country names" },
+        "skills": {
+          "text.generate": { "required": true, "models": { "needs": { "input": null, "output": ["text"], "context": null } } }
+        },
+        "privacy": "personal-voice",
+        "expectedCost": { "perSession": "0.06 USD" }
+      },
+      "expect": { "ok": true, "errors": [], "warnings": [] }
+    },
+    {
+      "name": "a long form of a modality holds its one key and nothing else",
+      "manifestPatch": {
+        "skills": {
+          "audio.transcribe": null,
+          "text.understand": null,
+          "text.generate": { "required": true, "models": { "needs": { "output": { "includes": ["text", "image"], "exact": true } } } }
+        }
+      },
+      "expect": { "ok": false, "errors": [{ "code": "needs-invalid", "path": "/skills/text.generate/models/needs/output" }], "warnings": [] }
+    },
+    {
+      "name": "the long form must carry an array, not another object",
+      "manifestPatch": {
+        "skills": {
+          "audio.transcribe": null,
+          "text.understand": null,
+          "text.generate": { "required": true, "models": { "needs": { "output": { "includes": { "text": true } } } } }
+        }
+      },
+      "expect": { "ok": false, "errors": [{ "code": "needs-invalid", "path": "/skills/text.generate/models/needs/output" }], "warnings": [] }
+    },
+    {
+      "name": "an ability that is not a string is not an ability name",
+      "manifestPatch": {
+        "skills": {
+          "audio.transcribe": null,
+          "text.understand": null,
+          "text.generate": { "required": true, "models": { "kind": "agent", "abilities": ["web.search", 7] } }
+        }
+      },
+      "expect": { "ok": false, "errors": [{ "code": "abilities-invalid", "path": "/skills/text.generate/models/abilities" }], "warnings": [] }
     }
   ]
 }

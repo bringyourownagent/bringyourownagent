@@ -53,4 +53,4 @@ Some cases use numbers beyond 2^53 - 1, such as `9007199254740993`, `1e400` (inf
 
 ## Adding a case
 
-Add it to the right file, run both test suites (see [`../README.md`](../README.md)), and fix whichever implementation disagrees with the spec. If the spec itself is unclear, change the spec first.
+Add it to the right file, run all three test suites (see [`../README.md`](../README.md)), and fix whichever implementation disagrees with the spec. If the spec itself is unclear, change the spec first.

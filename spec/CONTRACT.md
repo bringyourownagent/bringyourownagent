@@ -14,11 +14,13 @@ window.byoa = {
   // Resolves with a grant, or with null meaning "AI unavailable".
   // null covers: declined, blocked, no fitting model, no answer within 120 s, wallet not running, and so on.
   // The page cannot tell these apart, and that is intended.
-  // A site that works with text also gets its `limits` (section 3.4); a site that asked for models
+  // A site that works with text also gets its `limits` (section 3.4; the wallet's picture limits of
+  // section 3.4a too from wallet 0.37); a site that asked for models
   // gets the `models` it was given, one list per skill (section 3.3), each entry with `can` when the site
   // asked by properties, and `capabilities`, the feature names this wallet understands (section 3.3).
   request(manifest) -> Promise<{ grantId: string, skills: string[], expiresAt: string,
-                                 limits?: { maxTextChars, maxAnswerTokens, maxCallSeconds, maxParallelCalls, maxCallsPerMinute },
+                                 limits?: { maxTextChars, maxAnswerTokens, maxCallSeconds, maxParallelCalls, maxCallsPerMinute,
+                                            maxImages?, maxImageBytes?, maxResultBytes?, maxImagesPerMinute? },
                                  models?: { "<skill>": [ { ref, name, id, runs, kind, can?, abilities? } ] },
                                  capabilities?: string[] } | null>,
 
@@ -26,8 +28,9 @@ window.byoa = {
   // ok:false means "unavailable for this call": blocked by a limit, no model answered, the grant was revoked,
   // or a paid fallback was refused. The page must then use its own path.
   // A call may wait in the wallet for its own limit (`maxCallSeconds`, up to 600 s): a page times out no sooner than that.
+  // An answer from an agent that lacked an ability the site asked about also carries `lacks` (section 3.6, wallet 0.36).
   call(grantId, skill, input, params) -> Promise<
-      { ok: true, output: object, receipt: { cost: "0.000 USD", provider: "local" | "api-key", model?: string } }
+      { ok: true, output: object, lacks?: string[], receipt: { cost: "0.000 USD", provider: "local" | "api-key", model?: string } }
     | { ok: false } >,
 
   release(grantId) -> Promise<void>
@@ -117,7 +120,7 @@ A site whose work needs several different models (a judge that wants the opinion
 - **`distinct`**: `vendor` asks for models from different companies where possible; `model` (the default) only for different models.
 - **`require`**: models without which the site cannot work. Each element is a name, a mask ending in `*`, or an array of those meaning "any of these". A visitor who cannot give them is not offered Allow.
 - **`recommend`**: models the site likes, in its order (names and masks). A site that only recommends can always be allowed.
-- **`needs`** (wallet 0.36): conditions on the *properties* of the sources (section 3.5): `"needs": { "input": ["text", "image"], "output": ["text"], "context": 64, "runs": ["api-key"] }`. At most the four known keys are read; a key the wallet does not know is ignored, and `x-` names are free for anyone. In one line: `require` picks by name, `needs` by properties — a source must satisfy both when both are given.
+- **`needs`** (wallet 0.36): conditions on the *properties* of the sources (section 3.5): `"needs": { "input": ["text", "image"], "output": ["text"], "context": 64, "runs": ["api-key"] }`. At most the four known keys are read; a key the wallet does not know is ignored, and `x-` names are free for anyone. In `input` and `output` every value listed must be present (the example asks for a source that reads both text and pictures); `context` is a minimum in thousands of tokens; `runs` is one of `local`, `home-server`, `api-key`. The long forms `{"includes": [...]}`, `{"min": n}` and `{"oneOf": [...]}` mean the same, with nothing else in that object. In one line: `require` picks by name, `needs` by properties — a source must satisfy both when both are given.
 - **`kind`** (wallet 0.36): `"model"` (the default), `"agent"` or `"any"`: which sources may fill the skill. A site that wants the visitor's own agent writes `"kind": "any"` and names it as any model, `agent/<name>` or the mask `agent/*` (section 3.6). `kind` only filters; it ticks nothing.
 - **`onMismatch`** (wallet 0.36): `"drop"` or `"show"`, and the default is `drop` for a model, `show` for an agent. `drop`: a source that fails a condition on a property the wallet *knows* is not offered at all. `show`: it is offered with the mismatch shown and never pre-ticked. A condition on a property the wallet does not know never drops anything: the source is offered with an "unknown" mark, not pre-ticked.
 - **`abilities`** (wallet 0.36): for a skill that an agent may fill, the abilities the site hopes for, `["web.search", "web.read"]` (section 3.6). It never changes what an agent may do.
@@ -148,7 +151,7 @@ The size of what a site may send, the length of an answer, the wait and the numb
 | `maxCallsPerMinute` | calls a minute | 300 | 600 |
 
 - A declared limit is the site's own: it holds the site back, as the rules of [rules-0.1-draft.md](rules-0.1-draft.md) say for `maxTextChars` and `maxCallsPerMinute`, and the wallet applies the other three the same way. It is also what the site asks for: when it is above the visitor's, the consent window says so and offers to accept it, once, with a tick (on by default). A site that asks for the same again is not asked about again; one that asks for more is.
-- The 0.0.2 libraries know only `maxClipSeconds`, `maxCallsPerMinute` and `maxTextChars`; 0.0.3 adds `maxFrameBytes`. The limits they do not know are reported as `limit-unknown` warnings and ignored. The wallet reads them itself.
+- The 0.0.2 libraries know only `maxClipSeconds`, `maxCallsPerMinute` and `maxTextChars`; the libraries' next shared version adds `maxFrameBytes`. The limits they do not know are reported as `limit-unknown` warnings and ignored. The wallet reads them itself.
 - The grant tells the site what it was held to (`limits`, in the same names). A site stays within them: a call over a limit is `ok:false`.
 - `maxFrameBytes` (a whole number of bytes) is the one limit of the direct link alone: it says what a site accepts in one frame from the wallet ([CONTRACT-DIRECT.md](CONTRACT-DIRECT.md) section 4). No gate rule counts it: it bounds frames, not calls.
 
@@ -180,7 +183,7 @@ The visitor's declaration always wins over the catalogue, and the wallet shows w
 
 **The primary-role rule (absolute).** A skill's built-in properties come first, and a site's `needs` can only narrow them, never widen them:
 
-- `text.generate` is offered only sources whose `output` includes `text` and does not include `image` — unless the visitor ticked `alsoText` for that source. No site key (`needs`, `kind`, `require`) lifts the second clause; only the visitor's own tick does. A site that wants a picture in an answer asks for `image.generate`, whose result shape carries it. A source whose `output` is unknown is offered, marked "unknown", and never pre-ticked.
+- `text.generate` is offered only sources whose `output` includes `text` and does not include `image` — unless the visitor ticked `alsoText` for that source. No site key (`needs`, `kind`, `require`) lifts the second clause; only the visitor's own tick does. A site's `needs.output` containing `image` on `text.generate` brings nothing back: the built-in rule comes first and `needs` only narrows it. A site that wants a picture in an answer asks for `image.generate`, whose result shape carries it. A source whose `output` is unknown is offered, marked "unknown", and never pre-ticked.
 - `image.generate` (wallet 0.37) is offered only sources whose `output` is known to include `image`.
 
 The rule holds everywhere a source is chosen: the consent window, the grant, the wallet's own route, and every call. A stored choice, a reused answer or a silent renewal whose source no longer fits is dropped from the grant, and the visitor is asked again when the required count is no longer met.
@@ -222,7 +225,7 @@ Serving pictures is wallet 0.37. The text of this section is written now so that
  "receipt":{"cost":"0.040 USD","provider":"api-key","model":"m1"}}
 ```
 
-The `result` carries only metadata; the bytes are in the frames. The site joins the parts of each picture by `index`, checks the size and the `sha256`, and treats every picture as untrusted input. There is no second, inline shape: a small picture travels as parts like a big one, on the direct link, through the relay and through the extension alike (an extension frame is at most 1 MB, which is why a part is at most 512 KB of base64). A picture that is too big is reduced by the wallet itself — re-encoded, then scaled down — when the visitor's switch "Reduce big pictures myself" allows it, and `reduced: true` with `originalSize` says so; it is never reduced silently. A call that fails is `ok:false`, and the site discards every part it already received for it.
+The `result` carries only metadata; the bytes are in the frames. `index` numbers the picture among those of the call, `seq` numbers its parts and `of` says how many parts that picture has. The site joins each picture's parts by `seq`, checks that it has `of` of them, checks the size and the `sha256`, and treats every picture as untrusted input. There is no second, inline shape: a small picture travels as parts like a big one, on the direct link, through the relay and through the extension alike (an extension frame is at most 1 MB, which is why a part is at most 512 KB of base64). A picture that is too big is reduced by the wallet itself — re-encoded, then scaled down — when the visitor's switch "Reduce big pictures myself" allows it, and `reduced: true` with `originalSize` says so; it is never reduced silently. With the switch off, a picture over the limits of section 3.4a fails the call (`ok:false`): the limits are hard. A call that fails is `ok:false`, and the site discards every part it already received for it.
 
 **Pictures in `text.generate`.** A message's `content` may be an array of parts:
 
@@ -232,7 +235,7 @@ The `result` carries only metadata; the bytes are in the frames. The site joins 
   {"type":"image","mime":"image/png","data":"<base64>"}]}
 ```
 
-only for a source whose `input` is known to include `image`. A site MUST NOT send an `image` part unless the grant's `can.input` for that model is `true`; without `capabilities` saying the wallet understands `can`, or with no `can` at all, it uses its own path. A wallet that cannot use a part it received answers `ok:false`, never an answer as if the part were absent. Picture bytes do not count toward `maxTextChars`; they count toward the picture limits of section 3.4a.
+only for a source whose `input` is known to include `image`. A site MUST NOT send an `image` part unless the grant's `can.input` for that model is `true`; a call that names no model (the wallet's own route) relies on `capabilities` containing `images-in`. Without `capabilities` saying the wallet understands `can`, or with no `can` at all, it uses its own path. A wallet that cannot use a part it received answers `ok:false`, never an answer as if the part were absent. Picture bytes do not count toward `maxTextChars`; they count toward the picture limits of section 3.4a.
 
 **Both skills together** (the icon site's manifest after this release; before it, the second skill has no pictures to look at and the site keeps its text-only manifest, with `needs: {"output":["text"]}` and `kind` if it wants them):
 

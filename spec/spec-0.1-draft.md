@@ -7,7 +7,7 @@ BYOA ("Bring Your Own Agent") lets a website or app use the visitor's own AI, wi
 | Document | What it fixes |
 |---|---|
 | [rules-0.1-draft.md](rules-0.1-draft.md) | the manifest, the grant, the call and the **gate**: every rule a program can check, with stable codes |
-| [CONTRACT.md](CONTRACT.md) | the browser binding: `window.byoa`, the skills `audio.transcribe` and `text.generate`, the extension and native host |
+| [CONTRACT.md](CONTRACT.md) | the browser binding: `window.byoa`, the skills `audio.transcribe`, `text.generate` and `image.generate` (the last from wallet 0.37), the extension and native host |
 | [CONTRACT-DIRECT.md](CONTRACT-DIRECT.md) | the binding without an extension: the `bringyourownagent://` link and the wallet's channel to the site's server |
 
 The ideas behind them, and what is proposed for later, are in [../docs/vision.md](../docs/vision.md). Where this document and a companion disagree, the companion wins.
@@ -46,7 +46,7 @@ This is the part that protects the visitor, and a conforming wallet MUST keep to
 
 ## 4. Skills
 
-A skill is a named kind of work with a fixed shape of input and output. The vocabulary of 0.1 is `text.generate`, `text.understand`, `text.embed`, `audio.transcribe`, `audio.speak`, `image.understand`, `image.generate`, `video.understand` and `video.generate`. A skill is always called a skill: the word **role** stays with the four Roles of section 1 and with a message's role (`system`, `user`, `assistant`). These have a defined shape, in [CONTRACT.md](CONTRACT.md) section 3:
+A skill is a named kind of work with a fixed shape of input and output. The vocabulary of 0.1 is `text.generate`, `text.understand`, `text.embed`, `audio.transcribe`, `audio.speak`, `image.understand`, `image.generate`, `video.understand` and `video.generate`. A skill is always called a skill: the word **role** stays with the four Roles of section 1 and with a message's role (`system`, `user`, `assistant`). Three of them have a defined shape, in [CONTRACT.md](CONTRACT.md) section 3:
 
 - `audio.transcribe`: a WAV clip (up to 15 seconds) in, text out.
 - `text.generate`: chat messages in, a short text answer out; with `choices` the answer is exactly one of the given strings. From wallet 0.37 a message may also carry picture parts, for a source that reads pictures (CONTRACT.md section 3.7).
