@@ -50,11 +50,11 @@ sealed partial class SettingsWindow
     /// <summary>Jev, through OpenRouter or straight at TypeSafe: a judge that is no model of the visitor's and needs a key of its own.</summary>
     static bool IsJev(string judge) => judge == GuardSettings.DefaultJudge || judge == GuardSettings.TypeSafeJudge;
 
-    /// <summary>The visitor's text models that may judge: no built-in speech, and never one of his agents.</summary>
+    /// <summary>The visitor's text models that may judge: no built-in speech, never one of his agents, and no model that draws pictures (unless he said it may answer text).</summary>
     IReadOnlyList<RegistrySourceInfo> Judges() =>
         _w.Registry.ListSources(Vocabulary.Generate)
             .Where(s => s.Kind is not null && s.Enabled &&
-                !string.Equals(s.Kind, SourceKinds.Agent, StringComparison.OrdinalIgnoreCase))
+                !string.Equals(s.Kind, SourceKinds.Agent, StringComparison.OrdinalIgnoreCase) && _w.Engine.ServesText(s.Id))
             .ToList();
 
     string JudgeNote(string judge)

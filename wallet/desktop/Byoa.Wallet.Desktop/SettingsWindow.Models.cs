@@ -166,7 +166,7 @@ sealed partial class SettingsWindow
             Render();
         }
 
-        var others = all.Where(s => !ids.Contains(s.Id)).ToList();
+        var others = all.Where(s => !ids.Contains(s.Id) && _w.Engine.ServesText(s.Id)).ToList();
         if (others.Count > 0)
         {
             var combo = new ComboBox { MinWidth = 280 };

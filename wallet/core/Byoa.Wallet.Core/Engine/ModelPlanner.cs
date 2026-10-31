@@ -178,7 +178,6 @@ public static class ModelPlanner
     /// <summary>How many names the window shows as examples.</summary>
     public const int MaxExamples = 4;
 
-
     static int RankOf(RequestedModels spec, string modelId)
     {
         for (var i = 0; i < spec.Recommend.Count; i++)

@@ -316,6 +316,22 @@ try:
     ui.open_row(settings, "SiteExpand-" + host)
     check("... and the Sites page no longer marks it", not present(settings, note_id, 2.0))
 
+    # the agent's abilities are text, derived by the wallet; the guard page says what it cannot read
+    settings = ui.find_window("Agent wallet", 10)
+    ui.select(settings, "Tab-myagents")
+    time.sleep(1.5)
+    settings = ui.find_window("Agent wallet", 10)
+    ui.open_row(settings, "AddedSourceExpand-" + AGENT)
+    abilities_id = "AgentAbilities-" + safe(AGENT)
+    text = name_of(settings, abilities_id) if present(settings, abilities_id, 4.0) else ""
+    check("the agent's settings say what it can do, as text", "search the web, read web pages" in text and "cannot look at pictures" in text, text)
+    settings = ui.find_window("Agent wallet", 10)
+    ui.select(settings, "Tab-guard")
+    time.sleep(1.5)
+    settings = ui.find_window("Agent wallet", 10)
+    guard_text = name_of(settings, "GuardReadsTextOnly") if present(settings, "GuardReadsTextOnly", 4.0) else ""
+    check("the Agent guard page says it reads text only and a picture is not text", "reads text only" in guard_text and "picture is not text" in guard_text, guard_text)
+
     # ------------------------------------------------------------------ a second site asks for what nothing here is: models behind a key
     second_manifest = {
         "byoa": "0.1-draft",

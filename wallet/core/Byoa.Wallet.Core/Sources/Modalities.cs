@@ -17,7 +17,4 @@ public static class Modalities
     /// </summary>
     public static bool WritesText(IReadOnlyList<string>? outputs) =>
         outputs is null || outputs.Contains(Text) && !outputs.Contains(Image);
-
-    /// <summary>The rule for image output: the source must be known to draw pictures (an unknown output is never an image output).</summary>
-    public static bool DrawsPictures(IReadOnlyList<string>? outputs) => outputs?.Contains(Image) == true;
 }

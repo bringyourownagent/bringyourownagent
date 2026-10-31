@@ -324,6 +324,17 @@ public class NeedsInTheEngineTests
         Assert.Null(_engine.FactsOfSource("no:such"));
     }
 
+    [Fact]
+    public void WherePickingAModelForATextJobAModelThatDrawsPicturesIsOfferedOnlyWhenTheVisitorSaidItMayAnswerText()
+    {
+        Assert.True(_engine.ServesText("lm:gemma"));
+        Assert.True(_engine.ServesText("openrouter:openai/gpt-5-mini"));
+        Assert.False(_engine.ServesText("openrouter:google/gemini-3.1-flash-image"));
+        Assert.False(_engine.ServesText("no:such"));
+        _store.Update(s => s.Source("openrouter:google/gemini-3.1-flash-image").AlsoText = true);
+        Assert.True(_engine.ServesText("openrouter:google/gemini-3.1-flash-image"));
+    }
+
     // ------------------------------------------------------------------ what the site is told
 
     [Fact]

@@ -119,6 +119,13 @@ public sealed partial class WalletEngine
         ModelFacts.Of(setting, Catalog.Find(ModelIdOf(setting)),
             source is not null ? ProviderReceipt(source) : setting.Kind is SourceKinds.OpenRouter or SourceKinds.Agent or ApiServices.Kind ? "api-key" : "local");
 
+    /// <summary>
+    /// Whether one of the visitor's sources may answer text at all (the skill's own rule): where he picks a model for a text job himself (a site's models,
+    /// the model that judges requests), one that draws pictures is not offered, unless he ticked "Also use as a text model" for it.
+    /// </summary>
+    public bool ServesText(string sourceId) =>
+        _store.Read(s => s.Sources.FirstOrDefault(x => x.Id == sourceId && x.Kind is not null) is { } setting && Offers(null, setting, Vocabulary.Generate));
+
     /// <summary>What the wallet knows of one of the visitor's sources, for the pages that show it (My models); null when there is no such source.</summary>
     public ModelFacts? FactsOfSource(string sourceId) =>
         _store.Read(s => s.Sources.FirstOrDefault(x => x.Id == sourceId && x.Kind is not null)) is { } setting
