@@ -224,13 +224,13 @@ public class StreamThatDoesNotEndTests
     }
 
     [Fact]
-    public async Task AStreamThatGoesSilentBeforeItFinishesEndsAfterTheIdleTimeoutWithWhatCame()
+    public async Task AStreamThatGoesSilentBeforeItFinishesFailsAfterTheIdleTimeoutInsteadOfGivingACutAnswer()
     {
         using var response = Hanging(Alice);
-        var (read, took) = await TimedAsync(() => ChatStream.ReadAsync(response, null, default), idle: TimeSpan.FromMilliseconds(300), grace: TimeSpan.FromSeconds(15));
-        Assert.Equal("Alice wins", read.Text);
-        Assert.Null(read.Finish);
-        Assert.True(took >= TimeSpan.FromMilliseconds(250), "ended before the idle timeout: " + took);
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
+        var failure = await Assert.ThrowsAsync<HttpRequestException>(() => TimedAsync(() => ChatStream.ReadAsync(response, null, default), idle: TimeSpan.FromMilliseconds(300), grace: TimeSpan.FromSeconds(15)));
+        Assert.Contains("went quiet", failure.Message);
+        Assert.True(System.Diagnostics.Stopwatch.GetElapsedTime(started) >= TimeSpan.FromMilliseconds(250), "ended before the idle timeout");
     }
 
     [Fact]

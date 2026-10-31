@@ -12,8 +12,8 @@ internal sealed record StreamResult(string Text, string Reasoning, JsonNode? Usa
 /// Reads a chat answer that arrives as server-sent events (<c>data: {...}</c> lines, <c>[DONE]</c> at the end) and hands the text over as it comes, with
 /// the model's reasoning left out. A service that reports an error in the stream ends the read. The size of the whole answer is bounded.
 /// A read does not wait for ever (PROPOSAL-v2 3.6): once the model has said it is finished (<c>finish_reason</c> <c>stop</c> or <c>length</c>) it waits only a
-/// short grace for the rest (the usage report, <c>[DONE]</c>) and ends the read, and a stream that goes silent for too long ends the read too. The
-/// answer is what has come; if nothing has, the caller finds no answer and the call fails.
+/// short grace for the rest (the usage report, <c>[DONE]</c>) and ends the read with the answer it has. A stream that goes silent for too long before that
+/// fails the read when some text has come (a cut answer), and ends it empty when none has (the caller finds no answer and the call fails).
 /// </summary>
 internal static class ChatStream
 {
@@ -46,7 +46,10 @@ internal static class ChatStream
             }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
-                break;                                                                          // nothing more is coming: the answer is what has come
+                // Nothing more is coming. After finish_reason the answer is whole (only the closing did not arrive); before it, a half-written answer
+                // is not an answer: it fails, and a text that stops mid-way is never given to the page as if it were done.
+                if (finish is null && text.Length > 0) throw new HttpRequestException("the service went quiet before it finished answering");
+                break;
             }
 
             if (line is null) break;
