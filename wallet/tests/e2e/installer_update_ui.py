@@ -34,6 +34,7 @@ ap.add_argument("--old", required=True)
 ap.add_argument("--new", required=True)
 ap.add_argument("--pack-id", default="AgentWalletTest")
 ap.add_argument("--desktop", default="byoa-installer-update")
+ap.add_argument("--shots", help="a folder for pictures of the settings window (the foot of the tab list in each state)")
 a = ap.parse_args()
 os.makedirs(a.home, exist_ok=True)
 
@@ -47,6 +48,16 @@ wallet_exe = os.path.join(current, "Byoa.Wallet.exe")
 env = dict(os.environ, BYOA_WALLET_HOME=a.home, BYOA_UPDATE_FEED=a.feed)
 failed = []
 started = []                                             # processes this test started, to be stopped by id at the end
+
+
+def shot(window, name):
+    """A picture of the settings window, when --shots names a folder."""
+    if a.shots:
+        os.makedirs(a.shots, exist_ok=True)
+        try:
+            ui.shot(window, os.path.join(a.shots, name))
+        except Exception as e:  # noqa: BLE001  (the screen grabber cannot read a hidden desktop: the picture is then left out)
+            print("  (no picture of " + name + ": " + type(e).__name__ + ")")
 
 
 def check(ok, text):
@@ -118,6 +129,7 @@ try:
     check(text_on(window, f"Version {a.old}"), f"the settings show Version {a.old}")
     ui.invoke(window, "UpdateCheck")
     check(text_on(window, f"Version {a.new} is ready"), f"'Version {a.new} is ready.' after Check for updates")
+    shot(window, "foot-available.png")
     check(ui.control(window, "UpdateInstall", 5) is not None, "the button 'Update and restart' is there")
 
     # 3. programs that a browser or an agent keeps open in the install folder
@@ -143,6 +155,12 @@ try:
     # 5. the newest
     ui.invoke(window, "UpdateCheck")
     check(text_on(window, "This is the newest version"), "'This is the newest version.' after the update")
+    shot(window, "foot-newest-0s.png")
+    time.sleep(4)
+    shot(window, "foot-newest-4s.png")
+    time.sleep(5)
+    check(not text_on(window, "This is the newest version", 1), "the notice has faded away and is gone after seven seconds")
+    shot(window, "foot-newest-9s.png")
 finally:
     for p in locals().get("held", []):
         if p.poll() is None:
