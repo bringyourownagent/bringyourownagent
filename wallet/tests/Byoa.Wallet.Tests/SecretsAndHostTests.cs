@@ -162,7 +162,7 @@ public class HostRelayTests
         await Framing.WriteAsync(browser, Message(1, "status"));
         Assert.Equal("{\"id\":1,\"result\":{\"running\":false,\"host\":\"" + WalletPaths.Version + "\"}}", (await ReadAsync(browser)).ToJsonString());
         await Framing.WriteAsync(browser, Message(2, "call"));
-        Assert.Equal("{\"id\":2,\"result\":{\"ok\":false}}", (await ReadAsync(browser)).ToJsonString());
+        Assert.Equal("{\"id\":2,\"result\":{\"ok\":false,\"reason\":\"failed\"}}", (await ReadAsync(browser)).ToJsonString());
         await Framing.WriteAsync(browser, Message(3, "request"));
         Assert.Equal("{\"id\":3,\"result\":null}", (await ReadAsync(browser)).ToJsonString());
         Assert.Equal([false, false, true], connector.Starts);         // only a request may start the wallet

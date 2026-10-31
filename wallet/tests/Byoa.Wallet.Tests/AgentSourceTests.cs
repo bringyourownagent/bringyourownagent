@@ -132,6 +132,23 @@ public class AgentCliSourceTests
     }
 
     [Fact]
+    public async Task WhatTheSiteHopedForAndTheAgentCannotDoIsSaidInTheWalletsOwnWordsOutsideTheSitesLines()
+    {
+        var runner = new FakeRunner(_ => new AgentRunResult(0, Json, ""));
+        var source = Make(runner);
+
+        await source.GenerateAsync(Ask("Look at this picture") with { Lacks = ["image.read"] }, CancellationToken.None);
+        await source.GenerateAsync(Ask("No hopes here"), CancellationToken.None);
+
+        var told = runner.Runs[0].Input;
+        var fenceAt = told.IndexOf("\nBEGIN SITE-", StringComparison.Ordinal);                           // (the first lines mention the word too)
+        Assert.Contains("The website hoped you could look at pictures, and you cannot here", told[..fenceAt], StringComparison.Ordinal);
+        Assert.Contains("say plainly in your answer what you could not do", told[..fenceAt], StringComparison.Ordinal);
+        Assert.DoesNotContain("hoped", told[fenceAt..], StringComparison.Ordinal);                     // never inside what the site wrote
+        Assert.DoesNotContain("hoped", runner.Runs[1].Input, StringComparison.Ordinal);                  // and not at all when there is nothing to say
+    }
+
+    [Fact]
     public async Task TheAgentStartsInAFolderOfTheWalletsOwn()
     {
         var runner = new FakeRunner(_ => new AgentRunResult(0, Json, ""));
@@ -578,6 +595,72 @@ public class AgentEngineTests
         Assert.Single(_guard.Requests);
     }
 
+    // ------------------------------------------------------------------ what the site hoped the agent could do
+
+    const string Hopes = "{\"count\":1,\"require\":[\"agent/*\"],\"abilities\":[\"web.search\",\"web.read\",\"image.read\",\"x-thing\"]}";
+
+    [Fact]
+    public async Task TheGrantTellsWhichOfTheAbilitiesTheSiteHopedForTheAgentHasAndOnlyForWordsTheWalletKnows()
+    {
+        var granted = await RequestAsync(Manifest(models: Hopes));
+
+        var entry = Assert.Single(granted!["models"]!["text.generate"]!.AsArray())!.AsObject();
+        Assert.Equal("agent", entry["kind"]!.GetValue<string>());
+        Assert.Equal("{\"web.search\":true,\"web.read\":true,\"image.read\":false}", entry["abilities"]!.ToJsonString());     // x-thing is neither had nor lacked
+    }
+
+    [Fact]
+    public async Task WhatTheAgentLacksIsToldToTheAgentAndToTheSiteInTheResult()
+    {
+        var grant = await GrantAsync(Manifest(models: Hopes));
+
+        var result = Assert.IsType<JsonObject>(await _engine.HandleAsync(Call(grant)));
+
+        Assert.True(Ok(result));
+        Assert.Equal(["image.read"], result["lacks"]!.AsArray().Select(a => a!.GetValue<string>()));       // only abilities the site asked about
+        Assert.Equal(["image.read"], _agent.LastRequest!.Lacks);                                            // and the agent's request says so
+
+        // An agent that lacks nothing the site hoped for says nothing; so does a site that hoped for nothing.
+        var calm = await GrantAsync(Manifest(models: "{\"count\":1,\"require\":[\"agent/*\"],\"abilities\":[\"web.search\"]}"));
+        _agent.Answers = new Queue<string>(["the agent found more news"]);
+        var plain = Assert.IsType<JsonObject>(await _engine.HandleAsync(Call(calm)));
+        Assert.True(Ok(plain));
+        Assert.False(plain.ContainsKey("lacks"));
+        Assert.Null(_agent.LastRequest!.Lacks);
+    }
+
+    [Fact]
+    public async Task AnAnswerOfAModelNeverCarriesWhatAnAgentLacks()
+    {
+        _ui.Consent = new ConsentAnswer(true, 0.05m, false, [], new Dictionary<string, IReadOnlyList<string>> { ["text.generate"] = ["lm:gemma"] });
+        var grant = await GrantAsync(Manifest(models: "{\"count\":1,\"recommend\":[\"agent/*\"],\"abilities\":[\"image.read\"]}"));
+
+        var result = Assert.IsType<JsonObject>(await _engine.HandleAsync(Call(grant)));
+
+        Assert.True(Ok(result));
+        Assert.False(result.ContainsKey("lacks"));
+    }
+
+    [Fact]
+    public async Task AnAgentThatLacksAnAbilityIsStillOfferedAndTickableAndNeverTickedByTheWallet()
+    {
+        // The site asks for the visitor's agent and for what an agent cannot do: soft by default, so the agent is in the list, marked, and the visitor may tick it.
+        _ui.Consent = new ConsentAnswer(true, 0.05m, false, [], new Dictionary<string, IReadOnlyList<string>> { ["text.generate"] = ["agent:fake"] });
+        var granted = await RequestAsync(Manifest(models: "{\"count\":1,\"kind\":\"agent\",\"needs\":{\"input\":[\"text\",\"image\"]},\"abilities\":[\"image.read\"]}"));
+
+        var section = Assert.IsType<ModelSection>(Assert.Single(_ui.Consents).Rows.Single().Models);
+        var choice = section.Choices.Single(c => c.Key == "agent:fake");
+        Assert.Equal(FitState.Mismatch, choice.Fit);
+        Assert.Equal(["cannot read pictures"], choice.Marks);
+        Assert.False(choice.Checked);                                                   // shown with the mismatch, never ticked by the wallet
+        Assert.DoesNotContain(section.Choices, c => c.Key == "lm:gemma");              // kind agent: the model is left out
+        Assert.Contains(section.Misses, m => m.Why.Contains("asks for your agent", StringComparison.Ordinal));
+        Assert.True(granted is not null, string.Join(" | ", _log.Recent().Select(e => e.Outcome + ": " + e.Note)));
+        var entry = Assert.Single(granted!["models"]!["text.generate"]!.AsArray())!.AsObject();       // and the one he ticked is what the site is given
+        Assert.Equal("agent", entry["kind"]!.GetValue<string>());
+        Assert.Equal("{\"input\":false}", entry["can"]!.ToJsonString());
+    }
+
     [Fact]
     public async Task ARequestTheVisitorRefusesNeverReachesTheAgentOrAnyOtherSource()
     {
@@ -589,6 +672,7 @@ public class AgentEngineTests
         var result = await _engine.HandleAsync(Call(grant, model: null));            // the site named no model: in the visitor's order
 
         Assert.False(Ok(result));
+        Assert.Equal("failed", result!["reason"]!.GetValue<string>());             // what the visitor refused is not told to the site as a refusal
         Assert.Equal(0, _agent.Calls);
         Assert.Equal(0, _model.Calls);                                  // a refused request is not handed to the next source
         var entry = LastCall();

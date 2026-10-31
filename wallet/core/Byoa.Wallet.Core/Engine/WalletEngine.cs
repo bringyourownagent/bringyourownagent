@@ -209,7 +209,7 @@ public sealed partial class WalletEngine
         }
         catch (OperationCanceledException)
         {
-            return Wire.Fallback(type);
+            return Wire.Fallback(type, CallReason.Cancelled);          // the site sent cancel, or its connection went
         }
         catch (Exception e)
         {
@@ -1480,11 +1480,11 @@ public sealed partial class WalletEngine
         }
 
         if (messages.Count == 0) return Failed(entry, "invalid", "no messages in the input");
-        if (messages.Count > MaxMessages) return Failed(entry, "invalid", "too many messages: the wallet takes at most " + MaxMessages);
+        if (messages.Count > MaxMessages) return Failed(entry, "invalid", "too many messages: the wallet takes at most " + MaxMessages, reason: CallReason.Limit);
         var chars = messages.Sum(m => m.Content.Length);
         if (chars == 0) return Failed(entry, "invalid", "the messages are empty");
         var textLimits = session.Limits ?? TextLimits.Defaults;
-        if (chars > textLimits.InputChars) return Failed(entry, "invalid", "text too long for the wallet: at most " + textLimits.InputChars + " characters");
+        if (chars > textLimits.InputChars) return Failed(entry, "invalid", "text too long for the wallet: at most " + textLimits.InputChars + " characters", reason: CallReason.Limit);
 
         var parameters = payload["params"] as JsonObject ?? new JsonObject();
         var maxTokens = Math.Clamp(Int(parameters["maxTokens"]) ?? Math.Min(DefaultMaxTokens, textLimits.AnswerTokens), 1, textLimits.AnswerTokens);
@@ -1559,8 +1559,11 @@ public sealed partial class WalletEngine
 
         try
         {
-            return await RouteTextAsync(entry, session, site, messages, chars, maxTokens, temperature, language, choices,
+            var answer = await RouteTextAsync(entry, session, site, messages, chars, maxTokens, temperature, language, choices,
                 limits.CallsPerDay, limits.SitePerDay, limits.WalletPerDay, hold, started, ct, chainOverride, sourceOverride, named, refOf, onChunk, thinking).ConfigureAwait(false);
+            // A cancel that arrived as the route ended is a cancel, not a failure of the route (the site is told so).
+            if (ct.IsCancellationRequested && answer["ok"]?.GetValue<bool>() != true) ct.ThrowIfCancellationRequested();
+            return answer;
         }
         finally
         {
@@ -1594,7 +1597,9 @@ public sealed partial class WalletEngine
         foreach (var k in plan.Skipped.Where(k => k.Why == "turned off")) route.Add(Index(k.Source), k.Source.Name + ": turned off");
 
         // What the gate sees: every character the wallet sends the provider, an added instruction included.
-        var request = new TextRequest(messages, maxTokens, temperature, language, choices, thinking);
+        // What the site hoped its agent could do and the agent cannot: the agent is told, and the answer says (PROPOSAL-v2 3.4).
+        var lacks = AgentProfile.Lacks(session.Manifest.Skill(Vocabulary.Generate)?.Models?.Abilities ?? []);
+        var request = new TextRequest(messages, maxTokens, temperature, language, choices, thinking, Lacks: lacks.Count > 0 ? lacks : null);
         var textChars = chars + (choices is null ? 0 : Texts.ChoicesInstruction(choices).Length);
         var choiceMiss = false;
         string? stopReason = null;
@@ -1771,12 +1776,15 @@ public sealed partial class WalletEngine
                     ["provider"] = ProviderReceipt(source),
                 };
                 if (refOf?.Invoke(source) is { } modelRef) receipt["model"] = modelRef;
-                return new JsonObject
+                var answered = new JsonObject
                 {
                     ["ok"] = true,
                     ["output"] = new JsonObject { ["text"] = text },
                     ["receipt"] = receipt,
                 };
+                // Only the abilities the site asked about, and only when its agent answered: the site learns what it already hoped for.
+                if (source is IAgentTextSource && lacks.Count > 0) answered["lacks"] = new JsonArray(lacks.Select(a => (JsonNode)JsonValue.Create(a)!).ToArray());
+                return answered;
             }
             finally
             {
@@ -1786,13 +1794,16 @@ public sealed partial class WalletEngine
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
-            stopReason ??= "text route timed out";
+            // (the route's own time ran out; the caller did not cancel)
         }
 
+        // The call's own time (its maxCallSeconds) was used up: the site is told "timeout", and every slot the call held is free again.
+        var timedOut = routeBudget > TimeSpan.Zero && ((routeCt.IsCancellationRequested && !ct.IsCancellationRequested) || Remaining(routeDeadline) <= TimeSpan.Zero);
+        if (timedOut) stopReason = "text route timed out";
         entry.Milliseconds = (int)Stopwatch.GetElapsedTime(started).TotalMilliseconds;
         entry.Cost = Money.ToSpec(totalCost);
         return stopReason is not null
-            ? Failed(entry, "limit", stopReason, route.All())
+            ? Failed(entry, "limit", stopReason, route.All(), timedOut ? CallReason.Timeout : null)
             : Failed(entry, "failed",
                 plan.Steps.Count == 0 ? "no source can do text.generate" : choiceMiss ? "no source answered with one of the choices" : "no source answered",
                 route.All());
@@ -2068,8 +2079,7 @@ public sealed partial class WalletEngine
 
     /// <summary>The request again, with the choices spelled out as a last instruction.</summary>
     static TextRequest RetryRequest(TextRequest request, IReadOnlyList<string> choices) =>
-        new([.. request.Messages, new ChatMessage("system", Texts.ChoicesInstruction(choices))],
-            request.MaxTokens, request.Temperature, request.Language, request.Choices, request.Thinking, request.ThinkingBudget);
+        request with { Messages = [.. request.Messages, new ChatMessage("system", Texts.ChoicesInstruction(choices))] };
 
     /// <summary>What the page said about thinking: only an explicit "no" (<c>false</c>, or "off" / "no" / "none" / "false") turns it off.</summary>
     static bool ThinkingWanted(JsonNode? node)
@@ -2644,13 +2654,18 @@ public sealed partial class WalletEngine
         return result;
     }
 
-    JsonNode Failed(ActivityEntry entry, string outcome, string note, IReadOnlyList<string>? route = null)
+    /// <summary>
+    /// A call that did not succeed: logged, and answered <c>{ ok: false, reason }</c>. The reason is coarse and from a closed list (<see cref="CallReason"/>):
+    /// a limit when the outcome is one, whatever <paramref name="reason"/> does not say otherwise, and "failed" for everything else, so that nothing
+    /// about the visitor's setup (no model, a refusal, a provider) reaches the site.
+    /// </summary>
+    JsonNode Failed(ActivityEntry entry, string outcome, string note, IReadOnlyList<string>? route = null, string? reason = null)
     {
         entry.Outcome = outcome;
         entry.Note = note;
         if (route is { Count: > 0 }) entry.Fallback = string.Join(" → ", route);
         Log(entry);
-        return new JsonObject { ["ok"] = false };
+        return Wire.Failure(reason ?? (outcome == "limit" ? CallReason.Limit : CallReason.Failed));
     }
 
     void Log(ActivityEntry entry)

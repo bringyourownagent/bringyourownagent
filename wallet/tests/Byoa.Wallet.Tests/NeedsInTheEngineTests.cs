@@ -278,4 +278,141 @@ public class NeedsInTheEngineTests
         Assert.False(Ok(await _engine.HandleAsync(Call(grant, "m1"))));
         Assert.Equal(1, _pic.Calls);
     }
+
+    // ------------------------------------------------------------------ what the window and the Sites page can say
+
+    [Fact]
+    public async Task TheNamesTheSiteLikesThatNothingOfTheVisitorsAnswersToAreExamplesAndTheOnesHeHasOrWasDroppedAreNot()
+    {
+        // gpt-5-mini is his (ticked or not), gemini-image is his but left out for text, the others are nothing of his.
+        await RequestAsync(Manifest("{\"count\":1,\"recommend\":[\"openai/gpt-5-mini\",\"google/gemini-3.1-flash-image\",\"anthropic/claude-sonnet-5.5\",\"x-ai/grok-*\"]}"));
+        var section = LastSection();
+        Assert.Equal(["anthropic/claude-sonnet-5.5", "x-ai/grok-*"], section.ExampleNames);
+        Assert.Single(section.Misses);
+    }
+
+    [Fact]
+    public async Task TheSitesPageIsToldWhatIsAmissWithTheModelsASiteWasGiven()
+    {
+        _ui.Consent = new ConsentAnswer(true, 0.05m, false, [], new Dictionary<string, IReadOnlyList<string>>
+        {
+            ["text.generate"] = ["openrouter:openai/gpt-5-mini", "lm:gemma"],
+        });
+        await RequestAsync(Manifest("{\"count\":{\"min\":1,\"max\":2},\"needs\":{\"input\":[\"text\",\"image\"]},\"onMismatch\":\"show\"}"));
+        Assert.Equal(["lm:gemma"], _engine.SiteModelNotes(Site).Keys);                            // gemma's input is not known; gpt-5-mini reads pictures
+        Assert.Equal("not known: what it reads", _engine.SiteModelNotes(Site)["lm:gemma"]);
+
+        _store.Update(s => s.Source("openrouter:openai/gpt-5-mini").Inputs = ["text"]);
+        Assert.Equal("cannot read pictures", _engine.SiteModelNotes(Site)["openrouter:openai/gpt-5-mini"]);       // shown to the site, with the mismatch
+
+        _store.Update(s => s.Source("openrouter:openai/gpt-5-mini").Inputs = null);
+        _store.Update(s => s.Source("openrouter:google/gemini-3.1-flash-image").AlsoText = true);
+        _engine.SetSiteModels(Site, Vocabulary.Generate, ["openrouter:google/gemini-3.1-flash-image"]);
+        _store.Update(s => s.Source("openrouter:google/gemini-3.1-flash-image").AlsoText = false);
+        Assert.StartsWith("not given to the site: draws pictures", _engine.SiteModelNotes(Site)["openrouter:google/gemini-3.1-flash-image"]);
+    }
+
+    [Fact]
+    public void WhatTheWalletKnowsOfASourceIsAskedOfTheEngine()
+    {
+        var facts = _engine.FactsOfSource("openrouter:openai/gpt-5-mini")!;
+        Assert.Equal(["text", "image"], facts.Input);
+        Assert.Equal(400, facts.ContextThousands);
+        Assert.Equal("api-key", facts.Runs);
+        Assert.Null(_engine.FactsOfSource("lm:gemma")!.Input);                                  // a local copy is not looked up in the list
+        Assert.Equal("local", _engine.FactsOfSource("lm:gemma")!.Runs);
+        Assert.Null(_engine.FactsOfSource("no:such"));
+    }
+
+    // ------------------------------------------------------------------ what the site is told
+
+    [Fact]
+    public async Task TheGrantTellsEachModelTheVerdictsOnTheConditionsTheSiteAskedAboutAndNeverAValue()
+    {
+        _ui.Consent = new ConsentAnswer(true, 0.05m, false, [], new Dictionary<string, IReadOnlyList<string>>
+        {
+            ["text.generate"] = ["openrouter:openai/gpt-5-mini", "lm:gemma"],
+        });
+        var granted = await RequestAsync(Manifest("{\"count\":{\"min\":1,\"max\":2},\"names\":true,\"kind\":\"any\",\"onMismatch\":\"show\","
+            + "\"needs\":{\"input\":[\"text\",\"image\"],\"output\":[\"text\"],\"context\":64,\"runs\":[\"api-key\"]}}"));
+        Assert.Equal(["needs", "can", "kind", "cancel"], granted!["capabilities"]!.AsArray().Select(c => c!.GetValue<string>()));
+        var list = granted["models"]!["text.generate"]!.AsArray();
+        Assert.Equal("{\"input\":true,\"output\":true,\"context\":true,\"runs\":true}", list[0]!["can"]!.ToJsonString());
+        // A local model: what it reads, what it makes and how much it reads are not known, so the keys are not there; where it runs is known, and is not what was asked.
+        Assert.Equal("{\"runs\":false}", list[1]!["can"]!.ToJsonString());
+        foreach (var entry in list)
+        {
+            var can = entry!["can"]!.AsObject();
+            Assert.True(can.Count <= 4);
+            Assert.All(can, pair => Assert.True(pair.Value is JsonValue v && v.TryGetValue<bool>(out _)));          // verdicts, never a number or a word
+        }
+    }
+
+    [Fact]
+    public async Task ASiteThatAskedNothingAboutPropertiesIsToldNothingButTheFeaturesOfTheWallet()
+    {
+        var granted = await RequestAsync(Manifest("{\"count\":1,\"names\":true}"));
+        Assert.Equal(["needs", "can", "kind", "cancel"], granted!["capabilities"]!.AsArray().Select(c => c!.GetValue<string>()));
+        var entry = granted["models"]!["text.generate"]![0]!.AsObject();
+        Assert.False(entry.ContainsKey("can"));
+        Assert.False(entry.ContainsKey("abilities"));
+    }
+
+    [Fact]
+    public async Task ASiteWithNoModelsBlockStillLearnsTheFeaturesOfTheWallet()
+    {
+        var granted = await RequestAsync(Manifest(null));
+        Assert.Equal(["needs", "can", "kind", "cancel"], granted!["capabilities"]!.AsArray().Select(c => c!.GetValue<string>()));
+        Assert.Null(granted["models"]);
+    }
+
+    [Fact]
+    public async Task EveryNoOfACallCarriesOneOfTheCoarseReasonsAndNeverTheVisitorsSetup()
+    {
+        _ui.Consent = new ConsentAnswer(true, 0.05m, false, [], new Dictionary<string, IReadOnlyList<string>> { ["text.generate"] = ["lm:gemma"] });
+        var granted = await RequestAsync(Manifest("{\"count\":1,\"names\":true}"));
+        var grant = granted!["grantId"]!.GetValue<string>();
+        static string? Reason(JsonNode? result) => result is JsonObject { } o && o["ok"]?.GetValue<bool>() == false ? o["reason"]?.GetValue<string>() : "ok";
+
+        _gemma.Fail = true;
+        Assert.Equal("failed", Reason(await _engine.HandleAsync(Call(grant, "m1"))));            // the model could not answer: the site is not told so
+        _gemma.Fail = false;
+        Assert.Equal("failed", Reason(await _engine.HandleAsync(Call(grant, "m9"))));            // no such model
+        Assert.Equal("failed", Reason(await _engine.HandleAsync(new WireMessage(3, Wire.Call, Site, false, new JsonObject { ["grantId"] = grant, ["skill"] = "audio.transcribe" }))));
+        Assert.Equal("failed", Reason(await _engine.HandleAsync(new WireMessage(4, Wire.Call, Site, false, new JsonObject { ["grantId"] = "no-such-grant", ["skill"] = "text.generate" }))));
+        Assert.Equal("ok", Reason(await _engine.HandleAsync(Call(grant, "m1"))));
+
+        using var cancelled = new CancellationTokenSource();
+        cancelled.Cancel();
+        Assert.Equal("cancelled", Reason(await _engine.HandleAsync(Call(grant, "m1"), cancelled.Token)));
+    }
+
+    [Fact]
+    public async Task ATextOverTheSitesOwnLimitAndACallOverTheRateAreLimits()
+    {
+        var manifest = "{\"byoa\":\"0.1-draft\",\"purpose\":{\"summary\":\"Icon designer\",\"limits\":{\"maxTextChars\":30,\"maxCallsPerMinute\":2}},"
+            + "\"skills\":{\"text.generate\":{\"required\":true,\"models\":{\"count\":1}}},\"privacy\":\"personal\",\"expectedCost\":{\"perSession\":\"0.05 USD\"}}";
+        _ui.Consent = new ConsentAnswer(true, 0.05m, false, [], new Dictionary<string, IReadOnlyList<string>> { ["text.generate"] = ["lm:gemma"] });
+        var granted = await RequestAsync(manifest);
+        var grant = granted!["grantId"]!.GetValue<string>();
+
+        var tooLong = Assert.IsType<JsonObject>(await _engine.HandleAsync(Call(grant, "m1", new string('x', 31))));
+        Assert.False(Ok(tooLong));
+        Assert.Equal("limit", tooLong["reason"]!.GetValue<string>());
+
+        Assert.True(Ok(await _engine.HandleAsync(Call(grant, "m1", "one"))));
+        Assert.True(Ok(await _engine.HandleAsync(Call(grant, "m1", "two"))));
+        var third = Assert.IsType<JsonObject>(await _engine.HandleAsync(Call(grant, "m1", "three")));
+        Assert.False(Ok(third));
+        Assert.Equal("limit", third["reason"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public void TheWireFallbackAnswersACallWithAReasonAndARequestWithNothing()
+    {
+        Assert.Equal("{\"ok\":false,\"reason\":\"failed\"}", Wire.Fallback(Wire.Call)!.ToJsonString());
+        Assert.Equal("{\"ok\":false,\"reason\":\"cancelled\"}", Wire.Fallback(Wire.Call, CallReason.Cancelled)!.ToJsonString());
+        Assert.Null(Wire.Fallback(Wire.Request));
+        Assert.Equal(["timeout", "cancelled", "limit", "failed"], new[] { CallReason.Timeout, CallReason.Cancelled, CallReason.Limit, CallReason.Failed });
+    }
 }

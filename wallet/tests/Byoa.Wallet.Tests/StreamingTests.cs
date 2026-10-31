@@ -149,6 +149,120 @@ public class StreamedSourceTests
     }
 }
 
+/// <summary>A stream that never ends: a provider that has said all it will say and keeps the connection open (the hang of a call to a model that draws pictures).</summary>
+public class StreamThatDoesNotEndTests
+{
+    /// <summary>Gives the bytes it was made with, then waits until it is cancelled.</summary>
+    sealed class HangingStream(string beginning) : Stream
+    {
+        readonly byte[] _bytes = Encoding.UTF8.GetBytes(beginning);
+        int _at;
+
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override void Flush() { }
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            if (_at < _bytes.Length)
+            {
+                var n = Math.Min(buffer.Length, _bytes.Length - _at);
+                _bytes.AsMemory(_at, n).CopyTo(buffer);
+                _at += n;
+                return n;
+            }
+
+            await Task.Delay(Timeout.Infinite, cancellationToken).ConfigureAwait(false);
+            return 0;
+        }
+    }
+
+    sealed class StubHandler(Func<HttpResponseMessage> reply) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) => Task.FromResult(reply());
+    }
+
+    static HttpResponseMessage Hanging(string beginning) => new(System.Net.HttpStatusCode.OK) { Content = new StreamContent(new HangingStream(beginning)) };
+
+    const string Alice = "data: {\"choices\":[{\"delta\":{\"content\":\"Alice\"}}]}\n\ndata: {\"choices\":[{\"delta\":{\"content\":\" wins\"}}]}\n\n";
+    const string Finished = "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n";
+
+    static async Task<(T Result, TimeSpan Took)> TimedAsync<T>(Func<Task<T>> work, TimeSpan idle, TimeSpan grace)
+    {
+        var (oldIdle, oldGrace) = (ChatStream.IdleTimeout, ChatStream.FinishGrace);
+        ChatStream.IdleTimeout = idle;
+        ChatStream.FinishGrace = grace;
+        try
+        {
+            var started = System.Diagnostics.Stopwatch.GetTimestamp();
+            var result = await work().WaitAsync(TimeSpan.FromSeconds(20));
+            return (result, System.Diagnostics.Stopwatch.GetElapsedTime(started));
+        }
+        finally
+        {
+            (ChatStream.IdleTimeout, ChatStream.FinishGrace) = (oldIdle, oldGrace);
+        }
+    }
+
+    [Fact]
+    public async Task AStreamThatSaidItWasFinishedButNeverClosesEndsAfterAShortGraceWithTheAnswer()
+    {
+        using var response = Hanging(Alice + Finished);
+        var pieces = new List<string>();
+        var (read, took) = await TimedAsync(() => ChatStream.ReadAsync(response, pieces.Add, default), idle: TimeSpan.FromSeconds(15), grace: TimeSpan.FromMilliseconds(150));
+        Assert.Equal("Alice wins", read.Text);
+        Assert.Equal("stop", read.Finish);
+        Assert.Equal("Alice wins", string.Concat(pieces));
+        Assert.True(took < TimeSpan.FromSeconds(5), "the read waited for the idle timeout instead of the grace: " + took);        // not 15 s
+    }
+
+    [Fact]
+    public async Task AStreamThatGoesSilentBeforeItFinishesEndsAfterTheIdleTimeoutWithWhatCame()
+    {
+        using var response = Hanging(Alice);
+        var (read, took) = await TimedAsync(() => ChatStream.ReadAsync(response, null, default), idle: TimeSpan.FromMilliseconds(300), grace: TimeSpan.FromSeconds(15));
+        Assert.Equal("Alice wins", read.Text);
+        Assert.Null(read.Finish);
+        Assert.True(took >= TimeSpan.FromMilliseconds(250), "ended before the idle timeout: " + took);
+    }
+
+    [Fact]
+    public async Task AStreamThatSaysNothingAtAllEndsEmptyAndTheSourceFailsTheCallInsteadOfHanging()
+    {
+        var (read, _) = await TimedAsync(() => ChatStream.ReadAsync(Hanging(""), null, default), idle: TimeSpan.FromMilliseconds(200), grace: TimeSpan.FromSeconds(15));
+        Assert.Equal("", read.Text);
+
+        var old = ChatStream.IdleTimeout;
+        ChatStream.IdleTimeout = TimeSpan.FromMilliseconds(200);
+        try
+        {
+            using var http = new HttpClient(new StubHandler(() => Hanging(": OPENROUTER PROCESSING\n\n")));
+            var source = new OpenRouterTextSource("google/gemini-3.1-flash-image", null, null, http, () => "sk-test", () => true, new Uri("http://127.0.0.1:9/"));
+            var failure = await Assert.ThrowsAsync<TextSourceException>(() => source.GenerateStreamAsync(new TextRequest([new ChatMessage("user", "Draw")], 100, 0.7, null, null), _ => { }, default).WaitAsync(TimeSpan.FromSeconds(20)));
+            Assert.Contains("answered nothing", failure.Message);                 // the engine turns that into ok:false and the next source is tried
+        }
+        finally
+        {
+            ChatStream.IdleTimeout = old;
+        }
+    }
+
+    [Fact]
+    public async Task TheCallersOwnCancelStillEndsTheReadWithACancel()
+    {
+        using var response = Hanging(Alice);
+        using var cancel = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => TimedAsync(() => ChatStream.ReadAsync(response, null, cancel.Token), idle: TimeSpan.FromSeconds(15), grace: TimeSpan.FromSeconds(15)));
+    }
+}
+
 /// <summary>A site's call that asks to stream: pieces first, the whole answer after, and the models and limits that travel with the grant.</summary>
 public class StreamingDirectTests : IDisposable
 {
@@ -294,7 +408,95 @@ public class StreamingDirectTests : IDisposable
         var refused = await TestSite.ReceiveAsync(socket);                       // the third, at once: the site said two
         Assert.Equal(3, refused["id"]!.GetValue<int>());
         Assert.False(refused["ok"]!.GetValue<bool>());
+        Assert.Equal("limit", refused["reason"]!.GetValue<string>());
         _alpha.Hold.SetResult();
         for (var i = 0; i < 2; i++) Assert.True((await TestSite.ReceiveAsync(socket))["ok"]!.GetValue<bool>());
+    }
+
+    [Fact]
+    public async Task TheHelloAndEveryGrantFrameNameTheFeaturesOfTheWallet()
+    {
+        var (_, socket, hello) = await PairAsync();
+        // The closed list of PROPOSAL-v2 3.5, and only what this release does (no pictures yet): a site never guesses a feature from a missing key.
+        Assert.Equal(["needs", "can", "kind", "cancel"], hello["grant"]!["capabilities"]!.AsArray().Select(c => c!.GetValue<string>()));
+        _engine.SetSiteModels(_site.Origin, Vocabulary.Generate, ["lm:beta"]);
+        var frame = await TestSite.ReceiveAsync(socket);
+        Assert.Equal("grant", frame["type"]!.GetValue<string>());
+        Assert.Equal(["needs", "can", "kind", "cancel"], frame["capabilities"]!.AsArray().Select(c => c!.GetValue<string>()));
+    }
+
+    [Fact]
+    public async Task ACancelFrameStopsTheCallAnswersItNotOkWithTheReasonCancelledAndFreesTheSlot()
+    {
+        var (_, socket, _) = await PairAsync();
+        _alpha.Hold = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await TestSite.SendAsync(socket, Call(5, "m1", stream: false));
+        while (_alpha.Calls == 0) await Task.Delay(10);
+
+        await TestSite.SendAsync(socket, new JsonObject { ["type"] = "cancel", ["id"] = 5 });
+        var result = await TestSite.ReceiveAsync(socket);
+        Assert.Equal("{\"type\":\"result\",\"id\":5,\"ok\":false,\"reason\":\"cancelled\"}", result.ToJsonString());
+
+        // The call is over and the model is free: the next call is answered at once, and the connection is still the same one.
+        _alpha.Hold = null;
+        await TestSite.SendAsync(socket, Call(6, "m1", stream: false));
+        var next = await TestSite.ReceiveAsync(socket);
+        Assert.Equal(6, next["id"]!.GetValue<int>());
+        Assert.True(next["ok"]!.GetValue<bool>());
+    }
+
+    [Fact]
+    public async Task ACancelForACallThatIsNotRunningIsIgnored()
+    {
+        var (_, socket, _) = await PairAsync();
+        await TestSite.SendAsync(socket, new JsonObject { ["type"] = "cancel", ["id"] = 99 });                 // never sent
+        await TestSite.SendAsync(socket, new JsonObject { ["type"] = "cancel", ["id"] = "not-a-call" });
+        await TestSite.SendAsync(socket, new JsonObject { ["type"] = "cancel" });                              // no id at all
+        await TestSite.SendAsync(socket, Call(1, "m1", stream: false));
+        var first = await TestSite.ReceiveAsync(socket);
+        Assert.Equal(1, first["id"]!.GetValue<int>());                                                        // nothing came back for the cancels
+        Assert.True(first["ok"]!.GetValue<bool>());
+        await TestSite.SendAsync(socket, new JsonObject { ["type"] = "cancel", ["id"] = 1 });                  // finished already
+        await TestSite.SendAsync(socket, Call(2, "m1", stream: false));
+        Assert.Equal(2, (await TestSite.ReceiveAsync(socket))["id"]!.GetValue<int>());
+    }
+
+    [Fact]
+    public async Task ACancelOnlyStopsTheCallItNames()
+    {
+        var (_, socket, _) = await PairAsync();
+        _alpha.Hold = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await TestSite.SendAsync(socket, Call(1, "m1", stream: false));
+        while (_alpha.Calls == 0) await Task.Delay(10);
+        await TestSite.SendAsync(socket, Call(2, "m2", stream: false));
+        Assert.Equal(2, (await TestSite.ReceiveAsync(socket))["id"]!.GetValue<int>());                         // the other model answers while the first is held
+
+        await TestSite.SendAsync(socket, new JsonObject { ["type"] = "cancel", ["id"] = 1 });
+        var cancelled = await TestSite.ReceiveAsync(socket);
+        Assert.Equal((1, "cancelled"), (cancelled["id"]!.GetValue<int>(), cancelled["reason"]!.GetValue<string>()));
+    }
+
+    [Fact]
+    public async Task ACallThatRunsOutOfItsOwnTimeIsAnsweredWithTheReasonTimeoutAndItsSlotIsFreeAgain()
+    {
+        var (_, socket, _) = await PairAsync();
+        var old = WalletEngine.TextRouteTimeout;
+        WalletEngine.TextRouteTimeout = TimeSpan.FromMilliseconds(300);
+        try
+        {
+            _alpha.Hold = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            await TestSite.SendAsync(socket, Call(1, "m1", stream: false));
+            var late = await TestSite.ReceiveAsync(socket);
+            Assert.Equal("{\"type\":\"result\",\"id\":1,\"ok\":false,\"reason\":\"timeout\"}", late.ToJsonString());
+
+            _alpha.Hold = null;
+            await TestSite.SendAsync(socket, Call(2, "m1", stream: false));
+            var next = await TestSite.ReceiveAsync(socket);
+            Assert.True(next["ok"]!.GetValue<bool>());                                                        // the held call let go of the model
+        }
+        finally
+        {
+            WalletEngine.TextRouteTimeout = old;
+        }
     }
 }

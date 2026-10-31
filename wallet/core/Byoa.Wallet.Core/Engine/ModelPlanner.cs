@@ -51,7 +51,7 @@ public static class ModelPlanner
             var verdict = ModelFit.Evaluate(facts, shelf.ModelId, skill, spec);
             if (!verdict.Offered(ModelFit.DropsOnMismatch(spec, facts)))
             {
-                notFitting.Add(new ModelMiss(shelf.Name, string.Join("; ", verdict.Reasons)));
+                notFitting.Add(new ModelMiss(shelf.Name, string.Join("; ", verdict.Reasons), shelf.ModelId));
                 continue;
             }
 
@@ -85,7 +85,7 @@ public static class ModelPlanner
             var verdict = ModelFit.Evaluate(facts, ModelNames.Canon(road.Model), skill, spec);
             if (!verdict.Offered(ModelFit.DropsOnMismatch(spec, facts)))
             {
-                notFitting.Add(new ModelMiss(ModelNames.Display(road.Model), string.Join("; ", verdict.Reasons)));
+                notFitting.Add(new ModelMiss(ModelNames.Display(road.Model), string.Join("; ", verdict.Reasons), ModelNames.Canon(road.Model)));
                 continue;
             }
 
@@ -152,8 +152,8 @@ public static class ModelPlanner
         }
 
         // Too few is judged on the models the visitor could tick, not only the ones the wallet ticked: a model whose properties are not known
-        // is his to tick, and the window keeps Allow off until he has.
-        var tickable = pickedCount + entries.Count(x => !x.Picked && x.Ready && !x.Agent && !x.Fit.Fits);
+        // is his to tick, and the window keeps Allow off until he has. His agent counts when the site asks for an agent (its kind, or its name).
+        var tickable = pickedCount + entries.Count(x => !x.Picked && x.Ready && (!x.Agent || spec.Kind != RequestedModels.ModelKind || x.Role != ModelRole.Yours));
         string? shortfall = tickable < spec.Min
             ? "needs at least " + spec.Min + " different models; " + (tickable == 0 ? "none" : tickable.ToString()) + " can answer"
             : null;
@@ -166,26 +166,18 @@ public static class ModelPlanner
             .ThenBy(e => e.Rank)
             .ThenBy(e => e.Order)
             .Select(e => new ModelChoice(e.Key, e.SourceId, e.Name, e.ModelId, e.Where, e.Paid, e.Cost, e.Role, e.Picked, e.Ready, e.Note, e.Road,
-                e.Fit.State, Marks(e.Fit)))
+                e.Fit.State, ModelFit.Marks(e.Fit)))
             .ToList();
-        return new ModelSection(skill, spec, shown, missing, shortfall, notFitting);
+        // The names the site likes that nothing of the visitor's answers to (shown or left out): examples for him, with a way to add one.
+        var examples = spec.Require.SelectMany(w => w.AnyOf).Concat(spec.Recommend).Distinct(StringComparer.Ordinal)
+            .Where(name => !entries.Any(e => ModelNames.Matches(name, e.ModelId)) && !notFitting.Any(m => m.ModelId.Length > 0 && ModelNames.Matches(name, m.ModelId)))
+            .Take(MaxExamples).ToList();
+        return new ModelSection(skill, spec, shown, missing, shortfall, notFitting, examples);
     }
 
-    /// <summary>What the window says beside a model that is in the list and does not surely fit: the mismatches, or the properties that are not known.</summary>
-    static IReadOnlyList<string>? Marks(FitVerdict fit) => fit.State switch
-    {
-        FitState.Mismatch => fit.Reasons,
-        FitState.Unknown => ["not known: " + string.Join(", ", fit.UnknownProperties.Select(Property))],
-        _ => null,
-    };
+    /// <summary>How many names the window shows as examples.</summary>
+    public const int MaxExamples = 4;
 
-    static string Property(string key) => key switch
-    {
-        "input" => "what it reads",
-        "output" => "what it makes",
-        "context" => "how much it reads at once",
-        _ => key,
-    };
 
     static int RankOf(RequestedModels spec, string modelId)
     {

@@ -1124,14 +1124,14 @@ public class DirectTransportTests : IDisposable
     {
         var (_, _, socket, _) = await PairAsync(auto: false);
         await TestSite.SendAsync(socket, Call(1, "ru", seconds: 20));               // over the manifest's 15 s
-        Assert.Equal("{\"type\":\"result\",\"id\":1,\"ok\":false}", (await TestSite.ReceiveAsync(socket)).ToJsonString());
+        Assert.Equal("{\"type\":\"result\",\"id\":1,\"ok\":false,\"reason\":\"limit\"}", (await TestSite.ReceiveAsync(socket)).ToJsonString());     // a limit the site declared
         Assert.Equal(("limit", "link"), (_log.Recent()[0].Outcome, _log.Recent()[0].Via));
 
         _russian.Fail = true;
         _general.Fail = true;
         _ui.Paid = PaidAnswer.No;
         await TestSite.SendAsync(socket, Call(2, "ru"));
-        Assert.Equal("{\"type\":\"result\",\"id\":2,\"ok\":false}", (await TestSite.ReceiveAsync(socket)).ToJsonString());
+        Assert.Equal("{\"type\":\"result\",\"id\":2,\"ok\":false,\"reason\":\"failed\"}", (await TestSite.ReceiveAsync(socket)).ToJsonString());    // a refused paid fallback is not told as such
         Assert.Equal(1, _ui.PaidQuestions);                                         // asked before paying, said no
         Assert.Equal(0, _paid.Calls);
     }
@@ -1144,7 +1144,7 @@ public class DirectTransportTests : IDisposable
         _russian.Hold = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         for (var i = 1; i <= 5; i++) await TestSite.SendAsync(socket, Call(i));
         var refused = await TestSite.ReceiveAsync(socket);                          // the fifth, at once
-        Assert.Equal("{\"type\":\"result\",\"id\":5,\"ok\":false}", refused.ToJsonString());
+        Assert.Equal("{\"type\":\"result\",\"id\":5,\"ok\":false,\"reason\":\"limit\"}", refused.ToJsonString());
         _russian.Hold.SetResult();
         var ids = new List<int>();
         for (var i = 0; i < 4; i++)

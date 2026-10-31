@@ -141,6 +141,43 @@ public static class ModelFit
     static bool NamedBySite(RequestedModels spec, string modelId) =>
         spec.Require.Any(wish => wish.AnyOf.Any(name => ModelNames.Matches(name, modelId))) || spec.Recommend.Any(name => ModelNames.Matches(name, modelId));
 
+    /// <summary>
+    /// What a site asked of the models beyond their names, in short plain words, one chip each: "reads pictures", "draws pictures", "hears audio",
+    /// "context 64k+", "runs on this PC", "your own agent". Text is the skill's own word and is not repeated.
+    /// </summary>
+    public static IReadOnlyList<string> NeedsWords(RequestedModels spec)
+    {
+        var words = new List<string>();
+        if (spec.Needs is { } needs)
+        {
+            foreach (var word in needs.Input ?? []) if (word != Modalities.Text) words.Add(word == Modalities.Audio ? "hears audio" : "reads " + Plain(word));
+            foreach (var word in needs.Output ?? []) if (word != Modalities.Text) words.Add(word == Modalities.Image ? "draws pictures" : "makes " + Plain(word));
+            if (needs.ContextThousands is { } context) words.Add("context " + context + "k+");
+            if (needs.Runs is { } places) words.Add("runs on " + string.Join(" or ", places.Select(Place)));
+        }
+
+        if (spec.Kind == RequestedModels.AgentKind) words.Add("your own agent");
+        else if (spec.Kind == RequestedModels.AnyKind) words.Add("a model or your agent");
+        return words;
+    }
+
+    /// <summary>What is said beside a model that is in a list and does not surely fit: the mismatches, or the properties that are not known. Null when it fits.</summary>
+    public static IReadOnlyList<string>? Marks(FitVerdict fit) => fit.State switch
+    {
+        FitState.Mismatch => fit.Reasons,
+        FitState.Unknown => ["not known: " + string.Join(", ", fit.UnknownProperties.Select(Property))],
+        _ => null,
+    };
+
+    static string Property(string key) => key switch
+    {
+        "input" => "what it reads",
+        "output" => "what it makes",
+        "context" => "how much it reads at once",
+        "runs" => "where it runs",
+        _ => key,
+    };
+
     /// <summary>A modality or an ability the site asked about, in words for a person.</summary>
     public static string Plain(string modality) => modality switch
     {

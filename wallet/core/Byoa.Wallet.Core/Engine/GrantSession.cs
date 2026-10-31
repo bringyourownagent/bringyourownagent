@@ -29,6 +29,21 @@ public sealed class GrantSession
 {
     public static readonly TimeSpan Lifetime = TimeSpan.FromHours(12);
 
+    /// <summary>
+    /// The features of this wallet that a site may rely on (PROPOSAL-v2 3.5), from a closed list, in every grant: <c>needs</c> (the wallet checks a
+    /// site's conditions on models), <c>can</c> (it tells the site the verdicts), <c>kind</c> and <c>cancel</c> (the frame of the direct link).
+    /// A site never infers a feature from a key that is missing. Only what this release really does is listed; slice 2 adds its own.
+    /// </summary>
+    public static readonly IReadOnlyList<string> Capabilities = ["needs", "can", "kind", "cancel"];
+
+    /// <summary>The capabilities as the grant carries them.</summary>
+    public static JsonArray CapabilitiesJson()
+    {
+        var list = new JsonArray();
+        foreach (var capability in Capabilities) list.Add(capability);
+        return list;
+    }
+
     public GrantSession(string origin, RequestedManifest manifest, IReadOnlyList<string> skills, decimal budget, DateTimeOffset now)
     {
         Id = Convert.ToBase64String(RandomNumberGenerator.GetBytes(18)).Replace('+', '-').Replace('/', '_');
@@ -120,7 +135,7 @@ public sealed class GrantSession
     {
         var skills = new JsonArray();
         foreach (var s in Skills) skills.Add(s);
-        var result = new JsonObject { ["grantId"] = Id, ["skills"] = skills, ["expiresAt"] = Time(ExpiresAt) };
+        var result = new JsonObject { ["grantId"] = Id, ["skills"] = skills, ["expiresAt"] = Time(ExpiresAt), ["capabilities"] = CapabilitiesJson() };
         if (Limits is not null && Skills.Contains(Sources.Vocabulary.Generate)) result["limits"] = LimitsJson();
         if (ModelsJson() is { } models) result["models"] = models;
         return result;
@@ -142,7 +157,11 @@ public sealed class GrantSession
         };
     }
 
-    /// <summary>The models of every skill that has some, as <c>{ "text.generate": [ { ref, name, id, runs, kind } ] }</c>; null when no skill has any.</summary>
+    /// <summary>
+    /// The models of every skill that has some, as <c>{ "text.generate": [ { ref, name, id, runs, kind, can, abilities } ] }</c>; null when no skill has any.
+    /// <c>can</c> is one boolean per condition the site asked about whose property the wallet knows, <c>abilities</c> (an agent only) one per ability it asked
+    /// about that the wallet knows: verdicts and never a value, so the site learns whether and not how much (PROPOSAL-v2 3.5).
+    /// </summary>
     public JsonObject? ModelsJson()
     {
         if (Models.Count == 0 || Models.All(m => m.Value.Count == 0)) return null;
@@ -154,19 +173,31 @@ public sealed class GrantSession
             for (var i = 0; i < models.Count; i++)
             {
                 var m = models[i];
-                array.Add(new JsonObject
+                var entry = new JsonObject
                 {
                     ["ref"] = m.Ref,
                     ["name"] = ShowNames ? m.Name : "Model " + (char)('A' + i % 26) + (i >= 26 ? (i / 26 + 1).ToString(CultureInfo.InvariantCulture) : ""),
                     ["id"] = ShowNames ? m.ModelId : null,
                     ["runs"] = m.Runs,
                     ["kind"] = m.Kind,
-                });
+                };
+                if (Verdicts(m.Can) is { } can) entry["can"] = can;
+                if (Verdicts(m.Abilities) is { } abilities) entry["abilities"] = abilities;
+                array.Add(entry);
             }
 
             all[skill] = array;
         }
 
         return all;
+    }
+
+    /// <summary>The verdicts as an object of booleans; null when there are none (a key is absent when its property is not known).</summary>
+    static JsonObject? Verdicts(IReadOnlyDictionary<string, bool>? verdicts)
+    {
+        if (verdicts is not { Count: > 0 }) return null;
+        var node = new JsonObject();
+        foreach (var (key, value) in verdicts) node[key] = value;
+        return node;
     }
 }

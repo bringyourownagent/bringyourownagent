@@ -53,20 +53,24 @@ public sealed record ModelChoice(
 }
 
 /// <summary>A model of the visitor's that is not in a skill's list, and why ("draws pictures; ...", "cannot read pictures").</summary>
-public sealed record ModelMiss(string Name, string Why);
+public sealed record ModelMiss(string Name, string Why, string ModelId = "");
 
 /// <summary>What the consent window shows for the models of one skill, and what it needs back.</summary>
 /// <param name="MissingRequired">The wishes no model of the visitor's (and none behind his keys) satisfies, in words.</param>
 /// <param name="Shortfall">Set when fewer models can answer than the site needs at least ("needs at least 3 different models; 1 can answer").</param>
 /// <param name="NotFitting">The visitor's models left out of the list because they do not suit the skill or what the site asked: the window counts them and says why.</param>
+/// <param name="Examples">The names the site recommends or requires that the visitor has no model for (and that are not in his list): shown as examples, with a way to add one.</param>
 public sealed record ModelSection(
     string Skill, RequestedModels Spec, IReadOnlyList<ModelChoice> Choices, IReadOnlyList<string> MissingRequired, string? Shortfall,
-    IReadOnlyList<ModelMiss>? NotFitting = null)
+    IReadOnlyList<ModelMiss>? NotFitting = null, IReadOnlyList<string>? Examples = null)
 {
     public int Chosen => Choices.Count(c => c.Checked);
 
     /// <summary>The visitor's models that were left out, with the reasons (never null).</summary>
     public IReadOnlyList<ModelMiss> Misses => NotFitting ?? [];
+
+    /// <summary>The names to show as examples (never null).</summary>
+    public IReadOnlyList<string> ExampleNames => Examples ?? [];
 
     /// <summary>The site can be given what it needs: every required model is there and so are enough models.</summary>
     public bool CanServe => MissingRequired.Count == 0 && Shortfall is null;

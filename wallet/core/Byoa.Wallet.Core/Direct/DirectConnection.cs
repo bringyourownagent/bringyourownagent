@@ -7,6 +7,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Byoa.Wallet.Activity;
 using Byoa.Wallet.Engine;
+using Byoa.Wallet.Protocol;
 using Byoa.Wallet.Settings;
 using Byoa.Wallet.Sources;
 
@@ -91,6 +92,9 @@ public sealed class DirectConnection
     string? _stopReason;
     bool _toldFailure;
     int _inFlight;
+
+    // The calls in flight on this connection by the id the site gave them, so that its `cancel` frame can reach one.
+    readonly System.Collections.Concurrent.ConcurrentDictionary<string, CancellationTokenSource> _running = new(StringComparer.Ordinal);
 
     /// <param name="manifest">The manifest as base64url: the link's, or the one stored with the pairing.</param>
     internal DirectConnection(DirectTransport owner, string origin, Uri endpoint, string manifest, string? session, string? token, GrantSession? grant)
@@ -435,6 +439,9 @@ public sealed class DirectConnection
                     case "call":
                         OnCall(ws, frame, calls.Token);
                         break;
+                    case "cancel":
+                        OnCancel(frame);
+                        break;
                     case "bye":
                         Record("closed", "the site said bye");
                         await CloseAsync(ws, WebSocketCloseStatus.NormalClosure).ConfigureAwait(false);
@@ -478,7 +485,7 @@ public sealed class DirectConnection
                 Origin = Origin, Kind = "call", Via = WalletEngine.ViaLink, Skill = Str(frame["skill"]), Outcome = "limit",
                 Note = "more than " + most + " calls at once on the connection",
             });
-            _ = SendQuietAsync(ws, Result(id, new JsonObject { ["ok"] = false }));
+            _ = SendQuietAsync(ws, Result(id, Wire.Failure(CallReason.Limit)));
             return;
         }
 
@@ -490,21 +497,42 @@ public sealed class DirectConnection
             ["params"] = frame["params"]?.DeepClone(),
         };
         var answerId = id.DeepClone();
+        // The call has a token of its own that the site's `cancel` frame cancels. (Two calls in flight under one id cannot be told apart: only
+        // the first can be cancelled.)
+        var running = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var key = id.ToJsonString();
+        var cancellable = _running.TryAdd(key, running);
         // A call that asks to stream gets the answer's pieces in chunk frames as they arrive, and the whole answer in the result after them.
         ChunkPump? pump = frame["params"]?["stream"] is JsonValue stream && stream.TryGetValue<bool>(out var wanted) && wanted ? new ChunkPump(this, ws, answerId) : null;
         _ = Task.Run(async () =>
         {
             try
             {
-                var result = await _owner.Engine.CallViaLinkAsync(Origin, payload, ct, pump is null ? null : pump.Add).ConfigureAwait(false) as JsonObject ?? new JsonObject { ["ok"] = false };
+                var result = await _owner.Engine.CallViaLinkAsync(Origin, payload, running.Token, pump is null ? null : pump.Add).ConfigureAwait(false) as JsonObject ?? Wire.Failure();
                 if (pump is not null) await pump.FlushAsync().ConfigureAwait(false);          // the last pieces go before the result
                 await SendQuietAsync(ws, Result(answerId, result)).ConfigureAwait(false);
             }
             finally
             {
+                if (cancellable) _running.TryRemove(key, out _);
+                running.Dispose();
                 Interlocked.Decrement(ref _inFlight);
             }
         }, CancellationToken.None);
+    }
+
+    /// <summary>The site's <c>{ "type": "cancel", "id": N }</c> (PROPOSAL-v2 3.6): the call stops (an agent's program with it) and is answered <c>ok: false</c>. An id that is not running is ignored.</summary>
+    void OnCancel(JsonObject frame)
+    {
+        if (frame["id"] is not { } id || !_running.TryGetValue(id.ToJsonString(), out var call)) return;
+        try
+        {
+            call.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+            // the call ended just now: nothing left to cancel
+        }
     }
 
     /// <summary>Gathers the pieces of a streamed answer and sends them on in order, at most one frame every 80 ms, and in frames of a sensible size.</summary>
@@ -553,7 +581,7 @@ public sealed class DirectConnection
     /// <summary>The frame that tells the site its models or limits changed: what <c>hello</c> carried, again.</summary>
     static JsonObject GrantFrame(GrantSession grant)
     {
-        var frame = new JsonObject { ["type"] = "grant" };
+        var frame = new JsonObject { ["type"] = "grant", ["capabilities"] = GrantSession.CapabilitiesJson() };
         if (grant.Limits is not null && grant.Skills.Contains(Vocabulary.Generate)) frame["limits"] = grant.LimitsJson();
         frame["models"] = grant.ModelsJson() ?? new JsonObject();
         return frame;
@@ -582,10 +610,10 @@ public sealed class DirectConnection
         };
     }
 
-    /// <summary>What the site is told about its grant: the skills and the end, and for text its limits and, if it asked for several, its models.</summary>
+    /// <summary>What the site is told about its grant: the skills and the end, the features of this wallet, and for text its limits and, if it asked for several, its models.</summary>
     static JsonObject HelloGrant(GrantSession grant, JsonArray skills)
     {
-        var node = new JsonObject { ["skills"] = skills, ["expiresAt"] = GrantSession.Time(grant.ExpiresAt) };
+        var node = new JsonObject { ["skills"] = skills, ["expiresAt"] = GrantSession.Time(grant.ExpiresAt), ["capabilities"] = GrantSession.CapabilitiesJson() };
         if (grant.Limits is not null && grant.Skills.Contains(Vocabulary.Generate)) node["limits"] = grant.LimitsJson();
         if (grant.ModelsJson() is { } models) node["models"] = models;
         return node;

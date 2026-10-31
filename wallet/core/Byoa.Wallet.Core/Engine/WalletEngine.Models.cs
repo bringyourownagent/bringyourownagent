@@ -119,6 +119,34 @@ public sealed partial class WalletEngine
         ModelFacts.Of(setting, Catalog.Find(ModelIdOf(setting)),
             source is not null ? ProviderReceipt(source) : setting.Kind is SourceKinds.OpenRouter or SourceKinds.Agent or ApiServices.Kind ? "api-key" : "local");
 
+    /// <summary>What the wallet knows of one of the visitor's sources, for the pages that show it (My models); null when there is no such source.</summary>
+    public ModelFacts? FactsOfSource(string sourceId) =>
+        _store.Read(s => s.Sources.FirstOrDefault(x => x.Id == sourceId && x.Kind is not null)) is { } setting
+            ? FactsOf(setting, _textSources.FirstOrDefault(t => t.Id == sourceId))
+            : null;
+
+    /// <summary>
+    /// For the Sites page: what is amiss with each model a site was given, by source id (a model with nothing amiss is absent). It is judged by what the
+    /// site asked when it last connected, which a live grant remembers, and by the skill's own rule when there is none.
+    /// </summary>
+    public IReadOnlyDictionary<string, string> SiteModelNotes(string origin)
+    {
+        var notes = new Dictionary<string, string>(StringComparer.Ordinal);
+        var settings = _store.Snapshot();
+        var spec = _sessions.Values.Where(s => s.Origin == origin && s.ExpiresAt > Now).Select(s => s.Manifest.Skill(Vocabulary.Generate)?.Models).FirstOrDefault(m => m is not null);
+        foreach (var id in settings.Site(origin)?.ModelsFor(Vocabulary.Generate)?.SourceIds ?? [])
+        {
+            if (settings.Sources.FirstOrDefault(s => s.Id == id && s.Kind is not null) is not { } setting) continue;
+            var facts = FactsOf(setting, _textSources.FirstOrDefault(t => t.Id == id));
+            var verdict = ModelFit.Evaluate(facts, ModelIdOf(setting), Vocabulary.Generate, spec);
+            var marks = ModelFit.Marks(verdict) ?? (verdict.State == FitState.Excluded ? verdict.Reasons : null);
+            if (marks is null) continue;
+            notes[id] = (verdict.Offered(ModelFit.DropsOnMismatch(spec, facts)) ? "" : "not given to the site: ") + string.Join("; ", marks);
+        }
+
+        return notes;
+    }
+
     /// <summary>What the wallet knows of a model it would add behind the visitor's OpenRouter key: only what the catalog says.</summary>
     ModelFacts FactsOfNew(string model) =>
         ModelFacts.Of(new SourceSetting { Kind = SourceKinds.OpenRouter, Model = model }, Catalog.Find(model), "api-key");

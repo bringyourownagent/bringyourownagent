@@ -83,6 +83,8 @@ public sealed record ChatMessage(string Role, string Content);
 /// or the visitor switched thinking off for the source. A source that cannot switch reasoning off ignores it.</param>
 /// <param name="ThinkingBudget">The most tokens the model may spend on reasoning before it must answer (the visitor's limit for the source);
 /// 0 means no limit. The answer keeps the room the page asked for in <paramref name="MaxTokens"/>. A source that cannot limit reasoning ignores it.</param>
+/// <param name="Lacks">The abilities the site hoped the visitor's agent has that it is known to lack (<c>image.read</c>...): the agent is told, in the wallet's own words
+/// and outside the site's text, to do what it can and say plainly what it could not. Only an agent reads it.</param>
 public sealed record TextRequest(
     IReadOnlyList<ChatMessage> Messages,
     int MaxTokens,
@@ -90,7 +92,8 @@ public sealed record TextRequest(
     string? Language,
     IReadOnlyList<string>? Choices,
     bool Thinking = true,
-    int ThinkingBudget = 0);
+    int ThinkingBudget = 0,
+    IReadOnlyList<string>? Lacks = null);
 
 /// <summary>The result of one text.generate call.</summary>
 /// <param name="Text">The answer only: never the model's hidden reasoning.</param>

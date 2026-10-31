@@ -11,10 +11,19 @@ internal sealed record StreamResult(string Text, string Reasoning, JsonNode? Usa
 /// <summary>
 /// Reads a chat answer that arrives as server-sent events (<c>data: {...}</c> lines, <c>[DONE]</c> at the end) and hands the text over as it comes, with
 /// the model's reasoning left out. A service that reports an error in the stream ends the read. The size of the whole answer is bounded.
+/// A read does not wait for ever (PROPOSAL-v2 3.6): once the model has said it is finished (<c>finish_reason</c> <c>stop</c> or <c>length</c>) it waits only a
+/// short grace for the rest (the usage report, <c>[DONE]</c>) and ends the read, and a stream that goes silent for too long ends the read too. The
+/// answer is what has come; if nothing has, the caller finds no answer and the call fails.
 /// </summary>
 internal static class ChatStream
 {
     public const int MaxChars = 4 * 1024 * 1024;
+
+    /// <summary>How long a stream may send nothing before the read ends (tests shorten it).</summary>
+    public static TimeSpan IdleTimeout { get; set; } = TimeSpan.FromSeconds(90);
+
+    /// <summary>How long the read waits for the end of the stream once the model said it was finished (tests shorten it).</summary>
+    public static TimeSpan FinishGrace { get; set; } = TimeSpan.FromSeconds(2);
 
     public static async Task<StreamResult> ReadAsync(HttpResponseMessage response, Action<string>? onText, CancellationToken ct)
     {
@@ -26,8 +35,21 @@ internal static class ChatStream
         JsonNode? usage = null;
         string? finish = null;
         long seen = 0;
-        while (await reader.ReadLineAsync(ct).ConfigureAwait(false) is { } line)
+        using var silence = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        while (true)
         {
+            silence.CancelAfter(finish is "stop" or "length" ? FinishGrace : IdleTimeout);
+            string? line;
+            try
+            {
+                line = await reader.ReadLineAsync(silence.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                break;                                                                          // nothing more is coming: the answer is what has come
+            }
+
+            if (line is null) break;
             seen += line.Length;
             if (seen > MaxChars) throw new HttpRequestException("the answer is longer than the wallet takes");
             if (!line.StartsWith("data:", StringComparison.Ordinal)) continue;                 // comments (": PROCESSING") and blank lines

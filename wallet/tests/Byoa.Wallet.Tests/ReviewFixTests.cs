@@ -164,7 +164,7 @@ public class ReviewFixTests
     {
         var grant = await GrantAsync();
         var result = await _engine.HandleAsync(Clips.Call(Site, grant, base64: Convert.ToBase64String(WithJunkChunk(0x7FFFFFF0u))));
-        Assert.Equal("{\"ok\":false}", result!.ToJsonString());
+        Assert.Equal("{\"ok\":false,\"reason\":\"failed\"}", result!.ToJsonString());      // (every no carries a coarse reason now)
         var entry = _log.Recent()[0];
         Assert.Equal("invalid", entry.Outcome);
         Assert.StartsWith("not a WAV clip: the JUNK chunk", entry.Note);
@@ -413,7 +413,7 @@ public class HostDisposedPipeTests
         var relay = Task.Run(() => new HostRelay(host, host, connector).RunAsync());
 
         await Framing.WriteAsync(browser, HostRelayTests.Message(5, "call"));
-        Assert.Equal("{\"id\":5,\"result\":{\"ok\":false}}", (await HostRelayTests.ReadAsync(browser)).ToJsonString());
+        Assert.Equal("{\"id\":5,\"result\":{\"ok\":false,\"reason\":\"failed\"}}", (await HostRelayTests.ReadAsync(browser)).ToJsonString());
         await Framing.WriteAsync(browser, HostRelayTests.Message(6, "request"));
         Assert.Equal("{\"id\":6,\"result\":null}", (await HostRelayTests.ReadAsync(browser)).ToJsonString());
 

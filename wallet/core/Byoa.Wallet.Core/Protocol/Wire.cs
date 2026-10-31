@@ -26,8 +26,11 @@ public static class Wire
     /// <summary>The types the native host forwards from the browser; anything else gets the fallback there.</summary>
     public static bool FromBrowser(string? type) => type is Request or Call or Release or Status or Open or Link;
 
-    /// <summary>The answer when nothing better can be given: null for a request, <c>{ ok: false }</c> for a call.</summary>
-    public static JsonNode? Fallback(string? type) => type == Call ? new JsonObject { ["ok"] = false } : null;
+    /// <summary>The answer when nothing better can be given: null for a request, <c>{ ok: false, reason }</c> for a call.</summary>
+    public static JsonNode? Fallback(string? type, string reason = CallReason.Failed) => type == Call ? Failure(reason) : null;
+
+    /// <summary>The answer to a call that did not succeed, with the coarse reason a site may be told (PROPOSAL-v2 3.6). The one place such an answer is made.</summary>
+    public static JsonObject Failure(string reason = CallReason.Failed) => new() { ["ok"] = false, ["reason"] = reason };
 
     /// <summary>The response frame for a message id.</summary>
     public static byte[] Response(JsonNode? id, JsonNode? result)
@@ -54,6 +57,25 @@ public static class Wire
             return false;
         }
     }
+}
+
+/// <summary>
+/// Why a call failed, as a site may be told: a closed list. The site learns only what it already knows (its own limits, its own cancel, the
+/// time it allowed). Never how the visitor's setup is made: no model, no refusal, no provider is named by a reason; all of those are <see cref="Failed"/>.
+/// </summary>
+public static class CallReason
+{
+    /// <summary>The call's own <c>maxCallSeconds</c> ran out.</summary>
+    public const string Timeout = "timeout";
+
+    /// <summary>The site sent <c>cancel</c>.</summary>
+    public const string Cancelled = "cancelled";
+
+    /// <summary>A limit of the site or of the wallet (calls a minute, the size of the text).</summary>
+    public const string Limit = "limit";
+
+    /// <summary>Anything else.</summary>
+    public const string Failed = "failed";
 }
 
 /// <summary>One message from the extension, as the wallet reads it.</summary>

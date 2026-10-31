@@ -151,6 +151,24 @@ public class ModelFitTests
         Assert.False(ModelFit.DropsOnMismatch(Spec("""{"count":1,"kind":"agent"}"""), agent));       // soft by default: it stays tickable
     }
 
+    [Fact]
+    public void TheNeedsOfASiteAreSaidInShortPlainWordsAndTextIsNotRepeated()
+    {
+        Assert.Empty(ModelFit.NeedsWords(Spec("""{"count":1}""")));
+        Assert.Equal(["reads pictures", "draws pictures", "context 64k+", "runs on this PC or an API key", "a model or your agent"],
+            ModelFit.NeedsWords(Spec("""{"count":1,"kind":"any","needs":{"input":["text","image"],"output":["text","image"],"context":64,"runs":["local","api-key"]}}""")));
+        Assert.Equal(["hears audio", "your own agent"], ModelFit.NeedsWords(Spec("""{"count":1,"kind":"agent","needs":{"input":["audio"],"output":["text"]}}""")));
+    }
+
+    [Fact]
+    public void WhatIsSaidBesideAModelThatDoesNotSurelyFitIsItsMismatchesOrWhatIsNotKnown()
+    {
+        var spec = """{"count":1,"needs":{"input":["image"],"context":64}}""";
+        Assert.Null(ModelFit.Marks(Evaluate(new ModelFacts(Input: TextAndImage, ContextThousands: 100), spec: spec)));
+        Assert.Equal(["cannot read pictures"], ModelFit.Marks(Evaluate(new ModelFacts(Input: Text, ContextThousands: 100), spec: spec)));
+        Assert.Equal(["not known: what it reads, how much it reads at once"], ModelFit.Marks(Evaluate(ModelFacts.Unknown, spec: spec)));
+    }
+
     // ------------------------------------------------------------------ where the facts come from
 
     [Fact]
