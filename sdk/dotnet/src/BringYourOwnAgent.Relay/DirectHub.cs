@@ -41,12 +41,13 @@ public sealed record ModelView(
 /// <summary>What the visitor allowed this site, as the wallet's hello (or a later <c>grant</c> frame) said.</summary>
 /// <param name="Skills">The skills the visitor allowed, as the wallet's <c>grant.skills</c> said.</param>
 /// <param name="Limits">What the site is held to (CONTRACT.md §3.4).</param>
-/// <param name="Models">Every skill's participants, one list per skill (<c>text.generate</c>, <c>image.generate</c>...), as the wallet sent them (CONTRACT.md §3.3).</param>
+/// <param name="Models">The participants of <c>text.generate</c>, a list as in 0.0.3: a page that reads <c>models</c> as a list keeps working.</param>
 /// <param name="Capabilities">The feature names of the closed list the wallet supports (wallet 0.36); empty when it sent none.</param>
-public sealed record GrantView(string[] Skills, TextLimits Limits, IReadOnlyDictionary<string, ModelView[]> Models, string[] Capabilities)
+/// <param name="ModelsBySkill">Every skill's participants, one list per skill (<c>text.generate</c>, <c>image.generate</c>...), as the wallet sent them (CONTRACT.md §3.3); <c>Models</c> is its <c>text.generate</c> entry.</param>
+public sealed record GrantView(string[] Skills, TextLimits Limits, ModelView[] Models, string[] Capabilities, IReadOnlyDictionary<string, ModelView[]> ModelsBySkill)
 {
     /// <summary>The participants of one skill, in the visitor's order; empty when the wallet gave none for it.</summary>
-    public ModelView[] ModelsOf(string skill) => Models.TryGetValue(skill, out var list) ? list : [];
+    public ModelView[] ModelsOf(string skill) => ModelsBySkill.TryGetValue(skill, out var list) ? list : [];
 }
 
 /// <summary>

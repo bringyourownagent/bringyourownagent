@@ -96,7 +96,7 @@ public static class RelayEndpoints
             if (Bad(room) is { } bad) return bad;
             var (state, pairing) = hub.CodeState(room, r.Session);
             var grant = pairing is null ? null : hub.Grant(room, pairing);
-            return Results.Ok(new { state, pairing, models = grant?.Models, limits = grant?.Limits, capabilities = grant?.Capabilities });
+            return Results.Ok(new { state, pairing, models = grant?.Models, modelsBySkill = grant?.ModelsBySkill, limits = grant?.Limits, capabilities = grant?.Capabilities });
         });
 
         // the page stopped waiting: the code is dead
@@ -112,7 +112,7 @@ public static class RelayEndpoints
             if (Bad(room) is { } bad) return bad;
             var state = hub.Status(room, r.Pairing);
             var grant = hub.Grant(room, r.Pairing);
-            return Results.Ok(new { state = state.ToString().ToLowerInvariant(), models = grant?.Models, limits = grant?.Limits, skills = grant?.Skills, capabilities = grant?.Capabilities });
+            return Results.Ok(new { state = state.ToString().ToLowerInvariant(), models = grant?.Models, modelsBySkill = grant?.ModelsBySkill, limits = grant?.Limits, skills = grant?.Skills, capabilities = grant?.Capabilities });
         });
 
         // the page lets the wallet go for good: the server says «bye», closes the connection and forgets the pairing

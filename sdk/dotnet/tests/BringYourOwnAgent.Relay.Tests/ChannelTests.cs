@@ -409,7 +409,8 @@ public class ChannelTests
         using var _t = tcp;
         var grant = hub.Grant(Rooms.A, token)!;
 
-        Assert.Equal(["image.generate", "text.generate"], grant.Models.Keys.Order(StringComparer.Ordinal));
+        Assert.Equal(["image.generate", "text.generate"], grant.ModelsBySkill.Keys.Order(StringComparer.Ordinal));
+        Assert.Equal(["m1", "m2"], grant.Models.Select(m => m.Ref));                  // `models` stays the text.generate list, as in 0.0.3
         var text = grant.ModelsOf("text.generate");
         Assert.Equal(["m1", "m2"], text.Select(m => m.Ref));
         var can = text[0].Can!;
