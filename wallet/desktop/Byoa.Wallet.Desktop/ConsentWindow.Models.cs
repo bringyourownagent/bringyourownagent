@@ -240,7 +240,7 @@ sealed partial class ConsentWindow
         void Refresh()
         {
             pick.Results.Children.Clear();
-            var found = _search(query.Text);
+            var found = _search(query.Text, pick.Section.Spec);
             if (found.Count == 0)
             {
                 pick.Results.Children.Add(Ui.Wrap("No model found. Try fewer words.", "muted", "small"));

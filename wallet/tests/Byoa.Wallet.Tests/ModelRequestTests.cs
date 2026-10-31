@@ -121,6 +121,7 @@ public class RequestedModelsTests
         Assert.Equal(["text", "image"], spec.Needs!.Input);
         Assert.Equal(["text"], spec.Needs.Output);
         Assert.Equal(64, spec.Needs.ContextThousands);
+        Assert.Equal(65, Parse("""{"count":1,"needs":{"context":64.9}}""")!.Needs!.ContextThousands);      // "at least 64.9k" is not met by 64k
         Assert.Equal(["api-key"], spec.Needs.Runs);
         Assert.Equal(["web.search", "image.read", "x-thing"], spec.Abilities);
         Assert.Contains("needs:input=text+image;output=text;context=64;runs=api-key;", spec.Ask);

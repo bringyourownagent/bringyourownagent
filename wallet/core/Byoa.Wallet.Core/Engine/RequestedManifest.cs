@@ -65,7 +65,7 @@ public sealed record ModelNeeds(
     {
         if (node is not JsonValue v) return null;
         if (v.TryGetValue<int>(out var i) && i >= 1) return Math.Min(i, MaxContextThousands);
-        return v.TryGetValue<double>(out var d) && double.IsFinite(d) && d is >= 1 and <= MaxContextThousands ? (int)d : null;
+        return v.TryGetValue<double>(out var d) && double.IsFinite(d) && d is >= 1 and <= MaxContextThousands ? (int)Math.Ceiling(d) : null;
     }
 
     /// <summary>The conditions in one comparable line, so a change in them is seen as the site asking for more.</summary>

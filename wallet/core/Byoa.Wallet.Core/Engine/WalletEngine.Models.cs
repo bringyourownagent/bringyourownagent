@@ -188,8 +188,11 @@ public sealed partial class WalletEngine
         return ModelPlanner.Plan(skill.Id, spec, new ModelPlanContext(BuildShelf(settings), previous, RoadFor, CostOfNew, FactsOfNew));
     }
 
-    /// <summary>Models a visitor can add behind his OpenRouter key from a site's window: the catalog's, narrowed by what he typed.</summary>
-    public IReadOnlyList<ModelChoice> SearchNewModels(string? query, CatalogFilter filter = CatalogFilter.All, int limit = 30)
+    /// <summary>
+    /// Models a visitor can add behind his OpenRouter key from a site's window: the catalog's, narrowed by what he typed, and judged by what the site
+    /// asked (<paramref name="spec"/>) like every other list: one that falls short is left out or shown unticked with the reason, never offered as fit.
+    /// </summary>
+    public IReadOnlyList<ModelChoice> SearchNewModels(string? query, RequestedModels? spec = null, CatalogFilter filter = CatalogFilter.All, int limit = 30)
     {
         if (!HasOpenRouterKey() || !Catalog.Loaded) return [];
         var have = _store.Read(s => s.Sources.Select(x => x.Id).ToHashSet(StringComparer.Ordinal));
@@ -198,9 +201,12 @@ public sealed partial class WalletEngine
         {
             if (!ModelChoice.IsPlainModelName(model.Id)) continue;
             if (have.Contains(SourceKinds.OpenRouter + ":" + model.Id)) continue;
+            var facts = FactsOfNew(model.Id);
+            var verdict = ModelFit.Evaluate(facts, model.Canonical, Vocabulary.Generate, spec);
+            if (!verdict.Offered(ModelFit.DropsOnMismatch(spec, facts))) continue;
             found.Add(new ModelChoice(ModelChoice.NewKey(model.Id), null, ModelNames.Display(model.Id, model.Name), model.Canonical, "OpenRouter key",
                 Paid: !model.Free, Cost: CostOfNew(model.Id), Role: ModelRole.Yours, Checked: false, Ready: true, Note: null,
-                Road: new ModelRoad(SourceKinds.OpenRouter, model.Id)));
+                Road: new ModelRoad(SourceKinds.OpenRouter, model.Id), Fit: verdict.State, Marks: ModelFit.Marks(verdict)));
             if (found.Count >= limit) break;
         }
 

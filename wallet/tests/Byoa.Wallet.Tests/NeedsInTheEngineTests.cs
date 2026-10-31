@@ -424,6 +424,32 @@ public class NeedsInTheEngineTests
     }
 
     [Fact]
+    public void TheSearchBehindTheKeyJudgesEachResultByWhatTheSiteAskedLikeEveryOtherList()
+    {
+        var engine = new WalletEngine(new SettingsStore(null), [], _log, _ui, _time, [])
+        {
+            Catalog = new ListedCatalog(
+                new CatalogModel("openai/big", "OpenAI: Big", 128_000, null, null, 0, ["text"], ["text"]),
+                new CatalogModel("mistralai/tiny", "Mistral: Tiny", 32_768, null, null, 0, ["text"], ["text"])),
+            HasOpenRouterKey = () => true,
+        };
+        RequestedModels Ask(string models) => RequestedModels.From(JsonNode.Parse(models))!;
+
+        // the site wants 64k: the model that reads 32k is left out (the default for a model), not offered as one that fits
+        Assert.Equal(["new:openrouter:openai/big"], Keys(engine.SearchNewModels(null, Ask("""{"count":1,"needs":{"context":64}}"""))));
+
+        // a site that wants shortfalls shown gets it unticked, marked, with the reason
+        var shown = engine.SearchNewModels(null, Ask("""{"count":1,"needs":{"context":64},"onMismatch":"show"}"""));
+        Assert.Equal(["new:openrouter:openai/big", "new:openrouter:mistralai/tiny"], Keys(shown));
+        var tiny = shown.Single(c => c.Key == "new:openrouter:mistralai/tiny");
+        Assert.Equal(FitState.Mismatch, tiny.Fit);
+        Assert.Contains("32k", string.Join(" ", tiny.Marks!));
+
+        // a site that asked nothing beyond names sees both, as before
+        Assert.Equal(2, engine.SearchNewModels(null).Count);
+    }
+
+    [Fact]
     public void TheWireFallbackAnswersACallWithAReasonAndARequestWithNothing()
     {
         Assert.Equal("{\"ok\":false,\"reason\":\"failed\"}", Wire.Fallback(Wire.Call)!.ToJsonString());

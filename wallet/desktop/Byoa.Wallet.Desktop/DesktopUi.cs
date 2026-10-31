@@ -119,7 +119,7 @@ sealed class DesktopUi : IWalletUi, IAgentConsentUi, IEndpointConfirmationUi, IS
             {
                 if (page == "add-model") OpenAddModel();
                 else OpenSettings(page);
-            }, query => _w.Engine.SearchNewModels(query), _w.Engine.HasOpenRouterKey() && _w.Engine.Catalog.Loaded);
+            }, (query, spec) => _w.Engine.SearchNewModels(query, spec), _w.Engine.HasOpenRouterKey() && _w.Engine.Catalog.Loaded);
             window.CloseOn(ct);
             window.Show();
             return await window.Result;
