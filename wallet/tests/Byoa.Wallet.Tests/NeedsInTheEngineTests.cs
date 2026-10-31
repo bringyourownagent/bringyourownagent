@@ -259,6 +259,11 @@ public class NeedsInTheEngineTests
         Assert.True(Ok(nameless));
         Assert.Equal("gemma says 60", nameless["output"]!["text"]!.GetValue<string>());     // without a name only the models that still fit are tried
         Assert.Equal(0, _gpt.Calls);
+
+        // What the site is told follows when the wallet is told the visitor changed it (the settings window does): the list is built again without it.
+        Assert.Equal(2, _engine.FindGrant(grant)!.ModelsJson()!["text.generate"]!.AsArray().Count);
+        _engine.SourcePropertiesChanged();
+        Assert.Single(_engine.FindGrant(grant)!.ModelsJson()!["text.generate"]!.AsArray());
     }
 
     [Fact]
