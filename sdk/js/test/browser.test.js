@@ -48,6 +48,10 @@ describe('extension path', () => {
     assert.deepEqual(await callWithExtension({ grantId: 'g' }, 'text.generate', {}), { ok: false });
     globalThis.window.byoa.call = async () => ({ ok: false });
     assert.deepEqual(await callWithExtension({ grantId: 'g' }, 'text.generate', {}), { ok: false });
+    globalThis.window.byoa.call = async () => ({ ok: false, reason: 'limit', provider: 'secret' });
+    assert.deepEqual(await callWithExtension({ grantId: 'g' }, 'text.generate', {}), { ok: false, reason: 'limit' });       // the closed list, nothing else
+    globalThis.window.byoa.call = async () => ({ ok: false, reason: 'the model is not installed' });
+    assert.deepEqual(await callWithExtension({ grantId: 'g' }, 'text.generate', {}), { ok: false });
   });
 
   test('openWalletLink opens only a BYOA link', () => {

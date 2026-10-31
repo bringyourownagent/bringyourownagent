@@ -189,6 +189,7 @@ test('a paid model is refused when the budget is nothing, and served within a bu
   none.site.say(call(1));
   await none.site.until(() => none.site.frames('result').length === 1);
   assert.equal(none.site.frames('result')[0].ok, false);
+  assert.equal(none.site.frames('result')[0].reason, 'limit');                 // the budget is a limit of the wallet
   assert.equal(none.calls.length, 0);
   none.connection.close();
 

@@ -450,6 +450,25 @@ public class NeedsInTheEngineTests
     }
 
     [Fact]
+    public async Task AModelBehindTheKeyThatTheWindowNeverOfferedIsJudgedWhenTheAnswerIsTakenLikeAnyOther()
+    {
+        var store = new SettingsStore(null);
+        var gemma = new FakeTextSource("lm:gemma");
+        store.Update(s => s.Sources.Add(new SourceSetting { Id = "lm:gemma", Kind = SourceKinds.LmStudio, Model = "google/gemma-3-1b-it", Skills = [Vocabulary.Generate] }));
+        var engine = new WalletEngine(store, [], _log, _ui, _time, [gemma])
+        {
+            Catalog = new ListedCatalog(new CatalogModel("mistralai/tiny", "Mistral: Tiny", 32_768, null, null, 0, ["text"], ["text"])),
+            HasOpenRouterKey = () => true,
+        };
+        // an answer that carries a key the window did not offer, for a site that wants 64k: the model reads 32k
+        _ui.Consent = new ConsentAnswer(true, 0.05m, false, [], new Dictionary<string, IReadOnlyList<string>> { ["text.generate"] = ["new:openrouter:mistralai/tiny"] });
+        var granted = await engine.HandleAsync(Clips.Request(Site, click: true, Manifest("{\"count\":1,\"needs\":{\"context\":64}}"))) as JsonObject;
+
+        Assert.DoesNotContain(store.Snapshot().Sources, s => s.Id == "openrouter:mistralai/tiny");     // never added to his models
+        Assert.False(granted?["skills"]?.AsArray().Any(x => x?.GetValue<string>() == Vocabulary.Generate) ?? false);   // the skill is left off, not half given
+    }
+
+    [Fact]
     public void TheWireFallbackAnswersACallWithAReasonAndARequestWithNothing()
     {
         Assert.Equal("{\"ok\":false,\"reason\":\"failed\"}", Wire.Fallback(Wire.Call)!.ToJsonString());

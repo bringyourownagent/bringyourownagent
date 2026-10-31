@@ -220,8 +220,11 @@ export class WalletConnection extends EventEmitter {
     const at = this._queue.indexOf(job);
     if (at >= 0) this._queue.splice(at, 1);
     // a call the wallet is working on is stopped there too (an old wallet ignores the frame), so its place is free again
-    if (job.id !== undefined && this.capable('cancel')) this._send({ type: 'cancel', id: job.id });
-    this._finish(job, { ok: false, timedOut: true, reason: 'timeout' });
+    try {
+      if (job.id !== undefined && this.capable('cancel')) this._send({ type: 'cancel', id: job.id });
+    } finally {
+      this._finish(job, { ok: false, timedOut: true, reason: 'timeout' });
+    }
   }
 
   /** Whether the wallet says it supports this feature (grant.capabilities; an older wallet says nothing, so nothing is assumed). */
@@ -291,7 +294,11 @@ export class WalletConnection extends EventEmitter {
   _sendRaw(text) {
     if (this.closed) return;
     const timer = setTimeout(() => this.terminate(), this.options.sendTimeoutMs); // a wallet that stopped reading is dropped
-    this.socket.send(text, (error) => { clearTimeout(timer); if (error) this.terminate(); });
+    try {
+      this.socket.send(text, (error) => { clearTimeout(timer); if (error) this.terminate(); });
+    } catch {
+      clearTimeout(timer); // a socket that is already closing throws at once: the close event ends the connection
+    }
   }
 
   /** The server lets this wallet go: "bye" and a close. */

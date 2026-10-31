@@ -2,8 +2,8 @@
 
 export interface Grant { grantId: string; skills: string[]; expiresAt: string }
 export type ExtensionCallResult =
-  | { ok: true; output: Record<string, unknown>; receipt: { cost: string; provider: string } }
-  | { ok: false };
+  | { ok: true; output: Record<string, unknown>; receipt: { cost: string; provider: string }; lacks?: string[] }
+  | { ok: false; reason?: 'timeout' | 'cancelled' | 'limit' | 'failed' };
 
 /** True when the wallet's browser extension is installed (it puts `window.byoa` on the page). */
 export function hasExtension(): boolean;

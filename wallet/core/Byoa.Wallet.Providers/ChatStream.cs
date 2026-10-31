@@ -52,7 +52,13 @@ internal static class ChatStream
                 break;
             }
 
-            if (line is null) break;
+            if (line is null)
+            {
+                // the connection ended with no [DONE] and no finish_reason: whatever came is a cut answer, not an answer
+                if (finish is null && text.Length > 0) throw new HttpRequestException("the service ended the answer before it finished");
+                break;
+            }
+
             seen += line.Length;
             if (seen > MaxChars) throw new HttpRequestException("the answer is longer than the wallet takes");
             if (!line.StartsWith("data:", StringComparison.Ordinal)) continue;                 // comments (": PROCESSING") and blank lines

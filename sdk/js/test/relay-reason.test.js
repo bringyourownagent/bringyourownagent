@@ -63,6 +63,17 @@ describe('the site\'s own timeout stops the call at the wallet', () => {
     assert.deepEqual(await w.next(), { type: 'cancel', id: call.id });
   });
 
+  test('a socket that is already closing and throws on send does not leave the call stuck', async () => {
+    const env = await start({ callTimeoutMs: 80, firstCallTimeoutMs: 80 });
+    const { w, wallet } = await connectWith(env, ['cancel']);
+    const answer = wallet.call('text.generate', {});
+    await w.next();
+    wallet.socket.send = () => { throw new Error('WebSocket is not open: readyState 2 (CLOSING)'); };   // the close event has not come yet
+    assert.deepEqual(await answer, { ok: false, timedOut: true, reason: 'timeout' });
+    assert.equal(wallet._pending.size, 0);
+    assert.equal(wallet._inFlight, 0);
+  });
+
   test('a wallet that does not say so is not sent a frame it may not know', async () => {
     const env = await start({ callTimeoutMs: 80, firstCallTimeoutMs: 80 });
     const { w, wallet } = await connectWith(env);

@@ -191,6 +191,9 @@ public class StreamThatDoesNotEndTests
 
     static HttpResponseMessage Hanging(string beginning) => new(System.Net.HttpStatusCode.OK) { Content = new StreamContent(new HangingStream(beginning)) };
 
+    /// <summary>A stream that sends these bytes and ends, as a closed connection does.</summary>
+    static HttpResponseMessage Closed(string body) => new(System.Net.HttpStatusCode.OK) { Content = new StringContent(body, Encoding.UTF8, "text/event-stream") };
+
     const string Alice = "data: {\"choices\":[{\"delta\":{\"content\":\"Alice\"}}]}\n\ndata: {\"choices\":[{\"delta\":{\"content\":\" wins\"}}]}\n\n";
     const string Finished = "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n";
 
@@ -231,6 +234,22 @@ public class StreamThatDoesNotEndTests
         var failure = await Assert.ThrowsAsync<HttpRequestException>(() => TimedAsync(() => ChatStream.ReadAsync(response, null, default), idle: TimeSpan.FromMilliseconds(300), grace: TimeSpan.FromSeconds(15)));
         Assert.Contains("went quiet", failure.Message);
         Assert.True(System.Diagnostics.Stopwatch.GetElapsedTime(started) >= TimeSpan.FromMilliseconds(250), "ended before the idle timeout");
+    }
+
+    [Fact]
+    public async Task AConnectionThatEndsMidAnswerWithNoDoneAndNoFinishFailsButTheServersOwnDoneIsAnEnd()
+    {
+        // ended with no [DONE] and no finish_reason: cut
+        await Assert.ThrowsAsync<HttpRequestException>(() => ChatStream.ReadAsync(Closed(Alice), null, default));
+
+        // the server said [DONE]: it is the server's own end, with or without a finish_reason
+        var told = await ChatStream.ReadAsync(Closed(Alice + "data: [DONE]\n\n"), null, default);
+        Assert.Equal("Alice wins", told.Text);
+
+        // finished and then closed: as before
+        var done = await ChatStream.ReadAsync(Closed(Alice + Finished), null, default);
+        Assert.Equal("stop", done.Finish);
+        Assert.Equal("Alice wins", done.Text);
     }
 
     [Fact]

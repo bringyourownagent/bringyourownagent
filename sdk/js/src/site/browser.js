@@ -19,12 +19,15 @@ export async function requestWithExtension(manifest) {
   try { return (await window.byoa.request(manifest)) ?? null; } catch { return null; }
 }
 
-/** One use of a granted skill through the extension. Never throws: `{ ok: true, output, receipt }` or `{ ok: false }`. */
+const REASONS = ['timeout', 'cancelled', 'limit', 'failed'];
+
+/** One use of a granted skill through the extension. Never throws: `{ ok: true, output, receipt }` or `{ ok: false }` (with `reason` when the wallet said why). */
 export async function callWithExtension(grant, skill, input, params = {}) {
   if (!hasExtension() || !grant?.grantId) return { ok: false };
   try {
     const answer = await window.byoa.call(grant.grantId, skill, input, params);
-    return answer?.ok === true ? answer : { ok: false };
+    if (answer?.ok === true) return answer;
+    return REASONS.includes(answer?.reason) ? { ok: false, reason: answer.reason } : { ok: false };
   } catch { return { ok: false }; }
 }
 

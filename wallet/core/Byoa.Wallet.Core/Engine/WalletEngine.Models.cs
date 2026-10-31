@@ -267,14 +267,21 @@ public sealed partial class WalletEngine
     /// The keys the visitor ticked, kept to what the site can use: known keys only, no repeats, at most as many as the site uses, and null
     /// when what is left does not give the site what it needs (so the skill is left off, not half given).
     /// </summary>
-    static IReadOnlyList<string>? ChooseModels(ModelSection section, IReadOnlyList<string>? keys)
+    IReadOnlyList<string>? ChooseModels(ModelSection section, IReadOnlyList<string>? keys)
     {
         var known = section.Choices.ToDictionary(c => c.Key, StringComparer.Ordinal);
         var picked = new List<string>();
         foreach (var key in keys ?? section.Choices.Where(c => c.Checked).Select(c => c.Key).ToList())
         {
             if (picked.Contains(key, StringComparer.Ordinal)) continue;
-            if (!known.ContainsKey(key) && !ModelChoice.TryParseNew(key, out _)) continue;
+            if (!known.ContainsKey(key))
+            {
+                if (!ModelChoice.TryParseNew(key, out var offered)) continue;
+                // a model behind his key that the window did not offer (an old search, a made-up key) is judged now, like every other
+                var facts = FactsOfNew(offered);
+                if (!ModelFit.Evaluate(facts, ModelNames.Canon(offered), section.Skill, section.Spec).Offered(ModelFit.DropsOnMismatch(section.Spec, facts))) continue;
+            }
+
             picked.Add(key);
         }
 
