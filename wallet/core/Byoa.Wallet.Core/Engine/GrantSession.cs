@@ -10,7 +10,11 @@ namespace Byoa.Wallet.Engine;
 /// <paramref name="SourceIds"/> are the roads to the same model (the visitor's choice first), tried in order.
 /// </summary>
 /// <param name="ModelId">The canonical name; shown to the site only when it asked and the visitor allows.</param>
-public sealed record GrantedModel(string Ref, IReadOnlyList<string> SourceIds, string Name, string ModelId, string Runs, bool Paid)
+/// <param name="Can">One verdict for each condition the site asked about whose property is known, and never a value (PROPOSAL-v2 3.5).</param>
+/// <param name="Abilities">For the visitor's agent: whether it has each ability the site asked about that the wallet knows. Null for a model.</param>
+public sealed record GrantedModel(
+    string Ref, IReadOnlyList<string> SourceIds, string Name, string ModelId, string Runs, bool Paid,
+    IReadOnlyDictionary<string, bool>? Can = null, IReadOnlyDictionary<string, bool>? Abilities = null)
 {
     /// <summary>"agent" when the visitor's own AI agent answers for this entry (it may search the web and takes longer), else "model".
     /// The site is told even when the names are hidden: it shows the visitor which of his entries can investigate.</summary>

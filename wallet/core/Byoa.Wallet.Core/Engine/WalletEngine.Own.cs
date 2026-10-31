@@ -97,8 +97,8 @@ public sealed partial class WalletEngine
         var limits = own.Session.Limits ?? TextLimits.Defaults;
         if (chars > limits.InputChars) return OwnFailure(entry, Vocabulary.Generate, "invalid", "text too long for the wallet: at most " + limits.InputChars + " characters");
         // Never a paid source unless he allowed it; a free demo service (cloud, no key, no cost) only while "free cloud" is on.
-        var sources = settings.Everywhere.AllowPaid ? PlainTextSources
-            : PlainTextSources.Where(s => !s.Paid && (settings.Everywhere.AllowFreeCloud || s.Runs != Byoa.Wallet.Sources.Runs.ApiKey)).ToList();
+        var sources = settings.Everywhere.AllowPaid ? PlainTextSources(settings)
+            : PlainTextSources(settings).Where(s => !s.Paid && (settings.Everywhere.AllowFreeCloud || s.Runs != Byoa.Wallet.Sources.Runs.ApiKey)).ToList();
         var hold = new DailyHold(OwnOrigin);
         if (!HoldCall(hold, own.CallsPerDay)) return OwnFailure(entry, Vocabulary.Generate, "limit", "calls per day");
         try

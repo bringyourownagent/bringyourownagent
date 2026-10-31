@@ -730,6 +730,7 @@ public sealed partial class WalletEngine
                     }
 
                     entry.SourceIds = ids;
+                    entry.Ask = manifest.Skill(skill)?.Models?.Ask is { Length: > 0 } ask ? ask : null;      // what he has seen: the same ask is not put to him again
                 }
 
                 r.ShowModelNames = answer.ShowNames;
@@ -905,7 +906,7 @@ public sealed partial class WalletEngine
         foreach (var textLanguage in textLanguages)
         {
             var textChain = ChainFor(settings, skill.Id, textLanguage);
-            var textPlan = Router.PlanText(textChain, PlainTextSources, id => IsEnabled(settings, id), textLanguage);
+            var textPlan = Router.PlanText(textChain, PlainTextSources(settings), id => IsEnabled(settings, id), textLanguage);
             whys.Add(Router.ExplainText(textPlan));
             if (textPlan.First is { } textFirst)
             {
@@ -1084,7 +1085,7 @@ public sealed partial class WalletEngine
         {
             if (skill == Vocabulary.Generate)
             {
-                var textSteps = Router.PlanText(ChainFor(settings, skill, language), PlainTextSources,
+                var textSteps = Router.PlanText(ChainFor(settings, skill, language), PlainTextSources(settings),
                         id => IsEnabled(settings, id), language).Steps
                     .Where(s => !s.Source.Paid).ToList();
                 if (textSteps.FirstOrDefault() is { } firstText) names.Add(firstText.Source.Name);
@@ -1524,10 +1525,18 @@ public sealed partial class WalletEngine
             var wanted = Str(parameters["model"]);
             var pick = wanted is null ? granted.ToList() : granted.Where(g => g.Ref == wanted).ToList();
             if (pick.Count == 0) return Failed(entry, "invalid", "no such model for this site: " + (wanted ?? "none"));
+            // The fit is asked again at every call: what the visitor changed since the grant (a source's properties, its "also use as a text
+            // model" tick) counts at once, and a road that no longer fits is not tried.
+            var spec = session.Manifest.Skill(Vocabulary.Generate)?.Models;
+            var fitting = _store.Read(s => pick.SelectMany(g => g.SourceIds).Distinct(StringComparer.Ordinal)
+                .Where(id => s.Sources.FirstOrDefault(x => x.Id == id) is { } setting && Offers(spec, setting, Vocabulary.Generate))
+                .ToHashSet(StringComparer.Ordinal));
+            pick = pick.Where(g => g.SourceIds.Any(fitting.Contains)).ToList();
+            if (pick.Count == 0) return Failed(entry, "invalid", "no model of this site fits any more: " + (wanted ?? "none"));
             chainOverride = new SkillChain
             {
                 Skill = Vocabulary.Generate,
-                Stops = pick.SelectMany(g => g.SourceIds).Distinct(StringComparer.Ordinal)
+                Stops = pick.SelectMany(g => g.SourceIds).Distinct(StringComparer.Ordinal).Where(fitting.Contains)
                     .Select(id => new ChainStop { SourceId = id, AskBeforePaid = false }).ToList(),
             };
             var roadIds = chainOverride.Stops.Select(s => s.SourceId).ToHashSet(StringComparer.Ordinal);
@@ -1576,7 +1585,7 @@ public sealed partial class WalletEngine
         var routeCt = routeTimeout.Token;
         var settings = _store.Snapshot();
         var chain = chainOverride ?? ChainFor(settings, Vocabulary.Generate, language);
-        var sources = sourceOverride ?? PlainTextSources;
+        var sources = sourceOverride ?? PlainTextSources(settings);
         var plan = Router.PlanText(chain, sources, id => IsEnabled(settings, id), language);
         int Index(ITextSource s) => chain.Stops.FindIndex(x => x.SourceId == s.Id);
 
@@ -2621,7 +2630,7 @@ public sealed partial class WalletEngine
             InputChars = r.Asked.InputChars, AnswerTokens = r.Asked.AnswerTokens, CallSeconds = r.Asked.CallSeconds,
             ParallelCalls = r.Asked.ParallelCalls, CallsPerMinute = r.Asked.CallsPerMinute,
         },
-        Models = r.Models.Select(m => new SiteModels { Skill = m.Skill, SourceIds = [.. m.SourceIds] }).ToList(),
+        Models = r.Models.Select(m => new SiteModels { Skill = m.Skill, SourceIds = [.. m.SourceIds], Ask = m.Ask }).ToList(),
         ShowModelNames = r.ShowModelNames, AgentPurposeOk = r.AgentPurposeOk, TrustAgentRequests = r.TrustAgentRequests,
     };
 

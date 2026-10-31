@@ -170,6 +170,13 @@ public sealed class SiteModels
 {
     public string Skill { get; set; } = "";
     public List<string> SourceIds { get; set; } = [];
+
+    /// <summary>
+    /// What the site asked of these models (needs, kind, abilities: <c>RequestedModels.Ask</c>) when the visitor last answered. A site that now
+    /// asks something else is asking for more, and is asked about again. Null while the site asks nothing beyond names and a count.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Ask { get; set; }
 }
 
 /// <summary>The limits a site asked for (its manifest's declared limits), as the visitor last saw them.</summary>

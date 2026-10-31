@@ -31,10 +31,14 @@ public sealed partial class WalletEngine
 
     readonly SemaphoreSlim _guardPrompt = new(1, 1);
 
-    /// <summary>The text sources a site that was not given a model by name may use: every source that is a model. An agent is never one of them.</summary>
-    IReadOnlyList<ITextSource> PlainTextSources => _textSources.Any(s => s is IAgentTextSource)
-        ? _textSources.Where(s => s is not IAgentTextSource).ToList()
-        : _textSources;
+    /// <summary>
+    /// The text sources a site that was not given a model by name may use: every source that is a model and may answer text at all. An agent is
+    /// never one of them, nor a model that draws pictures (unless the visitor ticked "Also use as a text model" for it): that rule is the skill's
+    /// own and holds for every site and for the wallet's own use.
+    /// </summary>
+    IReadOnlyList<ITextSource> PlainTextSources(WalletSettings settings) =>
+        _textSources.Where(s => s is not IAgentTextSource
+            && (settings.Sources.FirstOrDefault(x => x.Id == s.Id) is not { } setting || Offers(null, setting, Vocabulary.Generate))).ToList();
 
     static bool IsAgentId(WalletSettings settings, string id) =>
         settings.Sources.Any(s => s.Id == id && string.Equals(s.Kind, SourceKinds.Agent, StringComparison.OrdinalIgnoreCase));

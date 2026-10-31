@@ -116,12 +116,15 @@ public sealed record RequestedModels(
     public const string AnyKind = "any";
 
     /// <summary>What the site asked of the models beyond their names and count, in one comparable line: a change in it is the site asking
-    /// for more, never something the wallet decides on its own (PROPOSAL-v2 3.1).</summary>
-    public string Ask =>
-        (Needs is { Any: true } needs ? "needs:" + needs.ToAsk() : "")
-        + "kind:" + Kind
-        + (OnMismatch is { } mismatch ? ";onMismatch:" + mismatch : "")
-        + (Abilities is { Count: > 0 } abilities ? ";abilities:" + string.Join(",", abilities) : "");
+    /// for more, never something the wallet decides on its own (PROPOSAL-v2 3.1). Empty while it asks nothing more than names and a count,
+    /// which is also what a site the visitor answered before wallet 0.36 stored.</summary>
+    public string Ask => string.Join(';', new[]
+    {
+        Needs is { Any: true } needs ? "needs:" + needs.ToAsk() : null,
+        Kind != ModelKind ? "kind:" + Kind : null,
+        OnMismatch is { } mismatch ? "onMismatch:" + mismatch : null,
+        Abilities is { Count: > 0 } abilities ? "abilities:" + string.Join(",", abilities) : null,
+    }.Where(part => part is not null));
 
     public static RequestedModels? From(JsonNode? node)
     {
