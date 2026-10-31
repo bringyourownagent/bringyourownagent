@@ -196,10 +196,11 @@ public sealed class AgentCliSource : IAgentTextSource
     /// </summary>
     internal static IReadOnlyList<string> Arguments(string? model = null)
     {
+        var tools = string.Join(',', AgentProfile.Tools);
         List<string> arguments =
         [
             "-p", "--output-format", "json", "--no-session-persistence", "--strict-mcp-config",
-            "--tools", "WebSearch,WebFetch", "--allowedTools", "WebSearch,WebFetch",
+            "--tools", tools, "--allowedTools", tools,
             "--max-turns", MaxTurns.ToString(CultureInfo.InvariantCulture),
         ];
         // The visitor's choice of model (opus, sonnet, ...), checked as a plain name when the source is made: never a word of the site's.
