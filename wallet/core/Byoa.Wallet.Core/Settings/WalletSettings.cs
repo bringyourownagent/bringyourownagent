@@ -229,6 +229,35 @@ public sealed class SourceSetting
     /// <summary>The model's name as everyone knows it ("google/gemma-3-1b-it"), so a site that asks for it by name finds it; null means the wallet guesses it.</summary>
     public string? ModelId { get; set; }
 
+    /// <summary>
+    /// What the visitor says goes into this model ("text", "image"): the modalities it accepts (PROPOSAL-v2 3.2). His word beats the
+    /// catalog's; null or empty means he said nothing and the catalog speaks, and when neither does the property is unknown.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public List<string>? Inputs
+    {
+        get => _inputs;
+        set => _inputs = value is { Count: 0 } ? null : value;
+    }
+
+    /// <summary>What the visitor says comes out of the model. As <see cref="Inputs"/>; null or empty is unknown.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public List<string>? Outputs
+    {
+        get => _outputs;
+        set => _outputs = value is { Count: 0 } ? null : value;
+    }
+
+    List<string>? _inputs;
+    List<string>? _outputs;
+
+    /// <summary>
+    /// "Also use as a text model" (PROPOSAL-v2 3.3): the visitor's own tick, off by default, that lets a model whose output includes image
+    /// answer text.generate. No key of a site lifts this; the site's needs can only narrow the rule.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool AlsoText { get; set; }
+
     /// <summary>In the visitor's default set: the wallet offers this model first when a site asks for several and names none he has.</summary>
     public bool Offer { get; set; } = true;
 

@@ -48,7 +48,9 @@ public sealed class OpenRouterCatalog : IModelCatalog
     public IReadOnlyList<CatalogModel> Search(string? query, CatalogFilter filter = CatalogFilter.All, int limit = 40)
     {
         var words = (query ?? "").ToLowerInvariant().Split([' ', '\t', '/'], StringSplitOptions.RemoveEmptyEntries);
-        IEnumerable<CatalogModel> found = _snapshot.All;
+        // The primary-role rule (PROPOSAL-v2 3.3): a text picker never offers a model that draws pictures. The catalog keeps them,
+        // so `Find` still knows their price and their modalities when a visitor adds one by name.
+        IEnumerable<CatalogModel> found = _snapshot.All.Where(m => m.OffersText);
         if (filter == CatalogFilter.Free) found = found.Where(m => m.Free);
         if (filter == CatalogFilter.Cheap) found = found.Where(m => m.TypicalAnswerCost is { } cost && cost <= 0.002m);
         if (words.Length > 0)
@@ -95,7 +97,8 @@ public sealed class OpenRouterCatalog : IModelCatalog
         }
     }
 
-    /// <summary>The list as models: text answers only, ids that look like ids, prices read as dollars per token.</summary>
+    /// <summary>The list as models: every model is kept (one that draws pictures is a model too, only never a text one), ids that look like
+    /// ids, prices read as dollars per token, and what the list says goes in and out.</summary>
     public static IReadOnlyList<CatalogModel> Parse(string json)
     {
         var models = new List<CatalogModel>();
@@ -106,12 +109,12 @@ public sealed class OpenRouterCatalog : IModelCatalog
             {
                 if (entry?["id"] is not JsonValue idValue || !idValue.TryGetValue<string>(out var id)) continue;
                 if (id.Length is 0 or > 120 || id.Any(char.IsWhiteSpace)) continue;
-                if (!SpeaksText(entry["architecture"])) continue;
                 var name = Text(entry["name"]) ?? id;
                 var context = entry["context_length"] is JsonValue c && c.TryGetValue<double>(out var cd) && double.IsFinite(cd) && cd is >= 0 and <= int.MaxValue ? (int)cd : 0;
                 var created = entry["created"] is JsonValue t && t.TryGetValue<double>(out var td) && double.IsFinite(td) ? (long)td : 0;
                 models.Add(new CatalogModel(id, name.Length > 160 ? name[..160] : name, context,
-                    Price(entry["pricing"]?["prompt"]), Price(entry["pricing"]?["completion"]), created));
+                    Price(entry["pricing"]?["prompt"]), Price(entry["pricing"]?["completion"]), created,
+                    Words(entry["architecture"]?["input_modalities"]), Words(entry["architecture"]?["output_modalities"])));
             }
         }
         catch (Exception e) when (e is System.Text.Json.JsonException or InvalidOperationException or FormatException)
@@ -122,11 +125,24 @@ public sealed class OpenRouterCatalog : IModelCatalog
         return models;
     }
 
-    static bool SpeaksText(JsonNode? architecture)
+    /// <summary>
+    /// The modality words the list gives, as it spells them (<c>text</c>, <c>image</c>, <c>audio</c>, but also <c>embeddings</c>...): kept whole, so that a
+    /// model that writes no text is known not to, whatever it writes instead. Null when the list says nothing.
+    /// </summary>
+    static IReadOnlyList<string>? Words(JsonNode? node)
     {
-        // The list says what goes in and out; a model that is not known to write text is not a text.generate model.
-        if (architecture?["output_modalities"] is JsonArray output) return output.Any(m => m is JsonValue v && v.TryGetValue<string>(out var s) && s == "text");
-        return true;
+        if (node is not JsonArray list) return null;
+        var words = new List<string>();
+        foreach (var item in list)
+        {
+            if (words.Count >= 8) break;
+            if (item is not JsonValue v || !v.TryGetValue<string>(out var word)) continue;
+            word = word.Trim().ToLowerInvariant();
+            if (word.Length is 0 or > 24 || !word.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_') || words.Contains(word)) continue;
+            words.Add(word);
+        }
+
+        return words.Count == 0 ? null : words;
     }
 
     static string? Text(JsonNode? node) => node is JsonValue v && v.TryGetValue<string>(out var s) && !string.IsNullOrWhiteSpace(s) ? s.Trim() : null;

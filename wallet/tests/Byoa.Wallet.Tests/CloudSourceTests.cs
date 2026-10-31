@@ -31,17 +31,29 @@ public class OpenRouterCatalogTests
     static HttpClient Plain() => new(new SocketsHttpHandler { AllowAutoRedirect = false });
 
     [Fact]
-    public void OnlyModelsThatWriteTextAndHaveARealIdAreKeptAndPricesAreDollarsPerToken()
+    public void EveryModelIsKeptWithItsModalitiesAndPricesAreDollarsPerToken()
     {
+        // The catalog keeps a model that draws pictures too (it is a model; a site may add it by name and ask about its
+        // properties) — only a text picker never offers it. The old rule dropped such models whole, so nothing could be
+        // known about them; PROPOSAL-v2 2 ("Catalogue drops image-only models") replaces it.
         var models = OpenRouterCatalog.Parse(List);
-        Assert.Equal(["google/gemma-3-12b-it", "google/gemma-3-12b-it:free", "openai/gpt-5-mini", "odd/price"], models.Select(m => m.Id));
+        Assert.Equal(["google/gemma-3-12b-it", "google/gemma-3-12b-it:free", "openai/gpt-5-mini", "someone/imagine", "odd/price"], models.Select(m => m.Id));
         var gemma = models[0];
         Assert.Equal(0.00000003m, gemma.PromptPerToken);
         Assert.Equal(131_072, gemma.ContextLength);
+        Assert.Equal(["text", "image"], gemma.InputModalities);
+        Assert.Equal(["text"], gemma.OutputModalities);
+        Assert.True(gemma.OffersText);
         Assert.False(gemma.Free);
         Assert.True(models[1].Free);
-        Assert.Null(models[3].PromptPerToken);                   // a price above a dollar a token is not a price
-        Assert.Null(models[3].CompletionPerToken);
+        Assert.Null(models[1].InputModalities);                 // the list said nothing: unknown, not "text only"
+        var picture = models[3];
+        Assert.Equal(["image"], picture.OutputModalities);
+        Assert.False(picture.OffersText);                       // draws pictures only: never in a text picker
+        Assert.Null(models[4].OutputModalities);                // no architecture at all: offered, the wallet cannot tell
+        Assert.True(models[4].OffersText);
+        Assert.Null(models[4].PromptPerToken);                  // a price above a dollar a token is not a price
+        Assert.Null(models[4].CompletionPerToken);
         Assert.Empty(OpenRouterCatalog.Parse("not json"));
         Assert.Empty(OpenRouterCatalog.Parse("{\"data\":5}"));
     }
@@ -73,6 +85,33 @@ public class OpenRouterCatalogTests
         Assert.Empty(catalog.Search("gemma gpt"));
         Assert.Equal("openai/gpt-5-mini", catalog.Search(null, CatalogFilter.All)[0].Id);     // no words: the newest first
         Assert.All(catalog.Search(null, CatalogFilter.Cheap), m => Assert.True(m.TypicalAnswerCost <= 0.002m));
+    }
+
+    [Fact]
+    public void APickerOfTextModelsNeverOffersOneThatDrawsPictures()
+    {
+        var dir = TestFolder.New();
+        var path = Path.Combine(dir, "models.json");
+        File.WriteAllText(path, """
+            {"data":[
+             {"id":"google/gemini-3.1-flash-image","name":"Google: Gemini Image","context_length":32768,"created":1760000000,
+              "pricing":{"prompt":"0.0000003","completion":"0.000001"},
+              "architecture":{"input_modalities":["text","image"],"output_modalities":["text","image"]}},
+             {"id":"someone/imagine","name":"Imagine","created":1760000001,"pricing":{"prompt":"0","completion":"0"},
+              "architecture":{"output_modalities":["image"]}},
+             {"id":"someone/embed","name":"Embed","created":1760000002,"pricing":{"prompt":"0","completion":"0"},
+              "architecture":{"input_modalities":["text"],"output_modalities":["embeddings"]}},
+             {"id":"openai/gpt-5-mini","name":"OpenAI: GPT-5 Mini","context_length":400000,"created":1754000000,
+              "pricing":{"prompt":"0.00000025","completion":"0.000002"},"architecture":{"output_modalities":["text"]}}
+            ]}
+            """);
+        var catalog = new OpenRouterCatalog(Plain(), path);
+        // The primary-role rule (PROPOSAL-v2 3.3): unknown output is offered, text without pictures is offered, and a model that
+        // draws pictures is not, not even when it writes text as well; a model whose only output is something else (a vector
+        // of numbers) never was a text model, as before.
+        Assert.Equal(["openai/gpt-5-mini"], catalog.Search(null).Select(m => m.Id));
+        Assert.NotNull(catalog.Find("google/gemini-3.1-flash-image"));                     // but the wallet still knows it
+        Assert.Equal(["text", "image"], catalog.Find("google/gemini-3.1-flash-image")!.OutputModalities);
     }
 
     [Fact]
