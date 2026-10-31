@@ -93,7 +93,10 @@ public class RequestedModelsTests
     [Fact]
     public void WhatIsNotUsableIsDroppedNotTrusted()
     {
-        Assert.Null(Parse("""{"why":"no count"}"""));
+        // A block that says nothing about the count still asks (one to five), so its needs, kind and names are not lost; a block
+        // that is not an object asks for nothing the wallet could plan. The old rule ("no count" asked for nothing) is replaced by
+        // PROPOSAL-v2 3.1.
+        Assert.Equal((1, 5), (Parse("""{"why":"no count"}""")!.Min, Parse("""{"why":"no count"}""")!.Max));
         Assert.Null(Parse("""[1,2]"""));
         var spec = Parse("""{"count":2,"require":["has space","","ok/model",5],"recommend":["ok/model","ok/model","UPPER/Case"],"why":"  \u0007 hi  "}""")!;
         Assert.Single(spec.Require);
@@ -104,6 +107,56 @@ public class RequestedModelsTests
         var long_ = Parse("{\"count\":1,\"why\":\"" + new string('x', 500) + "\",\"whyLong\":\"" + new string('y', 5000) + "\"}")!;
         Assert.Equal(RequestedModels.MaxWhy, long_.Why!.Length);
         Assert.Equal(RequestedModels.MaxWhyLong, long_.WhyLong!.Length);
+    }
+
+    [Fact]
+    public void ABlockIsReadWithItsNeedsKindMismatchRuleAndAbilities()
+    {
+        var spec = Parse("""
+            {"count":1,"kind":"any","onMismatch":"show","needs":{"input":["text","image"],"output":["text"],"context":64,"runs":["api-key"]},
+             "abilities":["Web.Search","image.read","x-thing"],"x-future":{"anything":1}}
+            """)!;
+        Assert.Equal(RequestedModels.AnyKind, spec.Kind);
+        Assert.Equal("show", spec.OnMismatch);
+        Assert.Equal(["text", "image"], spec.Needs!.Input);
+        Assert.Equal(["text"], spec.Needs.Output);
+        Assert.Equal(64, spec.Needs.ContextThousands);
+        Assert.Equal(["api-key"], spec.Needs.Runs);
+        Assert.Equal(["web.search", "image.read", "x-thing"], spec.Abilities);
+        Assert.Contains("needs:input=text+image;output=text;context=64;runs=api-key;", spec.Ask);
+        Assert.Contains("kind:any", spec.Ask);
+        Assert.Contains("onMismatch:show", spec.Ask);
+        Assert.Contains("abilities:web.search,image.read,x-thing", spec.Ask);
+
+        // The defaults of a plain block, and the long forms of every condition.
+        var plain = Parse("""{"count":1}""")!;
+        Assert.Equal(RequestedModels.ModelKind, plain.Kind);
+        Assert.Null(plain.OnMismatch);
+        Assert.Empty(plain.Abilities);
+        Assert.False(plain.Needs?.Any ?? false);
+        var longForm = Parse("""{"count":1,"needs":{"input":{"includes":["TEXT"]},"context":{"min":32},"runs":{"oneOf":["cloud","local"]}}}""")!;
+        Assert.Equal(["text"], longForm.Needs!.Input);
+        Assert.Equal(32, longForm.Needs.ContextThousands);
+        Assert.Null(longForm.Needs.Output);
+        Assert.Equal(["local"], longForm.Needs.Runs);                    // the grant's words only; an unknown word is no condition
+
+        // Words the wallet does not know are not conditions, and neither is a `needs` that is not an object.
+        var unknown = Parse("""{"count":1,"needs":{"input":["vibes"],"output":"text","context":0,"runs":"local","level":5},"kind":"robot","onMismatch":"maybe"}""")!;
+        Assert.False(unknown.Needs!.Any);
+        Assert.Equal(RequestedModels.ModelKind, unknown.Kind);
+        Assert.Null(unknown.OnMismatch);
+        Assert.DoesNotContain("needs", unknown.Ask);
+    }
+
+    [Fact]
+    public void AChangedAskIsAChangedLine()
+    {
+        string Ask(string needs) => Parse("""{"count":1,"needs":""" + needs + "}")!.Ask;
+        var text = Ask("""{"input":["text"]}""");
+        Assert.Equal(text, Ask("""{"input":{"includes":["text"]}}"""));        // the same condition in its long form
+        Assert.NotEqual(text, Ask("""{"input":["text","image"]}"""));          // a new value asks again
+        Assert.NotEqual(text, Ask("""{"input":["text"],"context":32}"""));     // so does a new key
+        Assert.NotEqual(Ask("""{"context":64}"""), Ask("""{"context":65}""")); // and a raised minimum
     }
 
     [Fact]
