@@ -46,10 +46,13 @@ This is the part that protects the visitor, and a conforming wallet MUST keep to
 
 ## 4. Skills
 
-A skill is a named kind of work with a fixed shape of input and output. The vocabulary of 0.1 is `text.generate`, `text.understand`, `text.embed`, `audio.transcribe`, `audio.speak`, `image.understand`, `image.generate`, `video.understand` and `video.generate`. Only these two have a defined shape yet, in [CONTRACT.md](CONTRACT.md) section 3:
+A skill is a named kind of work with a fixed shape of input and output. The vocabulary of 0.1 is `text.generate`, `text.understand`, `text.embed`, `audio.transcribe`, `audio.speak`, `image.understand`, `image.generate`, `video.understand` and `video.generate`. A skill is always called a skill: the word **role** stays with the four Roles of section 1 and with a message's role (`system`, `user`, `assistant`). These have a defined shape, in [CONTRACT.md](CONTRACT.md) section 3:
 
 - `audio.transcribe`: a WAV clip (up to 15 seconds) in, text out.
-- `text.generate`: chat messages in, a short text answer out; with `choices` the answer is exactly one of the given strings.
+- `text.generate`: chat messages in, a short text answer out; with `choices` the answer is exactly one of the given strings. From wallet 0.37 a message may also carry picture parts, for a source that reads pictures (CONTRACT.md section 3.7).
+- `image.generate`: a prompt in, pictures out as parts (CONTRACT.md section 3.7). Wallet 0.37: a wallet before it serves none of it, and a site that requires the skill gets no Allow — the safe failure of a skill a wallet cannot serve.
+
+The other names of the vocabulary have no shape yet; a wallet serves none of them.
 
 Rules that hold for every skill:
 
@@ -57,6 +60,15 @@ Rules that hold for every skill:
 - **The wallet measures; the page does not say.** The wallet takes sizes and durations from the data itself, never from a field the requester filled in.
 - **Failure is one shape.** A call that cannot be served is `{ ok: false }`: blocked by a limit, no model answered, the grant ended, a paid fallback was refused. The requester MUST then use its own path; it is told no more.
 - **The model is not revealed.** Which provider or model answered is the wallet's business.
+- **A skill is filled by fit** (wallet 0.36). A requester may state conditions on the properties of the sources it wants (`needs`) and the kind of source (`model`, `agent`, `any`); the wallet offers only what fits the skill's own built-in rule first, and answers with verdicts, never values, in `can` (CONTRACT.md sections 3.3, 3.5 and 3.6).
+
+Security notes that the new keys add (the reasons are in the contract sections named):
+
+- Pictures are not text, and a wallet's guard reads text only. A requester that sends pictures asks the visitor to trust a channel the wallet cannot check. Pictures go only to models; never to an agent (CONTRACT.md sections 3.6 and 3.7).
+- `can` returns verdicts, not values: one boolean per condition the requester asked about, at most four keys. A value would identify a model more than a name does (CONTRACT.md section 3.3).
+- A changed `needs` is the requester asking for more; the visitor is asked again, never decided for (CONTRACT.md section 3.5).
+- The receipt stays cost and kind. What an agent lacked is said in `result.lacks`, not in the receipt (CONTRACT.md section 3.6).
+- An agent never serves a skill whose output is not text, and a requester never widens an agent's profile (CONTRACT.md section 3.6).
 
 ## 5. Purpose and limits
 

@@ -2,7 +2,7 @@
 
 Draft, first published 10 October 2026, updated 11 October 2026. Author: [@ultrathinker](https://github.com/ultrathinker).
 
-> Everything here is a proposal. The draft libraries (version 0.0.2) implement only [spec/rules-0.1-draft.md](../spec/rules-0.1-draft.md): checking a manifest and the hard limits of a single call. Parts marked **Proposed** are ideas for later drafts of the specification; nothing in them is implemented yet.
+> Everything here is a proposal. The draft libraries (version 0.0.2) implement only [spec/rules-0.1-draft.md](../spec/rules-0.1-draft.md): checking a manifest and the hard limits of a single call. Parts marked **Proposed** are ideas for later drafts of the specification; nothing in them is implemented yet. A part marked **Adopted in part** has reached the contract in the shape its section says, and the rest of it is still a proposal.
 
 ## 1. The shift
 
@@ -72,9 +72,13 @@ Skills are named capabilities, not models. The vocabulary of the 0.1 draft:
 
 Each skill carries parameters (languages, streaming, context size, latency, quality tier). A requester may name preferred vendors or models, but the default is to ask for the skill.
 
-### 4.2 Requirements are properties, not model names (Proposed)
+### 4.2 Requirements are properties, not model names (Adopted in part, wallet 0.36)
 
 A model is described by a set of key-value properties. Its real name is one optional property among them. A requester states what it needs as **conditions on properties**, and the wallet checks those conditions against the visitor's models. A requester may state requirements; it does not have to.
+
+**What was adopted** (the contract text is [spec/CONTRACT.md](../spec/CONTRACT.md) sections 3.3 and 3.5): four keys — `input`, `output`, `context`, `runs` — with the grant's own `runs` values (`local`, `home-server`, `api-key`), the operators `includes`, `min` and `oneOf` (an array, a number and an array as the short forms), carried as `needs` inside a skill's `models` block next to `require`/`recommend`, which stay names. The wallet answers with verdicts, never values, in the grant's `can`, at most four keys, and `grant.capabilities` says whether the wallet understood the ask at all. The wallet, not the site, is where the properties live, and a skill's own built-in rule comes before them.
+
+**What was not adopted:** `name`, `languages`, `latency`, `speed`, `level`, `bench.*` and `cost` as condition keys (`level` and `bench.*` for the reasons of Section 12: a number nobody can measure becomes a vendor's ranking in disguise); several conditions inside one skill (`tasks` with `requires`/`recommends` each); and the spellings `requires`/`recommends` themselves, which are one letter from `require`/`recommend` and would be a typo minefield. Named slots inside `models` remain the way to ask for two different text models, when a real case appears.
 
 A starter vocabulary of standard keys:
 
