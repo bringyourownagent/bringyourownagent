@@ -768,6 +768,28 @@
         }
       },
       "expect": { "ok": false, "errors": [{ "code": "abilities-invalid", "path": "/skills/text.generate/models/abilities" }], "warnings": [] }
+    },
+    {
+      "name": "the icon site's text-only manifest before the pictures release",
+      "manifest": {
+        "byoa": "0.1-draft",
+        "purpose": { "summary": "Draws app-icon candidates as SVG code, one drawing per request" },
+        "skills": {
+          "text.generate": {
+            "required": true,
+            "models": {
+              "count": 1,
+              "kind": "any",
+              "needs": { "output": ["text"] },
+              "recommend": ["anthropic/claude-sonnet-5.5", "agent/*"],
+              "why": "Writes clean SVG code from your description, and from a picture when your model can read one."
+            }
+          }
+        },
+        "privacy": "public",
+        "expectedCost": { "perSession": "0.50 USD" }
+      },
+      "expect": { "ok": true, "errors": [], "warnings": [] }
     }
   ]
 }
