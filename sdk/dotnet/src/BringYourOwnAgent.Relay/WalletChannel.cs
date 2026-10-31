@@ -87,7 +87,7 @@ public sealed class WalletChannel
     readonly TaskCompletionSource _welcomed = new(TaskCreationOptions.RunContinuationsAsynchronously);
     byte[] _buffer = new byte[SmallBuffer];                  // one buffer for incoming messages, grown for a big one and given back after it
     int _nextId;
-    volatile GrantView _view = new([], TextLimits.NoLimits, new Dictionary<string, ModelView[]>(), []);
+    volatile GrantView _view = new([], TextLimits.NoLimits, [], [], new Dictionary<string, ModelView[]>());
 
     /// <param name="ws">The accepted web socket of the wallet.</param>
     /// <param name="options">The site's settings (the participants of one skill's list are read up to <see cref="RelayOptions.MaxModels"/>).</param>
@@ -108,8 +108,11 @@ public sealed class WalletChannel
     /// <summary>What the site is held to, as the wallet's <c>hello</c> or its last <c>grant</c> frame said.</summary>
     public TextLimits Limits => _view.Limits;
 
+    /// <summary>The participants of <c>text.generate</c> this site was given, in the visitor's order (CONTRACT.md §3.3), as in 0.0.3.</summary>
+    public ModelView[] Models => _view.Models;
+
     /// <summary>The participants this site was given, one list per skill, in the visitor's order (CONTRACT.md §3.3).</summary>
-    public IReadOnlyDictionary<string, ModelView[]> Models => _view.Models;
+    public IReadOnlyDictionary<string, ModelView[]> ModelsBySkill => _view.ModelsBySkill;
 
     /// <summary>The feature names the wallet says it supports (wallet 0.36; empty from an older wallet) (CONTRACT.md §3.3).</summary>
     public IReadOnlyList<string> Capabilities => _view.Capabilities;
@@ -165,7 +168,7 @@ public sealed class WalletChannel
                 await channel.SendAsync(new { type = "welcome", pairing = w.Token, manifest = w.Manifest }, ct);
                 channel._welcomed.TrySetResult();
                 log.LogInformation("wallet connected, skills {Skills}, model lists {Models}, capabilities {Capabilities}, parallel {Parallel}",
-                    channel.Skills.Count, channel.Models.Count, channel.Capabilities.Count, channel.Limits.MaxParallelCalls);
+                    channel.Skills.Count, channel.ModelsBySkill.Count, channel.Capabilities.Count, channel.Limits.MaxParallelCalls);
                 break;
             }
 
@@ -187,7 +190,7 @@ public sealed class WalletChannel
                         // a grant frame carries only the models and the limits (CONTRACT-DIRECT.md §4): the skills and the capabilities the visitor allowed stay as they are
                         channel.SetGrant(frame.Skills, frame.Capabilities, frame.Limits, frame.HasLimits, frame.Models, keepSkills: true);
                         log.LogInformation("grant changed: skills {Skills}, model lists {Models}, parallel {Parallel}",
-                            channel.Skills.Count, channel.Models.Count, channel.Limits.MaxParallelCalls);
+                            channel.Skills.Count, channel.ModelsBySkill.Count, channel.Limits.MaxParallelCalls);
                         break;
                     case "bye":
                         await channel.CloseAsync(WebSocketCloseStatus.NormalClosure, "bye");
@@ -324,7 +327,8 @@ public sealed class WalletChannel
         if (!keepSkills || skills is not null) Skills = new HashSet<string>(skills ?? [], StringComparer.Ordinal);
         var caps = capabilities is null && keepSkills ? _view.Capabilities : CleanCapabilities(capabilities);
         var parsed = TextLimitsOf(limits, hasLimits);
-        _view = new GrantView([.. Skills.Order(StringComparer.Ordinal)], parsed, ModelsOf(models, Math.Max(1, _options.MaxModels)), caps);
+        var bySkill = ModelsOf(models, Math.Max(1, _options.MaxModels));
+        _view = new GrantView([.. Skills.Order(StringComparer.Ordinal)], parsed, bySkill.TryGetValue("text.generate", out var text) ? text : [], caps, bySkill);
     }
 
     /// <summary>The wallet's closed capability list (CONTRACT.md §3.3): unknown names are dropped, repeats too.</summary>

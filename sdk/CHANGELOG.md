@@ -5,7 +5,7 @@ The libraries share one version number and one rule set. Dates are UTC.
 ## Unreleased (the next shared version)
 
 - Rule change: a skill's `models` block may state `needs` (conditions on `input`, `output`, `context`, `runs`), `kind` (`model`, `agent`, `any`), `onMismatch` (`drop`, `show`) and `abilities`, and a block without `count` is read like any other (rules M22–M28). `purpose.limits.maxFrameBytes` is a known limit. Python, Node.js and .NET implement all of it and pass the same 200 shared test vectors; every manifest the 0.0.3 libraries accept is still accepted.
-- The Node.js and .NET relays pass the grant's `capabilities`, every skill's models and their `can`/`abilities` verdicts on to the page, and the .NET relay's job cancel tells the wallet with the `cancel` frame (wallet 0.36).
+- The Node.js and .NET relays pass the grant's `capabilities`, every skill's models (`modelsBySkill`; `models` stays the `text.generate` list, so a page written for 0.0.3 keeps working) and their `can`/`abilities` verdicts on to the page, and the .NET relay's job cancel tells the wallet with the `cancel` frame (wallet 0.36).
 - A failed call (`ok: false`) may carry `reason`, one of `timeout`, `cancelled`, `limit`, `failed` (wallet 0.36). The .NET relay hands it to the page in `job/poll` and treats any other word as `failed`; it never says how the visitor's setup is made.
 
 ## 0.0.3 (2026-10-28)
