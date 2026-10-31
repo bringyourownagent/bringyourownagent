@@ -113,6 +113,38 @@ const isString = (v) => typeof v === "string";
 
 const isCount = (v) => Number.isInteger(v) && v >= 0 && v <= 9007199254740991;
 
+// The closed list of CONTRACT.md section 3.3 (wallet 0.36): feature names a site may find in grant.capabilities.
+const CAPABILITIES = ["needs", "can", "kind", "cancel", "image.generate", "images-in", "parts", "frame-limit"];
+const CAN_NAMES = ["input", "output", "context", "runs"];
+
+// The wallet's verdicts for the conditions (can) or abilities (abilities) the site asked about: booleans only, at most four
+// keys, only names a site can ask about. Anything else is dropped before the page sees it.
+function shapeVerdicts(value, allowed) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const out = {};
+  let n = 0;
+  for (const key of Object.keys(value)) {
+    if (n >= 4) break;
+    if (allowed && !allowed.includes(key)) continue;
+    if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/.test(key)) continue;
+    if (typeof value[key] !== "boolean") continue;
+    out[key] = value[key];
+    n++;
+  }
+  return n ? out : undefined;
+}
+
+// grant.capabilities: the closed list, repeats and unknown names dropped; an empty array is kept (a wallet that understands none).
+function shapeCapabilities(value) {
+  if (!Array.isArray(value)) return undefined;
+  const out = [];
+  for (const name of value) {
+    if (CAPABILITIES.includes(name) && !out.includes(name)) out.push(name);
+    if (out.length === CAPABILITIES.length) break;
+  }
+  return out;
+}
+
 // The limits the site was given for text, in the manifest's names; anything else is dropped.
 function shapeLimits(limits) {
   if (!limits || typeof limits !== "object") return undefined;
@@ -123,7 +155,8 @@ function shapeLimits(limits) {
   return Object.keys(out).length ? out : undefined;
 }
 
-// The models the site was given, per skill: { ref, name, id (or null), runs }; at most 64 a skill, short strings only.
+// The models the site was given, per skill: { ref, name, id (or null), runs, kind, can?, abilities? }; at most 8 skills,
+// 64 a skill, short strings only.
 function shapeModels(models) {
   if (!models || typeof models !== "object" || Array.isArray(models)) return undefined;
   const out = {};
@@ -132,13 +165,21 @@ function shapeModels(models) {
     if (!/^[a-z][a-z0-9-]*\.[a-z][a-z0-9-]*$/.test(skill) || !Array.isArray(list)) continue;
     out[skill] = list.slice(0, 64)
       .filter((m) => m && isString(m.ref) && m.ref.length <= 16 && isString(m.name))
-      .map((m) => ({
-        ref: m.ref,
-        name: m.name.slice(0, 120),
-        id: isString(m.id) ? m.id.slice(0, 120) : null,
-        runs: ["local", "home-server", "api-key"].includes(m.runs) ? m.runs : "api-key",
-        kind: m.kind === "agent" ? "agent" : "model",
-      }));
+      .map((m) => {
+        const kind = m.kind === "agent" ? "agent" : "model";
+        const shaped = {
+          ref: m.ref,
+          name: m.name.slice(0, 120),
+          id: isString(m.id) ? m.id.slice(0, 120) : null,
+          runs: ["local", "home-server", "api-key"].includes(m.runs) ? m.runs : "api-key",
+          kind,
+        };
+        const can = shapeVerdicts(m.can, CAN_NAMES);
+        if (can) shaped.can = can;
+        const abilities = kind === "agent" ? shapeVerdicts(m.abilities, null) : undefined;
+        if (abilities) shaped.abilities = abilities;
+        return shaped;
+      });
   }
   return Object.keys(out).length ? out : undefined;
 }
@@ -150,6 +191,8 @@ function shape(type, result) {
     const granted = { grantId: result.grantId, skills: result.skills.filter(isString), expiresAt: result.expiresAt };
     const limits = shapeLimits(result.limits);
     if (limits) granted.limits = limits;
+    const capabilities = shapeCapabilities(result.capabilities);
+    if (capabilities) granted.capabilities = capabilities;
     const models = shapeModels(result.models);
     if (models) granted.models = models;
     return granted;
