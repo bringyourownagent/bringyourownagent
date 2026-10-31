@@ -29,7 +29,7 @@ internal static class UnitTests
     {
         Check.Run("library version matches the package version", () =>
         {
-            Check.Equal("0.0.3", LibraryInfo.Version);
+            Check.Equal("0.0.4", LibraryInfo.Version);
             var informational = typeof(Gate).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()!.InformationalVersion;
             Check.Equal(LibraryInfo.Version, informational.Split('+')[0], "assembly informational version");
         });

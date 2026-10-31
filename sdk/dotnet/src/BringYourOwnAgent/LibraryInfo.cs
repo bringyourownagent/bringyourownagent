@@ -9,5 +9,5 @@ namespace BringYourOwnAgent;
 public static class LibraryInfo
 {
     /// <summary>Version of this library (not of the protocol). The Python and Node.js libraries of the same version implement the same rules.</summary>
-    public static string Version => "0.0.3";
+    public static string Version => "0.0.4";
 }

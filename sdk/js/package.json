@@ -1,6 +1,6 @@
 {
   "name": "bringyourownagent",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "Early draft reference implementation of BYOA (Bring Your Own Agent): manifest validation, the call gate, and the site's side of the wallet connection (page helpers and a relay for the direct link).",
   "keywords": [
     "byoa",
