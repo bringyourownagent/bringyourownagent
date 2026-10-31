@@ -37,6 +37,12 @@ public sealed partial class WalletEngine
     public static TimeSpan? TextRouteTimeout { get; set; }
 
     /// <summary>
+    /// A call that fails with less than this much of its own time left ran out of it: the source's own limit timer ends the attempt at the same
+    /// instant as the route's, and the two can differ by a timer tick, so "no time left" cannot be read as exactly zero.
+    /// </summary>
+    static readonly TimeSpan RouteDeadlineSlack = TimeSpan.FromMilliseconds(50);
+
+    /// <summary>
     /// Allowing a site waits for the models to do their warm-up job (see <see cref="WalletSettings.WarmUpOnConnect"/>), but never
     /// indefinitely: a cold disk load of a big model can take a couple of minutes, a program that never answers must not hold a site.
     /// </summary>
@@ -1798,7 +1804,7 @@ public sealed partial class WalletEngine
         }
 
         // The call's own time (its maxCallSeconds) was used up: the site is told "timeout", and every slot the call held is free again.
-        var timedOut = routeBudget > TimeSpan.Zero && ((routeCt.IsCancellationRequested && !ct.IsCancellationRequested) || Remaining(routeDeadline) <= TimeSpan.Zero);
+        var timedOut = routeBudget > TimeSpan.Zero && ((routeCt.IsCancellationRequested && !ct.IsCancellationRequested) || Remaining(routeDeadline) <= RouteDeadlineSlack);
         if (timedOut) stopReason = "text route timed out";
         entry.Milliseconds = (int)Stopwatch.GetElapsedTime(started).TotalMilliseconds;
         entry.Cost = Money.ToSpec(totalCost);
