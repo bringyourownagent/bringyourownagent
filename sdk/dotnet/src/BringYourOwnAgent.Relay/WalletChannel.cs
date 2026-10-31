@@ -87,7 +87,7 @@ public sealed class WalletChannel
     readonly TaskCompletionSource _welcomed = new(TaskCreationOptions.RunContinuationsAsynchronously);
     byte[] _buffer = new byte[SmallBuffer];                  // one buffer for incoming messages, grown for a big one and given back after it
     int _nextId;
-    volatile GrantView _view = new([], TextLimits.NoLimits, [], [], new Dictionary<string, ModelView[]>());
+    volatile GrantView _view = new([], TextLimits.NoLimits, [], null, new Dictionary<string, ModelView[]>());
 
     /// <param name="ws">The accepted web socket of the wallet.</param>
     /// <param name="options">The site's settings (the participants of one skill's list are read up to <see cref="RelayOptions.MaxModels"/>).</param>
@@ -115,7 +115,7 @@ public sealed class WalletChannel
     public IReadOnlyDictionary<string, ModelView[]> ModelsBySkill => _view.ModelsBySkill;
 
     /// <summary>The feature names the wallet says it supports (wallet 0.36; empty from an older wallet) (CONTRACT.md §3.3).</summary>
-    public IReadOnlyList<string> Capabilities => _view.Capabilities;
+    public IReadOnlyList<string>? Capabilities => _view.Capabilities;
 
     /// <summary>What the hub tells the page (skills, limits, participants per skill, capabilities).</summary>
     public GrantView View() => _view;
@@ -168,7 +168,7 @@ public sealed class WalletChannel
                 await channel.SendAsync(new { type = "welcome", pairing = w.Token, manifest = w.Manifest }, ct);
                 channel._welcomed.TrySetResult();
                 log.LogInformation("wallet connected, skills {Skills}, model lists {Models}, capabilities {Capabilities}, parallel {Parallel}",
-                    channel.Skills.Count, channel.ModelsBySkill.Count, channel.Capabilities.Count, channel.Limits.MaxParallelCalls);
+                    channel.Skills.Count, channel.ModelsBySkill.Count, channel.Capabilities?.Count ?? 0, channel.Limits.MaxParallelCalls);
                 break;
             }
 
@@ -337,9 +337,9 @@ public sealed class WalletChannel
     /// <summary>The wallet's closed capability list (CONTRACT.md §3.3): unknown names are dropped, repeats too.</summary>
     static readonly string[] CapabilityNames = { "needs", "can", "kind", "cancel", "image.generate", "images-in", "parts", "frame-limit" };
 
-    static string[] CleanCapabilities(string[]? names)
+    static string[]? CleanCapabilities(string[]? names)
     {
-        if (names is null) return [];
+        if (names is null) return null;
         var seen = new HashSet<string>(StringComparer.Ordinal);
         var result = new List<string>();
         foreach (var name in names)

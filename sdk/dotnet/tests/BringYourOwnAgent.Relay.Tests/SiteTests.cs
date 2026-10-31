@@ -161,7 +161,7 @@ public sealed class SiteTests : IAsyncLifetime
         Assert.Equal(["m1", "m2", "m3", "m4"], models.Select(m => m.GetProperty("ref").GetString()));
         Assert.Equal(["model", "model", "model", "agent"], models.Select(m => m.GetProperty("kind").GetString()));
         Assert.Equal("Claude Code (Opus)", models[3].GetProperty("name").GetString());
-        Assert.Equal(0, connected.GetProperty("capabilities").GetArrayLength());          // the fake wallet sends none: the page is told "understands nothing", not left to guess
+        Assert.Equal(System.Text.Json.JsonValueKind.Null, connected.GetProperty("capabilities").ValueKind);   // the fake wallet sends none (an older wallet): null, which is not "an empty list"
         Assert.Equal(60000, connected.GetProperty("limits").GetProperty("maxTextChars").GetInt32());
 
         // exactly what the page sends: a system message naming the participant, and one user message with the transcript

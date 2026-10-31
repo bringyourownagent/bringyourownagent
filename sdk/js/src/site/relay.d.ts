@@ -38,7 +38,7 @@ export interface Grant {
   /** The limits it holds the site to; null from an older wallet. */
   limits: Partial<Record<'maxTextChars' | 'maxAnswerTokens' | 'maxCallSeconds' | 'maxParallelCalls' | 'maxCallsPerMinute', number>> | null;
   /** The feature names of the closed list the wallet supports (wallet 0.36); empty when it sent none (CONTRACT.md section 3.3). */
-  capabilities: string[];
+  capabilities: string[] | null; // null: the wallet sent none (an older wallet that cannot check needs); []: it understands none
   /** The `text.generate` participants, as before (the calls of this relay are text-only). */
   models: GrantedModel[];
   /** Every skill's participants, one list per skill, as the wallet sent them. */

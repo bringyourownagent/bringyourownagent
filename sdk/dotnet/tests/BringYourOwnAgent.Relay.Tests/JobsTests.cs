@@ -203,9 +203,14 @@ public class JobsTests
         Assert.NotNull(first.Id);
         Assert.NotNull(second.Id);
         Assert.Equal("busy", jobs.Start(Rooms.A, Ask(token, "m3")).Error);             // the wallet may not be given more at once
-        var ids = new List<int>();
-        for (var i = 0; i < 2; i++) ids.Add((await wallet.NextOf("call")).GetProperty("id").GetInt32());
-        await wallet.Send(WalletFrames.Result(ids[0], true, "one"));
+        var ids = new Dictionary<string, int>();
+        for (var i = 0; i < 2; i++)
+        {
+            var call = await wallet.NextOf("call");          // the two frames come in either order: tell them by the participant they name
+            ids[call.GetProperty("params").GetProperty("model").GetString()!] = call.GetProperty("id").GetInt32();
+        }
+
+        await wallet.Send(WalletFrames.Result(ids["m1"], true, "one"));
         Assert.True((await jobs.PollAsync(Rooms.A, first.Id, TimeSpan.FromSeconds(5), CancellationToken.None)).Ok);
         Assert.NotNull(jobs.Start(Rooms.A, Ask(token, "m3")).Id);                      // one finished: there is room again
         await wallet.Ws.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "bye", CancellationToken.None);

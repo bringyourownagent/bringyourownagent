@@ -581,7 +581,7 @@ export class Relay extends EventEmitter {
       skills,
       expiresAt: typeof frame.grant?.expiresAt === 'string' ? frame.grant.expiresAt : null,
       limits: cleanLimits(frame.grant?.limits),
-      capabilities: cleanCapabilities(frame.grant?.capabilities) ?? [],
+      capabilities: cleanCapabilities(frame.grant?.capabilities) ?? null,
       models: cleanModels(frame.grant?.models),
       modelsBySkill: cleanModelsBySkill(frame.grant?.models),
     };

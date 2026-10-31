@@ -41,7 +41,7 @@ test('an older wallet tells neither: no limits, no models, four calls in flight 
   assert.equal(wallet.grant.limits, null);
   assert.deepEqual(wallet.grant.models, []);
   assert.deepEqual(wallet.grant.modelsBySkill, {});
-  assert.deepEqual(wallet.grant.capabilities, []);        // it said nothing about what it understands
+  assert.equal(wallet.grant.capabilities, null);        // it said nothing: an older wallet, not one that understands none
   assert.equal(wallet.maxInFlight, 4);
 });
 

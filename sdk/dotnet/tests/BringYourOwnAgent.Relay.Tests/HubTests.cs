@@ -308,6 +308,7 @@ public class HubTests
         Assert.Equal(4, channel.Limits.MaxParallelCalls);                    // CONTRACT-DIRECT.md §4: 4 when the hello has no limits
         Assert.Equal(100_000, channel.Limits.MaxTextChars);
         Assert.Empty(channel.Models);                                        // a site that asked for no models gets none
+        Assert.Null(channel.Capabilities);                                    // a hello with no capabilities is an older wallet: null, not an empty list
         Assert.False(channel.Knows("m1"));
         await wallet.Ws.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "bye", CancellationToken.None);
         await run.WaitAsync(TimeSpan.FromSeconds(5));
