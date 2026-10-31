@@ -171,12 +171,19 @@ static class WalletFrames
 /// <summary>A hello frame as a wallet sends it, with a grant the tests can shape.</summary>
 static class Hello
 {
-    public static string Json(string? session, string? pairing, string[]? skills = null, string? limits = null, string? models = null)
+    /// <param name="models">One <c>text.generate</c> list, as an array (the common case).</param>
+    /// <param name="capabilities">The closed capability list as an array; appended to the grant when not null.</param>
+    /// <param name="modelsBySkill">A whole <c>models</c> object (<c>{"text.generate":[...],"image.generate":[...]}</c>);
+    /// it wins over <paramref name="models"/> when given.</param>
+    public static string Json(string? session, string? pairing, string[]? skills = null, string? limits = null, string? models = null,
+                              string? capabilities = null, string? modelsBySkill = null)
     {
         var grant = new StringBuilder("{");
         grant.Append("\"skills\":[").Append(string.Join(',', (skills ?? ["text.generate"]).Select(s => $"\"{s}\""))).Append(']');
+        if (capabilities is not null) grant.Append(",\"capabilities\":").Append(capabilities);
         if (limits is not null) grant.Append(",\"limits\":").Append(limits);
-        if (models is not null) grant.Append(",\"models\":{\"text.generate\":").Append(models).Append('}');
+        if (modelsBySkill is not null) grant.Append(",\"models\":").Append(modelsBySkill);
+        else if (models is not null) grant.Append(",\"models\":{\"text.generate\":").Append(models).Append('}');
         grant.Append('}');
         return $$"""{"type":"hello","v":"0.1","session":{{Quote(session)}},"pairing":{{Quote(pairing)}},"wallet":{"name":"Fake wallet","version":"0.1"},"grant":{{grant}}}""";
     }

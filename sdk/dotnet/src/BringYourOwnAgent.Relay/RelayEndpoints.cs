@@ -90,13 +90,13 @@ public static class RelayEndpoints
             return Results.Ok(new { session = issued.Code, link = issued.Link, check = issued.Check, expiresIn = (int)hub.CodeLife.TotalSeconds });
         });
 
-        // has the wallet come with that code? "waiting", "connected" (with the pairing token and the participants) or "expired"
+        // has the wallet come with that code? "waiting", "connected" (with the pairing token, the participants of every skill and the capabilities) or "expired"
         app.MapPost(Path("wait"), (string room, RelayRequest r, DirectHub hub) =>
         {
             if (Bad(room) is { } bad) return bad;
             var (state, pairing) = hub.CodeState(room, r.Session);
             var grant = pairing is null ? null : hub.Grant(room, pairing);
-            return Results.Ok(new { state, pairing, models = grant?.Models, limits = grant?.Limits });
+            return Results.Ok(new { state, pairing, models = grant?.Models, limits = grant?.Limits, capabilities = grant?.Capabilities });
         });
 
         // the page stopped waiting: the code is dead
@@ -112,7 +112,7 @@ public static class RelayEndpoints
             if (Bad(room) is { } bad) return bad;
             var state = hub.Status(room, r.Pairing);
             var grant = hub.Grant(room, r.Pairing);
-            return Results.Ok(new { state = state.ToString().ToLowerInvariant(), models = grant?.Models, limits = grant?.Limits, skills = grant?.Skills });
+            return Results.Ok(new { state = state.ToString().ToLowerInvariant(), models = grant?.Models, limits = grant?.Limits, skills = grant?.Skills, capabilities = grant?.Capabilities });
         });
 
         // the page lets the wallet go for good: the server says «bye», closes the connection and forgets the pairing

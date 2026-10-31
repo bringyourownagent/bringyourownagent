@@ -5,6 +5,7 @@ using System.Linq;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
@@ -56,6 +57,7 @@ public sealed record WalletAnswer(WalletOutcome Outcome, string Text = "");
 /// <item>server → wallet: <c>{"type":"welcome","pairing":"&lt;token&gt;","manifest":"&lt;base64url&gt;"}</c> (the manifest string the link carried; after a pairing
 /// reconnect, the current one), or <c>{"type":"error","code":"bad-session"}</c> and a close;</item>
 /// <item>server → wallet: <c>{"type":"call","id":N,"skill":"text.generate","input":{...},"params":{...}}</c>;</item>
+/// <item>server → wallet: <c>{"type":"cancel","id":N}</c> when the site stops a call it still waits for (wallet 0.36);</item>
 /// <item>wallet → server: <c>{"type":"chunk","id":N,"text":"..."}</c> while the model writes, then
 /// <c>{"type":"result","id":N,"ok":true,"output":{"text":"..."}}</c> or <c>{"type":"result","id":N,"ok":false}</c>;</item>
 /// <item>wallet → server: <c>{"type":"grant","models":{...},"limits":{...}}</c> when the visitor changes what the site was given;</item>
@@ -65,7 +67,7 @@ public sealed record WalletAnswer(WalletOutcome Outcome, string Text = "");
 /// a wallet that is silent too long, trickles a message, or stops reading what the server sends is dropped (<see cref="WalletChannelLimits"/>).
 /// The wallet's text is the visitor's input: cleaned and cut like typed text (<see cref="WalletText"/>).
 /// A site that wants to call the wallet itself takes the channel from <see cref="DirectHub.Channel"/> and calls
-/// <see cref="CallAsync(string, object, object, int, TimeSpan, CancellationToken, Action{string})"/>.
+/// <see cref="CallAsync"/>.
 /// </summary>
 public sealed class WalletChannel
 {
@@ -85,10 +87,10 @@ public sealed class WalletChannel
     readonly TaskCompletionSource _welcomed = new(TaskCreationOptions.RunContinuationsAsynchronously);
     byte[] _buffer = new byte[SmallBuffer];                  // one buffer for incoming messages, grown for a big one and given back after it
     int _nextId;
-    volatile GrantView _view = new([], TextLimits.NoLimits, []);
+    volatile GrantView _view = new([], TextLimits.NoLimits, new Dictionary<string, ModelView[]>(), []);
 
     /// <param name="ws">The accepted web socket of the wallet.</param>
-    /// <param name="options">The site's settings (the participants of one grant are read up to <see cref="RelayOptions.MaxModels"/>).</param>
+    /// <param name="options">The site's settings (the participants of one skill's list are read up to <see cref="RelayOptions.MaxModels"/>).</param>
     /// <param name="limits">The timeouts; <see cref="WalletChannelLimits.Default"/> when nothing is said.</param>
     public WalletChannel(WebSocket ws, RelayOptions? options = null, WalletChannelLimits? limits = null)
     {
@@ -106,17 +108,24 @@ public sealed class WalletChannel
     /// <summary>What the site is held to, as the wallet's <c>hello</c> or its last <c>grant</c> frame said.</summary>
     public TextLimits Limits => _view.Limits;
 
-    /// <summary>The participants this site was given, in the visitor's order (CONTRACT.md §3.3).</summary>
-    public IReadOnlyList<ModelView> Models => _view.Models;
+    /// <summary>The participants this site was given, one list per skill, in the visitor's order (CONTRACT.md §3.3).</summary>
+    public IReadOnlyDictionary<string, ModelView[]> Models => _view.Models;
 
-    /// <summary>What the hub tells the page (skills, limits, participants, each with its kind).</summary>
+    /// <summary>The feature names the wallet says it supports (wallet 0.36; empty from an older wallet) (CONTRACT.md §3.3).</summary>
+    public IReadOnlyList<string> Capabilities => _view.Capabilities;
+
+    /// <summary>What the hub tells the page (skills, limits, participants per skill, capabilities).</summary>
     public GrantView View() => _view;
 
     /// <summary>Did the visitor allow this skill?</summary>
     public bool Has(string skill) => Skills.Contains(skill);
 
-    /// <summary>Is this ref one of the participants of the current grant? (A call may name nothing else.)</summary>
-    public bool Knows(string? reference) => reference is not null && Models.Any(m => string.Equals(m.Ref, reference, StringComparison.Ordinal));
+    /// <summary>Is this ref one of the participants of the current grant for <paramref name="skill"/>? (A call may name nothing else.)</summary>
+    public bool Knows(string skill, string? reference) =>
+        reference is not null && _view.ModelsOf(skill).Any(m => string.Equals(m.Ref, reference, StringComparison.Ordinal));
+
+    /// <summary>Is this ref one of the text participants of the current grant? (The job route asks for <c>text.generate</c> only.)</summary>
+    public bool Knows(string? reference) => Knows("text.generate", reference);
 
     /// <summary>How many calls are waiting for the wallet's result (the grant's <c>maxParallelCalls</c> is kept against this).</summary>
     public int Pending => _pending.Count;
@@ -126,7 +135,8 @@ public sealed class WalletChannel
 
     /// <summary>One incoming JSON message, read without copying it: only what the server uses.</summary>
     sealed record Frame(string? Type, string? Session, string? Pairing, int? Id, bool Ok, string? Text, string? Chunk,
-                        string[]? Skills = null, JsonElement? Models = null, JsonElement? Limits = null, bool HasLimits = false);
+                        string[]? Skills = null, JsonElement? Models = null, JsonElement? Limits = null, bool HasLimits = false,
+                        string[]? Capabilities = null);
 
     /// <summary>Serves one wallet connection until it closes.</summary>
     public static async Task RunAsync(WebSocket ws, DirectHub hub, ILogger log, CancellationToken ct, WalletChannelLimits? limits = null)
@@ -143,7 +153,7 @@ public sealed class WalletChannel
                 if (message.Value.Binary) continue;                                         // unknown frames are ignored
                 if (!TryRead(channel.Data(message.Value.Length), out var frame)) { await channel.CloseAsync(WebSocketCloseStatus.InvalidPayloadData, "malformed"); return; }
                 if (frame?.Type != "hello") continue;
-                channel.SetGrant(frame.Skills, frame.Limits, frame.HasLimits, frame.Models, keepSkills: false);
+                channel.SetGrant(frame.Skills, frame.Capabilities, frame.Limits, frame.HasLimits, frame.Models, keepSkills: false);
                 var welcome = hub.Accept(channel, frame.Session, frame.Pairing);
                 if (welcome is not { } w)
                 {
@@ -154,8 +164,8 @@ public sealed class WalletChannel
                 channel.Pairing = w.Token;
                 await channel.SendAsync(new { type = "welcome", pairing = w.Token, manifest = w.Manifest }, ct);
                 channel._welcomed.TrySetResult();
-                log.LogInformation("wallet connected, skills {Skills}, models {Models}, parallel {Parallel}",
-                    channel.Skills.Count, channel.Models.Count, channel.Limits.MaxParallelCalls);
+                log.LogInformation("wallet connected, skills {Skills}, model lists {Models}, capabilities {Capabilities}, parallel {Parallel}",
+                    channel.Skills.Count, channel.Models.Count, channel.Capabilities.Count, channel.Limits.MaxParallelCalls);
                 break;
             }
 
@@ -174,9 +184,9 @@ public sealed class WalletChannel
                         channel.Chunk(id, frame.Chunk);
                         break;
                     case "grant":
-                        // a grant frame carries only the models and the limits (CONTRACT-DIRECT.md §4): the skills the visitor allowed stay as they are
-                        channel.SetGrant(frame.Skills, frame.Limits, frame.HasLimits, frame.Models, keepSkills: true);
-                        log.LogInformation("grant changed: skills {Skills}, models {Models}, parallel {Parallel}",
+                        // a grant frame carries only the models and the limits (CONTRACT-DIRECT.md §4): the skills and the capabilities the visitor allowed stay as they are
+                        channel.SetGrant(frame.Skills, frame.Capabilities, frame.Limits, frame.HasLimits, frame.Models, keepSkills: true);
+                        log.LogInformation("grant changed: skills {Skills}, model lists {Models}, parallel {Parallel}",
                             channel.Skills.Count, channel.Models.Count, channel.Limits.MaxParallelCalls);
                         break;
                     case "bye":
@@ -206,10 +216,12 @@ public sealed class WalletChannel
     /// <param name="timeout">How long to wait: the wallet's own limit for a call may be up to 600 s, so a site's timeout is not shorter.</param>
     /// <param name="ct">Stops waiting; the call is then counted as cancelled.</param>
     /// <param name="onChunk">The whole text so far, each time a piece arrives.</param>
-    public Task<WalletAnswer> CallAsync(string skill, object input, object @params, int maxChars, TimeSpan timeout, CancellationToken ct, Action<string>? onChunk = null) =>
-        CallCoreAsync(skill, input, @params, Math.Max(1, maxChars), timeout, ct, onChunk);
+    /// <param name="onCallId">The id the call went to the wallet with, once the frame is out: <see cref="Cancel(int)"/> needs it to tell the wallet to stop.</param>
+    public Task<WalletAnswer> CallAsync(string skill, object input, object @params, int maxChars, TimeSpan timeout, CancellationToken ct, Action<string>? onChunk = null, Action<int>? onCallId = null) =>
+        CallCoreAsync(skill, input, @params, Math.Max(1, maxChars), timeout, ct, onChunk, onCallId);
 
-    async Task<WalletAnswer> CallCoreAsync(string skill, object input, object @params, int maxChars, TimeSpan timeout, CancellationToken ct, Action<string>? onChunk)
+    async Task<WalletAnswer> CallCoreAsync(string skill, object input, object @params, int maxChars, TimeSpan timeout, CancellationToken ct,
+                                           Action<string>? onChunk, Action<int>? onCallId)
     {
         if (_ws.State != WebSocketState.Open) return new WalletAnswer(WalletOutcome.Cancelled);
         var id = Interlocked.Increment(ref _nextId);
@@ -219,7 +231,11 @@ public sealed class WalletChannel
         {
             try { await _welcomed.Task.WaitAsync(timeout, ct); }
             catch (TimeoutException) { return new WalletAnswer(WalletOutcome.TimedOut); }
-            try { await SendAsync(new { type = "call", id, skill, input, @params }, ct); }
+            try
+            {
+                await SendAsync(new { type = "call", id, skill, input, @params }, ct);
+                onCallId?.Invoke(id);
+            }
             catch (TimeoutException) { return new WalletAnswer(WalletOutcome.Failed); }
             try { return await answer.Task.WaitAsync(timeout, ct); }
             catch (TimeoutException) { return new WalletAnswer(WalletOutcome.TimedOut); }
@@ -261,6 +277,26 @@ public sealed class WalletChannel
         return waiting.Answer.TrySetResult(new WalletAnswer(WalletOutcome.Text, clean));
     }
 
+    /// <summary>The site stops a call it still waits for: the wallet is told with <c>{"type":"cancel","id":N}</c>
+    /// (CONTRACT-DIRECT.md §4, wallet 0.36) and a late result for it is dropped. False when no such call is waiting.</summary>
+    public bool Cancel(int id)
+    {
+        if (!_pending.TryRemove(id, out var waiting)) return false;
+        waiting.Answer.TrySetResult(new WalletAnswer(WalletOutcome.Cancelled));
+        CancelCall(id);
+        return true;
+    }
+
+    /// <summary>Tells the wallet to stop a call, whether or not the server still waits for it (the job route has
+    /// already dropped the answer when this runs). Best effort: the wallet may be gone.</summary>
+    public void CancelCall(int id) => _ = SendCancelAsync(id);
+
+    async Task SendCancelAsync(int id)
+    {
+        try { await SendAsync(new { type = "cancel", id }, CancellationToken.None); }
+        catch (Exception e) when (e is OperationCanceledException or WebSocketException or ObjectDisposedException or InvalidOperationException or TimeoutException) { }
+    }
+
     /// <summary>The server lets this wallet go: «bye» and a close.</summary>
     public async Task ByeAsync()
     {
@@ -278,13 +314,31 @@ public sealed class WalletChannel
             if (_pending.TryRemove(id, out var waiting)) waiting.Answer.TrySetResult(new WalletAnswer(WalletOutcome.Cancelled));
     }
 
-    /// <summary>What the wallet told the site about its grant: the skills, the limits and the participants (hello, and later <c>grant</c> frames).
-/// <paramref name="keepSkills"/> is for a <c>grant</c> frame, which says nothing about skills: what the visitor allowed earlier stands.</summary>
-    void SetGrant(string[]? skills, JsonElement? limits, bool hasLimits, JsonElement? models, bool keepSkills)
+    /// <summary>What the wallet told the site about its grant: the skills, the capabilities, the limits and the participants (hello, and later <c>grant</c> frames).
+/// <paramref name="keepSkills"/> is for a <c>grant</c> frame, which says nothing about skills or capabilities: what the visitor allowed earlier stands.</summary>
+    void SetGrant(string[]? skills, string[]? capabilities, JsonElement? limits, bool hasLimits, JsonElement? models, bool keepSkills)
     {
         if (!keepSkills || skills is not null) Skills = new HashSet<string>(skills ?? [], StringComparer.Ordinal);
+        var caps = capabilities is null && keepSkills ? _view.Capabilities : CleanCapabilities(capabilities);
         var parsed = TextLimitsOf(limits, hasLimits);
-        _view = new GrantView([.. Skills.Order(StringComparer.Ordinal)], parsed, ModelsOf(models, Math.Max(1, _options.MaxModels)));
+        _view = new GrantView([.. Skills.Order(StringComparer.Ordinal)], parsed, ModelsOf(models, Math.Max(1, _options.MaxModels)), caps);
+    }
+
+    /// <summary>The wallet's closed capability list (CONTRACT.md §3.3): unknown names are dropped, repeats too.</summary>
+    static readonly string[] CapabilityNames = { "needs", "can", "kind", "cancel", "image.generate", "images-in", "parts", "frame-limit" };
+
+    static string[] CleanCapabilities(string[]? names)
+    {
+        if (names is null) return [];
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var result = new List<string>();
+        foreach (var name in names)
+        {
+            if (!CapabilityNames.Contains(name) || !seen.Add(name)) continue;
+            result.Add(name);
+            if (result.Count == CapabilityNames.Length) break;
+        }
+        return [.. result];
     }
 
     /// <summary>The limits as the wallet states them; a bad or missing number becomes the contract's default, never «no limit».
@@ -306,28 +360,40 @@ public sealed class WalletChannel
                 : fallback;
     }
 
-    /// <summary>The participants of the grant: <c>{"text.generate":[{ref,name,id,runs}]}</c> (CONTRACT.md §3.3). Everything is cut and cleaned
-    /// here: a name, an id and a <c>runs</c> text are strings from the wallet, shown to the visitor as text and never as markup.</summary>
-    static ModelView[] ModelsOf(JsonElement? models, int maxModels)
+    /// <summary>The participants of the grant, one list per skill: <c>{"text.generate":[{ref,name,id,runs}],"image.generate":[...]}</c>
+    /// (CONTRACT.md §3.3). Everything is cut and cleaned here: a name, an id, a <c>runs</c> text and a <c>can</c>/<c>abilities</c>
+    /// key are strings from the wallet, shown to the visitor as text and never as markup; verdicts are booleans only, at most four
+    /// keys each, and only the properties or abilities the site can ask about.</summary>
+    static Dictionary<string, ModelView[]> ModelsOf(JsonElement? models, int maxModels)
     {
-        if (models is not { ValueKind: JsonValueKind.Object } o || !o.TryGetProperty("text.generate", out var list) || list.ValueKind != JsonValueKind.Array) return [];
-        var seen = new HashSet<string>(StringComparer.Ordinal);
-        var result = new List<ModelView>();
-        foreach (var item in list.EnumerateArray())
+        var result = new Dictionary<string, ModelView[]>(StringComparer.Ordinal);
+        if (models is not { ValueKind: JsonValueKind.Object } o) return result;
+        var skills = 0;
+        foreach (var skill in o.EnumerateObject())
         {
-            if (result.Count >= maxModels) break;
-            if (item.ValueKind != JsonValueKind.Object) continue;
-            var reference = Str(item, "ref", 16);
-            if (reference is null || !IsRef(reference) || !seen.Add(reference)) continue;
-            var id = Str(item, "id", 128);
-            var name = Str(item, "name", 64) ?? reference;
-            // an agent of the visitor's own can search the web and may take minutes; a model answers from its own knowledge. The wallet says which
-            // (`kind`, also when the visitor hid the names); an older wallet does not, and then an id «agent/...» is the only sign there is
-            var kind = Str(item, "kind", 16);
-            var agent = kind is not null ? kind == "agent" : id is not null && id.StartsWith("agent/", StringComparison.OrdinalIgnoreCase);
-            result.Add(new ModelView(reference, name, id, Str(item, "runs", 40) ?? "", agent ? "agent" : "model"));
+            if (skills >= MaxSkills || result.ContainsKey(skill.Name)) continue;
+            if (!IsSkillId(skill.Name) || skill.Value.ValueKind != JsonValueKind.Array) continue;
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            var list = new List<ModelView>();
+            foreach (var item in skill.Value.EnumerateArray())
+            {
+                if (list.Count >= maxModels) break;
+                if (item.ValueKind != JsonValueKind.Object) continue;
+                var reference = Str(item, "ref", 16);
+                if (reference is null || !IsRef(reference) || !seen.Add(reference)) continue;
+                var id = Str(item, "id", 128);
+                var name = Str(item, "name", 64) ?? reference;
+                // an agent of the visitor's own can search the web and may take minutes; a model answers from its own knowledge. The wallet says which
+                // (`kind`, also when the visitor hid the names); an older wallet does not, and then an id «agent/...» is the only sign there is
+                var kind = Str(item, "kind", 16);
+                var agent = kind is not null ? kind == "agent" : id is not null && id.StartsWith("agent/", StringComparison.OrdinalIgnoreCase);
+                list.Add(new ModelView(reference, name, id, Str(item, "runs", 40) ?? "", agent ? "agent" : "model",
+                                       BoolMap(item, "can", CanNames), agent ? BoolMap(item, "abilities", null) : null));
+            }
+            result[skill.Name] = [.. list];
+            skills++;
         }
-        return [.. result];
+        return result;
 
         static bool IsRef(string r) => r.Length is >= 1 and <= 16 && r.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_' or '.');
 
@@ -338,6 +404,38 @@ public sealed class WalletChannel
             return cleaned.Length == 0 ? null : cleaned;
         }
     }
+
+    /// <summary>The most skills whose model lists are read out of one grant (the extension reads eight too).</summary>
+    const int MaxSkills = 8;
+
+    /// <summary>The properties a site may ask about in <c>needs</c>; a verdict for any other name is dropped.</summary>
+    static readonly string[] CanNames = { "context", "input", "output", "runs" };
+
+    static readonly Regex SkillIdPattern = new(@"\A[a-z][a-z0-9-]*\.[a-z][a-z0-9-]*\z", RegexOptions.CultureInvariant);
+
+    static bool IsSkillId(string name) => SkillIdPattern.IsMatch(name);
+
+    /// <summary>A verdict object of the grant's entry (<c>can</c>, <c>abilities</c>): boolean values only, at most four keys,
+    /// only names the site can ask about (<paramref name="allowed"/>, or any safe ability name when it is null), cleaned like
+    /// any other field from a wallet.</summary>
+    static IReadOnlyDictionary<string, bool>? BoolMap(JsonElement entry, string name, string[]? allowed)
+    {
+        if (!entry.TryGetProperty(name, out var value) || value.ValueKind != JsonValueKind.Object) return null;
+        var map = new Dictionary<string, bool>(StringComparer.Ordinal);
+        foreach (var property in value.EnumerateObject())
+        {
+            if (map.Count >= 4) break;
+            if (allowed is not null && !allowed.Contains(property.Name)) continue;
+            if (!IsVerdictName(property.Name)) continue;
+            if (property.Value.ValueKind is not (JsonValueKind.True or JsonValueKind.False)) continue;
+            map[property.Name] = property.Value.GetBoolean();
+        }
+        return map.Count == 0 ? null : map;
+    }
+
+    /// <summary>A safe key for <c>can</c> or <c>abilities</c>: short, and only letters, digits and <c>.-_:</c> (the vocabulary and <c>x-</c> names fit).</summary>
+    static bool IsVerdictName(string name) =>
+        name.Length is >= 1 and <= 64 && name.All(c => char.IsAsciiLetterOrDigit(c) || c is '.' or '-' or '_' or ':');
 
     /// <summary>Writes one message within <see cref="WalletChannelLimits.Send"/>; a wallet that does not take it in is dropped (TimeoutException).</summary>
     async Task SendAsync(object message, CancellationToken ct)
@@ -432,9 +530,12 @@ public sealed class WalletChannel
             string[]? skills = null;
             if (Array(grant, "skills") is { } skillsNode)
                 skills = skillsNode.EnumerateArray().Where(x => x.ValueKind == JsonValueKind.String).Select(x => x.GetString()!).Take(32).ToArray();
+            string[]? capabilities = null;
+            if (Array(grant, "capabilities") is { } capabilitiesNode)
+                capabilities = capabilitiesNode.EnumerateArray().Where(x => x.ValueKind == JsonValueKind.String).Select(x => x.GetString()!).Take(32).ToArray();
             frame = new Frame(Str(root, "type"), Str(root, "session"), Str(root, "pairing"), id, ok, text,
                               root.TryGetProperty("text", out var c) && c.ValueKind == JsonValueKind.String ? c.GetString() : null,
-                              skills, modelsNode?.Clone(), limitsNode?.Clone(), limitsNode is not null);
+                              skills, modelsNode?.Clone(), limitsNode?.Clone(), limitsNode is not null, capabilities);
             return true;
         }
         catch (JsonException) { return false; }

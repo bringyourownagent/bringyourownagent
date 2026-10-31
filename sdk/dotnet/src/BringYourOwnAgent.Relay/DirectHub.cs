@@ -5,6 +5,7 @@ using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Http;
 
 namespace BringYourOwnAgent.Relay;
@@ -26,10 +27,27 @@ public enum PairingState
 /// <param name="Id">The model's real name in the wallet's style (<c>qwen/qwen3.5-4b</c>, <c>agent/claude-code-opus</c>); null when the visitor hid the names.</param>
 /// <param name="Runs">Where it runs (<c>local</c>, <c>api-key</c>, <c>subscription</c>), as the wallet said it.</param>
 /// <param name="Kind">"agent" when the wallet says so (<c>kind</c> of the grant's entry; an older wallet sends none, then when the model's id starts with <c>agent/</c>) (the wallet runs the visitor's own AI agent: it can search the web and may take minutes), else "model".</param>
-public sealed record ModelView(string Ref, string Name, string? Id, string Runs, string Kind);
+/// <param name="Can">Verdicts for the conditions the site asked about in <c>needs</c> (<c>{"input":true}</c>), never values; null when the wallet said none.</param>
+/// <param name="Abilities">For an agent entry, verdicts for the abilities the site asked about (<c>{"web.search":true}</c>); null when there are none.</param>
+public sealed record ModelView(
+    string Ref,
+    string Name,
+    string? Id,
+    string Runs,
+    string Kind,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyDictionary<string, bool>? Can = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyDictionary<string, bool>? Abilities = null);
 
 /// <summary>What the visitor allowed this site, as the wallet's hello (or a later <c>grant</c> frame) said.</summary>
-public sealed record GrantView(string[] Skills, TextLimits Limits, ModelView[] Models);
+/// <param name="Skills">The skills the visitor allowed, as the wallet's <c>grant.skills</c> said.</param>
+/// <param name="Limits">What the site is held to (CONTRACT.md §3.4).</param>
+/// <param name="Models">Every skill's participants, one list per skill (<c>text.generate</c>, <c>image.generate</c>...), as the wallet sent them (CONTRACT.md §3.3).</param>
+/// <param name="Capabilities">The feature names of the closed list the wallet supports (wallet 0.36); empty when it sent none.</param>
+public sealed record GrantView(string[] Skills, TextLimits Limits, IReadOnlyDictionary<string, ModelView[]> Models, string[] Capabilities)
+{
+    /// <summary>The participants of one skill, in the visitor's order; empty when the wallet gave none for it.</summary>
+    public ModelView[] ModelsOf(string skill) => Models.TryGetValue(skill, out var list) ? list : [];
+}
 
 /// <summary>
 /// The site's side of the BYOA «direct» transport (CONTRACT-DIRECT.md §5): one-time pairing codes for the
@@ -256,7 +274,7 @@ public sealed class DirectHub
         }
     }
 
-    /// <summary>The participants and limits this room's wallet last told the server (null: no live wallet).</summary>
+    /// <summary>The participants (one list per skill), the capabilities and the limits this room's wallet last told the server (null: no live wallet).</summary>
     public GrantView? Grant(string? room, string? pairing) => Channel(room, pairing)?.View();
 
     /// <summary>The page lets the wallet go for good: the connection is told «bye» and closed, the pairing is forgotten.</summary>

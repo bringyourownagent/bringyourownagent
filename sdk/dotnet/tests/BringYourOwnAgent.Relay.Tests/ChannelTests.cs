@@ -16,12 +16,13 @@ public class ChannelTests
 {
     /// <summary>A wallet connection over a real loopback socket, welcomed with a code for room <paramref name="room"/>.</summary>
     static async Task<(DirectHub Hub, WsPeer Wallet, string Token, Task Run, IDisposable Tcp)> Connect(
-        string? limits = Hello.SaneLimits, string? models = Hello.FourModels, string[]? skills = null, string room = Rooms.A)
+        string? limits = Hello.SaneLimits, string? models = Hello.FourModels, string[]? skills = null, string room = Rooms.A,
+        string? capabilities = null, string? modelsBySkill = null)
     {
         var hub = Rooms.Hub();
         var (server, wallet, tcp) = await WsPeer.Pair();
         var run = WalletChannel.RunAsync(server, hub, NullLogger.Instance, CancellationToken.None);
-        await wallet.Send(Hello.Json(hub.NewCode(room, "203.0.113.5"), null, skills, limits, models));
+        await wallet.Send(Hello.Json(hub.NewCode(room, "203.0.113.5"), null, skills, limits, models, capabilities, modelsBySkill));
         var welcome = await wallet.NextOf("welcome");
         return (hub, wallet, welcome.GetProperty("pairing").GetString()!, run, tcp);
     }
@@ -247,16 +248,16 @@ public class ChannelTests
     {
         var (hub, wallet, token, run, tcp) = await Connect();
         using var _t = tcp;
-        Assert.Equal(4, hub.Grant(Rooms.A, token)!.Models.Length);
+        Assert.Equal(4, hub.Grant(Rooms.A, token)!.ModelsOf("text.generate").Length);
         var changed = WalletFrames.Grant(
             """{"maxTextChars":20000,"maxAnswerTokens":1000,"maxCallSeconds":60,"maxParallelCalls":2,"maxCallsPerMinute":10}""",
             """[{"ref":"m7","name":"A new model","id":"deepseek/deepseek-v3.2","runs":"api-key"}]""");
         await wallet.Send(changed);
         var until = DateTime.UtcNow.AddSeconds(5);
-        while (DateTime.UtcNow < until && hub.Grant(Rooms.A, token)!.Models.Length != 1) await Task.Delay(20);
+        while (DateTime.UtcNow < until && hub.Grant(Rooms.A, token)!.ModelsOf("text.generate").Length != 1) await Task.Delay(20);
         var grant = hub.Grant(Rooms.A, token)!;
-        Assert.Equal(["m7"], grant.Models.Select(m => m.Ref));
-        Assert.Equal("A new model", grant.Models[0].Name);
+        Assert.Equal(["m7"], grant.ModelsOf("text.generate").Select(m => m.Ref));
+        Assert.Equal("A new model", grant.ModelsOf("text.generate")[0].Name);
         Assert.Equal(20000, grant.Limits.MaxTextChars);
         Assert.Equal(2, grant.Limits.MaxParallelCalls);
         Assert.Equal(60, grant.Limits.MaxCallSeconds);
@@ -289,7 +290,7 @@ public class ChannelTests
             """;
         var (hub, wallet, token, run, tcp) = await Connect(models: withKind);
         using var _t = tcp;
-        var models = hub.Grant(Rooms.A, token)!.Models;
+        var models = hub.Grant(Rooms.A, token)!.ModelsOf("text.generate");
         Assert.Equal(["agent", "model", "model", "agent"], models.Select(m => m.Kind));   // hidden names: still an agent; the wallet's word beats the id; a kind nobody knows is a model
         await wallet.Ws.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "bye", CancellationToken.None);
         await run.WaitAsync(TimeSpan.FromSeconds(5));
@@ -306,7 +307,7 @@ public class ChannelTests
         await wallet.Send(Hello.Json(hub.NewCode(Rooms.A, "203.0.113.5"), null, models: many));
         var token = (await wallet.NextOf("welcome")).GetProperty("pairing").GetString()!;
         var grant = hub.Grant(Rooms.A, token)!;
-        Assert.Equal(["m1", "m2", "m3"], grant.Models.Select(m => m.Ref));
+        Assert.Equal(["m1", "m2", "m3"], grant.ModelsOf("text.generate").Select(m => m.Ref));
         await wallet.Ws.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "bye", CancellationToken.None);
         await run.WaitAsync(TimeSpan.FromSeconds(5));
     }
@@ -324,7 +325,7 @@ public class ChannelTests
             """;
         var (hub, wallet, token, run, tcp) = await Connect(models: messy);
         using var _t = tcp;
-        var models = hub.Grant(Rooms.A, token)!.Models;
+        var models = hub.Grant(Rooms.A, token)!.ModelsOf("text.generate");
         Assert.Equal(["m1", "m9"], models.Select(m => m.Ref));                       // bad refs and repeats are dropped
         Assert.DoesNotContain('‮', models[0].Name);
         Assert.DoesNotContain('\u0000', models[0].Name);
@@ -387,5 +388,79 @@ public class ChannelTests
         Assert.True(next is null || next.Value.Type == WebSocketMessageType.Close);
         await run.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Equal(0, hub.Pairings);
+    }
+
+    [Fact]
+    public async Task EverySkillsModelsArriveWithTheirVerdictsAndTheCapabilities()
+    {
+        var models = """
+            {"text.generate":[
+               {"ref":"m1","name":"Claude","id":"anthropic/claude","runs":"api-key","kind":"model",
+                "can":{"input":true,"output":true,"context":false,"runs":"yes","surprise":true},
+                "abilities":{"web.search":true}},
+               {"ref":"m2","name":"Agent","id":"agent/claude","runs":"subscription","kind":"agent",
+                "can":{"input":true,"output":false,"context":true,"runs":true},
+                "abilities":{"web.search":true,"web.read":false,"extra":1,"x-mine":true,"image.read":true}}],
+             "image.generate":[{"ref":"i1","name":"Drawer","id":"google/gemini","runs":"api-key","kind":"model","can":{"output":true}}],
+             "Not-A-Skill":[]}
+            """;
+        var (hub, wallet, token, run, tcp) = await Connect(models: null, modelsBySkill: models,
+            capabilities: """["needs","can","unknown","needs","image.generate","cancel"]""");
+        using var _t = tcp;
+        var grant = hub.Grant(Rooms.A, token)!;
+
+        Assert.Equal(["image.generate", "text.generate"], grant.Models.Keys.Order(StringComparer.Ordinal));
+        var text = grant.ModelsOf("text.generate");
+        Assert.Equal(["m1", "m2"], text.Select(m => m.Ref));
+        var can = text[0].Can!;
+        Assert.Equal(["context", "input", "output"], can.Keys.Order(StringComparer.Ordinal));   // booleans only, the four properties only
+        Assert.False(can["context"]);
+        Assert.Null(text[0].Abilities);                                                                 // abilities are an agent's
+        var abilities = text[1].Abilities!;
+        Assert.Equal(["image.read", "web.read", "web.search", "x-mine"], abilities.Keys.Order(StringComparer.Ordinal));   // at most four, values are booleans
+        Assert.False(abilities["web.read"]);
+        Assert.True(abilities["x-mine"]);
+        Assert.Equal(["output"], grant.ModelsOf("image.generate")[0].Can!.Keys);
+        Assert.Empty(grant.ModelsOf("not-a.skill"));
+        Assert.Equal(["needs", "can", "image.generate", "cancel"], grant.Capabilities);                  // the closed list, repeats dropped
+
+        await wallet.Ws.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "bye", CancellationToken.None);
+        await run.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task AGrantFrameChangesTheModelsButKeepsTheCapabilities()
+    {
+        var (hub, wallet, token, run, tcp) = await Connect(capabilities: """["needs","can","cancel"]""");
+        using var _t = tcp;
+        await wallet.Send(WalletFrames.Grant(Hello.SaneLimits,
+            """[{"ref":"m7","name":"A new model","id":"deepseek/deepseek-v3.2","runs":"api-key"}]"""));
+        var until = DateTime.UtcNow.AddSeconds(5);
+        while (DateTime.UtcNow < until && hub.Grant(Rooms.A, token)!.ModelsOf("text.generate").Length != 1) await Task.Delay(20);
+        var grant = hub.Grant(Rooms.A, token)!;
+        Assert.Equal(["m7"], grant.ModelsOf("text.generate").Select(m => m.Ref));
+        Assert.Equal(["needs", "can", "cancel"], grant.Capabilities);
+        await wallet.Ws.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "bye", CancellationToken.None);
+        await run.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task TheSiteCanStopACallAndTheWalletIsToldToCancelIt()
+    {
+        var (hub, wallet, token, run, tcp) = await Connect();
+        using var _t = tcp;
+        var channel = hub.Channel(Rooms.A, token)!;
+        var call = channel.CallAsync(WalletJobs.Skill, new { messages = new[] { new { role = "user", content = "Q" } } },
+                                     new { model = "m1" }, 1000, TimeSpan.FromSeconds(10), CancellationToken.None);
+        var asked = await wallet.NextOf("call");
+        var id = asked.GetProperty("id").GetInt32();
+
+        Assert.True(channel.Cancel(id));
+        var cancel = await wallet.NextOf("cancel");
+        Assert.Equal(id, cancel.GetProperty("id").GetInt32());
+        Assert.Equal(WalletOutcome.Cancelled, (await call).Outcome);
+        Assert.False(channel.Cancel(id));                                           // already let go
+        await wallet.Ws.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "bye", CancellationToken.None);
+        await run.WaitAsync(TimeSpan.FromSeconds(5));
     }
 }

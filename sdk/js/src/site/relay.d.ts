@@ -16,12 +16,39 @@ export type CallResult =
 /** The visitor's address as the limits count it: IPv4-mapped IPv6 becomes IPv4, any other IPv6 becomes its /64. */
 export function addressKey(ip: string): string;
 
+/** One participant of a grant, as the relay passes it on (CONTRACT.md section 3.3). */
+export interface GrantedModel {
+  ref: string;
+  name: string;
+  id: string | null;
+  runs: string | null;
+  kind: 'model' | 'agent';
+  /** The wallet's verdicts for the conditions the site asked about in `needs`; absent when it asked none or the wallet said none. */
+  can?: Partial<Record<'input' | 'output' | 'context' | 'runs', boolean>>;
+  /** For an agent entry: verdicts for the abilities the site asked about. Absent otherwise. */
+  abilities?: Record<string, boolean>;
+}
+
+/** What the wallet said it was granted (CONTRACT.md sections 3.3 and 3.4). */
+export interface Grant {
+  skills: string[];
+  expiresAt: string | null;
+  /** The limits it holds the site to; null from an older wallet. */
+  limits: Partial<Record<'maxTextChars' | 'maxAnswerTokens' | 'maxCallSeconds' | 'maxParallelCalls' | 'maxCallsPerMinute', number>> | null;
+  /** The feature names of the closed list the wallet supports (wallet 0.36); empty when it sent none (CONTRACT.md section 3.3). */
+  capabilities: string[];
+  /** The `text.generate` participants, as before (the calls of this relay are text-only). */
+  models: GrantedModel[];
+  /** Every skill's participants, one list per skill, as the wallet sent them. */
+  modelsBySkill: Record<string, GrantedModel[]>;
+}
+
 /** One wallet connected to the server. */
 export class WalletConnection extends EventEmitter {
   /** The pairing token this wallet was welcomed with. */
   readonly pairing: string | null;
-  /** What the wallet said it was granted: skills, when the grant ends, the limits it holds the site to (null from an older wallet) and the models the visitor gave the site (empty from an older wallet or a site that asked for none). */
-  readonly grant: { skills: string[]; expiresAt: string | null; limits: Partial<Record<'maxTextChars' | 'maxAnswerTokens' | 'maxCallSeconds' | 'maxParallelCalls' | 'maxCallsPerMinute', number>> | null; models: { ref: string; name: string; id: string | null; runs: string | null }[] } | null;
+  /** What the wallet said it was granted: skills, when the grant ends, the capabilities it understands, the limits it holds the site to and the models the visitor gave the site. */
+  readonly grant: Grant | null;
   /** How many calls may be in flight now: the wallet's `maxParallelCalls` (4 when it says none), at most the relay's `maxInFlight` option. */
   readonly maxInFlight: number;
   /** The wallet's own name and version, as it announced them. Informational only. */

@@ -147,7 +147,7 @@ public class JobsTests
 
         await wallet.Send(WalletFrames.Grant(Hello.SaneLimits, """[{"ref":"m1","name":"Local Qwen 4B","id":"qwen/qwen3.5-4b","runs":"local"}]"""));
         var until = DateTime.UtcNow.AddSeconds(5);
-        while (DateTime.UtcNow < until && hub.Grant(Rooms.A, token)!.Models.Length != 1) await Task.Delay(20);
+        while (DateTime.UtcNow < until && hub.Grant(Rooms.A, token)!.ModelsOf("text.generate").Length != 1) await Task.Delay(20);
         Assert.Equal("bad-model", jobs.Start(Rooms.A, Ask(token, "m2")).Error);       // the visitor took that participant away
         Assert.NotNull(jobs.Start(Rooms.A, Ask(token, "m1")).Id);
         await wallet.Ws.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "bye", CancellationToken.None);
@@ -265,8 +265,10 @@ public class JobsTests
         Assert.Equal("unknown", (await jobs.PollAsync(Rooms.A, started.Id, TimeSpan.Zero, CancellationToken.None)).State);
         Assert.Equal(0, jobs.Count);
 
+        var finish = await wallet.NextOf("cancel");                                  // the wallet is told to stop the call (wallet 0.36)
+        Assert.Equal(id, finish.GetProperty("id").GetInt32());
         await wallet.Send(WalletFrames.Result(id, true, "too late"));                  // the wallet finishes anyway: the answer is dropped
-        Assert.Null(await wallet.Next(0.3));                                           // and nothing is sent back to the wallet
+        Assert.Null(await wallet.Next(0.3));                                           // and the site says nothing more to it
         Assert.Equal("unknown", (await jobs.PollAsync(Rooms.A, started.Id, TimeSpan.Zero, CancellationToken.None)).State);
 
         Assert.NotNull(jobs.Start(Rooms.A, Ask(token, "m1")).Id);                      // the participant is free again
@@ -317,6 +319,21 @@ public class JobsTests
         Assert.Null(await wallet.Next(0.2));                                           // nothing reached the wallet
         Assert.Equal("offline", jobs.Start(Rooms.A, Ask("made-up-pairing")).Error);
         Assert.Equal("offline", jobs.Start(Rooms.A, Ask(null!)).Error);
+        await wallet.Ws.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "bye", CancellationToken.None);
+        await run.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task StoppingAJobTellsTheWalletToCancelTheCall()
+    {
+        var (_, jobs, wallet, token, run, tcp) = await Pair();
+        using var _t = tcp;
+        var started = jobs.Start(Rooms.A, Ask(token));
+        var asked = await wallet.NextOf("call");
+        Assert.True(jobs.Cancel(Rooms.A, started.Id));
+        var cancel = await wallet.NextOf("cancel");
+        Assert.Equal(asked.GetProperty("id").GetInt32(), cancel.GetProperty("id").GetInt32());
+        Assert.Equal("unknown", (await jobs.PollAsync(Rooms.A, started.Id, TimeSpan.Zero, CancellationToken.None)).State);
         await wallet.Ws.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "bye", CancellationToken.None);
         await run.WaitAsync(TimeSpan.FromSeconds(5));
     }

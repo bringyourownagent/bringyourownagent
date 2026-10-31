@@ -96,12 +96,60 @@ function cleanLimits(limits) {
 
 /** The models the visitor gave this site ({ ref, name, id, runs, kind }; kind is 'agent' or 'model', 'model' when a wallet does not say), at most 64; a wallet that does not know the models block sends none. */
 function cleanModels(models) {
-  const list = models !== null && typeof models === 'object' ? models['text.generate'] : undefined;
-  if (!Array.isArray(list)) return [];
+  return cleanModelsBySkill(models)['text.generate'] ?? [];
+}
+
+/** The closed list of grant capabilities (CONTRACT.md section 3.3, wallet 0.36). */
+const CAPABILITY_NAMES = ['needs', 'can', 'kind', 'cancel', 'image.generate', 'images-in', 'parts', 'frame-limit'];
+
+/** The properties a site may ask about in `needs`; a verdict for any other name is dropped. */
+const CAN_NAMES = ['input', 'output', 'context', 'runs'];
+
+/** `can` or `abilities`: booleans only, at most four keys, safe names, and only what a site can ask about; undefined when nothing survives. */
+function cleanVerdicts(value, allowed) {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const out = {};
+  let n = 0;
+  for (const key of Object.keys(value)) {
+    if (n >= 4) break;
+    if (allowed && !allowed.includes(key)) continue;
+    if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/.test(key)) continue;
+    if (typeof value[key] !== 'boolean') continue;
+    out[key] = value[key];
+    n++;
+  }
+  return n ? out : undefined;
+}
+
+/** grant.capabilities: the closed list, unknown and repeated names dropped; an empty array is kept (a wallet that understands none). */
+function cleanCapabilities(value) {
+  if (!Array.isArray(value)) return undefined;
+  const out = [];
+  for (const name of value) {
+    if (CAPABILITY_NAMES.includes(name) && !out.includes(name)) out.push(name);
+    if (out.length === CAPABILITY_NAMES.length) break;
+  }
+  return out;
+}
+
+/** Every skill's models, as the grant carries them (CONTRACT.md section 3.3): { "<skill>": [{ ref, name, id, runs, kind, can?, abilities? }] }, at most 8 skills and 64 entries a skill. */
+function cleanModelsBySkill(models) {
+  if (models === null || typeof models !== 'object' || Array.isArray(models)) return {};
   const str = (v, max) => (typeof v === 'string' && v.length <= max ? v : null);
-  return list.slice(0, 64).filter((m) => m !== null && typeof m === 'object' && str(m.ref, 16)).map((m) => ({
-    ref: m.ref, name: str(m.name, 80) ?? m.ref, id: str(m.id, 120), runs: str(m.runs, 16), kind: m.kind === 'agent' ? 'agent' : 'model',
-  }));
+  const out = {};
+  for (const skill of Object.keys(models).slice(0, 8)) {
+    if (!/^[a-z][a-z0-9-]*\.[a-z][a-z0-9-]*$/.test(skill) || !Array.isArray(models[skill])) continue;
+    out[skill] = models[skill].slice(0, 64).filter((m) => m !== null && typeof m === 'object' && str(m.ref, 16)).map((m) => {
+      const kind = m.kind === 'agent' ? 'agent' : 'model';
+      const entry = { ref: m.ref, name: str(m.name, 80) ?? m.ref, id: str(m.id, 120), runs: str(m.runs, 16), kind };
+      const can = cleanVerdicts(m.can, CAN_NAMES);
+      if (can) entry.can = can;
+      const abilities = kind === 'agent' ? cleanVerdicts(m.abilities, null) : undefined;
+      if (abilities) entry.abilities = abilities;
+      return entry;
+    });
+  }
+  return out;
 }
 
 /**
@@ -466,8 +514,9 @@ export class Relay extends EventEmitter {
       } else if (frame.type === 'chunk') {
         conn._chunk(frame);
       } else if (frame.type === 'grant') {
-        // the visitor changed this site's models or limits in the wallet: whole objects, as in hello
-        conn.grant = { ...conn.grant, limits: cleanLimits(frame.limits), models: cleanModels(frame.models) };
+        // the visitor changed this site's models or limits in the wallet: whole objects, as in hello. A grant frame carries no
+        // capabilities: what the wallet said it understands at hello still stands.
+        conn.grant = { ...conn.grant, limits: cleanLimits(frame.limits), models: cleanModels(frame.models), modelsBySkill: cleanModelsBySkill(frame.models) };
         conn._pump(); // a raised parallel limit lets waiting calls go
         conn.emit('grant', conn);
       } else if (frame.type === 'bye') {
@@ -500,7 +549,9 @@ export class Relay extends EventEmitter {
       skills,
       expiresAt: typeof frame.grant?.expiresAt === 'string' ? frame.grant.expiresAt : null,
       limits: cleanLimits(frame.grant?.limits),
+      capabilities: cleanCapabilities(frame.grant?.capabilities) ?? [],
       models: cleanModels(frame.grant?.models),
+      modelsBySkill: cleanModelsBySkill(frame.grant?.models),
     };
     conn._send({ type: 'welcome', pairing: welcome.pairing, manifest: welcome.manifest });
     armIdle();
