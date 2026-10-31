@@ -83,7 +83,7 @@ public sealed class RelayOptions
     /// <summary>What a call asks for when the page names no <c>temperature</c>.</summary>
     public double DefaultTemperature { get; set; } = 0.7;
 
-    /// <summary>The most participants one grant is read for (CONTRACT.md §3.3: a site asks for a handful).</summary>
+    /// <summary>The most participants read out of one skill's list of a grant (CONTRACT.md §3.3: a site asks for a handful).</summary>
     public int MaxModels { get; set; } = 64;
 
     /// <summary>A job request bigger than this is refused before it is read (the page sends a chat call, never more).</summary>

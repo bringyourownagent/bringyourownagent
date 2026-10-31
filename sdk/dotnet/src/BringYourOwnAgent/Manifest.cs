@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
@@ -7,7 +8,7 @@ using static BringYourOwnAgent.Internal.JsonValues;
 
 namespace BringYourOwnAgent;
 
-/// <summary>Manifest rules M1-M21 of spec/rules-0.1-draft.md (a draft for discussion).</summary>
+/// <summary>Manifest rules M1-M28 of spec/rules-0.1-draft.md (a draft for discussion).</summary>
 public static class Manifest
 {
     private static readonly string[] TopLevelFields = { "byoa", "purpose", "skills", "privacy", "expectedCost" };
@@ -273,6 +274,12 @@ public static class Manifest
             {
                 anyRequired = true;
             }
+
+            var models = new JsonObjectView(entry).Get("models");
+            if (!IsAbsent(models))
+            {
+                CheckModels(skillId, models, error, warn);
+            }
         }
 
         if (!anyRequired)
@@ -281,6 +288,208 @@ public static class Manifest
                 "no-required-skill",
                 "/skills",
                 "no skill is marked \"required\": true; the site claims to work without any of them");
+        }
+    }
+
+    /// <summary>
+    /// M22-M28: the <c>models</c> block of a skill. Only <c>kind</c>, <c>onMismatch</c>, <c>needs</c> and
+    /// <c>abilities</c> are checked here; <c>count</c>, <c>distinct</c>, <c>require</c>, <c>recommend</c>,
+    /// <c>why</c>, <c>whyLong</c> and <c>names</c> stay the wallet's to read, and a block without
+    /// <c>count</c> is valid (CONTRACT.md section 3.3).
+    /// </summary>
+    private static void CheckModels(string skillId, JsonElement models, Report error, Report warn)
+    {
+        var path = Pointer("skills", skillId, "models");
+        if (!IsObject(models))
+        {
+            error("models-invalid", path, "\"models\" of skill " + JsText.Quote(skillId) + " must be an object");
+            return;
+        }
+
+        var view = new JsonObjectView(models);
+        if (!IsAbsent(view.Get("kind")) && !Rules.Has(Rules.SourceKinds, AsString(view.Get("kind"))))
+        {
+            error(
+                "models-kind-invalid",
+                path + "/kind",
+                "\"models.kind\" must be one of: " + string.Join(", ", Rules.SourceKinds.Select(JsText.Quote))
+                + "; got " + JsText.Quote(view.Get("kind")));
+        }
+
+        if (!IsAbsent(view.Get("onMismatch")) && !Rules.Has(Rules.OnMismatch, AsString(view.Get("onMismatch"))))
+        {
+            error(
+                "models-onmismatch-invalid",
+                path + "/onMismatch",
+                "\"models.onMismatch\" must be \"drop\" or \"show\"; got " + JsText.Quote(view.Get("onMismatch")));
+        }
+
+        var needs = view.Get("needs");
+        if (!IsAbsent(needs))
+        {
+            CheckNeeds(skillId, needs, error, warn);
+        }
+
+        var abilities = view.Get("abilities");
+        if (!IsAbsent(abilities))
+        {
+            CheckAbilities(skillId, abilities, error, warn);
+        }
+    }
+
+    private static void CheckNeeds(string skillId, JsonElement needs, Report error, Report warn)
+    {
+        var path = Pointer("skills", skillId, "models", "needs");
+        if (!IsObject(needs))
+        {
+            error("needs-invalid", path, "\"models.needs\" of skill " + JsText.Quote(skillId) + " must be an object of conditions by property");
+            return;
+        }
+
+        var view = new JsonObjectView(needs);
+        foreach (var key in view.PresentKeys())
+        {
+            var keyPath = path + Pointer(key);
+            var value = view.Get(key);
+            if (!Rules.Has(Rules.NeedsProperties, key))
+            {
+                if (!key.StartsWith("x-", StringComparison.Ordinal))
+                {
+                    warn("needs-unknown", keyPath, "unknown property " + JsText.Quote(key) + " in \"models.needs\"; wallets that do not know it will ignore it");
+                }
+
+                continue;
+            }
+
+            var problem = NeedsProblem(key, value);
+            if (problem is not null)
+            {
+                error("needs-invalid", keyPath, problem);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Why a condition of <c>needs</c> is invalid, or null if it is fine. An array is the short form of the
+    /// one long form each property takes: <c>{"includes": [...]}</c> for a modality, <c>{"oneOf": [...]}</c> for
+    /// <c>runs</c>, <c>{"min": n}</c> for <c>context</c> (CONTRACT.md sections 3.3 and 3.5).
+    /// </summary>
+    private static string? NeedsProblem(string key, JsonElement value)
+    {
+        if (key is "input" or "output")
+        {
+            if (ListOf(value, "includes") is { } items && IsListOf(Rules.Modalities, items))
+            {
+                return null;
+            }
+
+            return "\"models.needs." + key + "\" must be an array of " + string.Join(", ", Rules.Modalities.Select(JsText.Quote))
+                + " with at least one value, or {\"includes\": [...]} of those; got " + JsText.Quote(value);
+        }
+
+        if (key == "runs")
+        {
+            if (ListOf(value, "oneOf") is { } items && IsListOf(Rules.Runs, items))
+            {
+                return null;
+            }
+
+            return "\"models.needs." + key + "\" must be an array of " + string.Join(", ", Rules.Runs.Select(JsText.Quote))
+                + " with at least one value, or {\"oneOf\": [...]} of those; got " + JsText.Quote(value);
+        }
+
+        // context: a minimum, in thousands of tokens
+        if (IsNonNegative(value))
+        {
+            return null;
+        }
+
+        if (IsObject(value))
+        {
+            var view = new JsonObjectView(value);
+            if (view.PresentKeys().Count == 1 && IsNonNegative(view.Get("min")))
+            {
+                return null;
+            }
+        }
+
+        return "\"models.needs." + key + "\" must be a number of thousands of tokens (the minimum) or {\"min\": n}; got " + JsText.Quote(value);
+    }
+
+    /// <summary>The array of a short form, or of the one long form <paramref name="key"/>, or null when the value is neither.</summary>
+    private static JsonElement? ListOf(JsonElement value, string key)
+    {
+        if (IsArray(value))
+        {
+            return value;
+        }
+
+        if (IsObject(value))
+        {
+            var view = new JsonObjectView(value);
+            if (view.PresentKeys().Count == 1 && !IsAbsent(view.Get(key)))
+            {
+                return view.Get(key);
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>A non-empty array of strings, all of them in <paramref name="allowed"/>.</summary>
+    private static bool IsListOf(IReadOnlyList<string> allowed, JsonElement items)
+    {
+        if (items.ValueKind != JsonValueKind.Array || items.GetArrayLength() == 0)
+        {
+            return false;
+        }
+
+        foreach (var item in items.EnumerateArray())
+        {
+            if (!Rules.Has(allowed, AsString(item)))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static void CheckAbilities(string skillId, JsonElement abilities, Report error, Report warn)
+    {
+        var path = Pointer("skills", skillId, "models", "abilities");
+        var wellFormed = IsArray(abilities) && abilities.GetArrayLength() > 0;
+        if (wellFormed)
+        {
+            foreach (var item in abilities.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.String)
+                {
+                    wellFormed = false;
+                    break;
+                }
+            }
+        }
+
+        if (!wellFormed)
+        {
+            error(
+                "abilities-invalid",
+                path,
+                "\"models.abilities\" of skill " + JsText.Quote(skillId) + " must be an array of ability names, e.g. [\"web.search\"]");
+            return;
+        }
+
+        var at = 0;
+        foreach (var item in abilities.EnumerateArray())
+        {
+            var name = AsString(item)!;
+            if (!Rules.Has(Rules.Abilities, name) && !name.StartsWith("x-", StringComparison.Ordinal))
+            {
+                warn("abilities-unknown", path + Pointer(at.ToString(CultureInfo.InvariantCulture)), "ability " + JsText.Quote(item) + " is not in the 0.1 vocabulary; wallets that do not know it will ignore it");
+            }
+
+            at++;
         }
     }
 }

@@ -36,14 +36,16 @@ keeps one visitor's wallet out of another visitor's page.
 | Endpoint | Body | Answer |
 |---|---|---|
 | `POST /api/r/{room}/byoa/code` | — | `{ session, link, check, expiresIn }` — the `bringyourownagent://connect` link, and the check code the page shows |
-| `POST /api/r/{room}/byoa/wait` | `{ session }` | `{ state: "waiting" \| "connected" \| "expired", pairing, models, limits }` |
+| `POST /api/r/{room}/byoa/wait` | `{ session }` | `{ state: "waiting" \| "connected" \| "expired", pairing, models, limits, capabilities }` |
 | `POST /api/r/{room}/byoa/cancel` | `{ session }` | `{ cancelled }` — the page stopped waiting |
-| `POST /api/r/{room}/byoa/status` | `{ pairing }` | `{ state: "live" \| "offline" \| "unknown", models, limits, skills }` — after a reload |
+| `POST /api/r/{room}/byoa/status` | `{ pairing }` | `{ state: "live" \| "offline" \| "unknown", models, limits, skills, capabilities }` — after a reload |
 | `POST /api/r/{room}/byoa/release` | `{ pairing }` | `{ released }` — «Disconnect»: `bye`, close, forget |
 | `POST /api/r/{room}/byoa/job` | `{ pairing, model, messages, maxTokens?, temperature? }` | `{ id }`, or `{ error }` (`bad-request`, `offline`, `no-text`, `bad-model`, `busy`) with 400/429 |
 | `POST /api/r/{room}/byoa/job/poll` | `{ id }` | `{ state: "pending" \| "done" \| "unknown", ok, text, partial, reason }` |
-| `POST /api/r/{room}/byoa/job/cancel` | `{ id }` | `{ cancelled }` — «Stop»: the answer is dropped |
+| `POST /api/r/{room}/byoa/job/cancel` | `{ id }` | `{ cancelled }` — «Stop»: the answer is dropped and the wallet is told to stop the call |
 | `GET /byoa/ws` (WebSocket) | the wallet's frames | the wallet's channel |
+
+`models` is the wallet's contract shape, one list per skill: `{"text.generate":[{ref,name,id,runs,kind,can?}],"image.generate":[...]}`. It carries every skill the visitor gave the site, not only `text.generate` (CONTRACT.md §3.3); each entry also carries `can`, the wallet's verdicts for the conditions the site asked about in `needs` (booleans only, at most four keys), and an agent entry carries `abilities` the same way. `capabilities` is the wallet's closed list of supported features (`needs`, `can`, `kind`, `cancel`, `image.generate`, `images-in`, `parts`, `frame-limit`); an older wallet sends no `capabilities`, and the page then knows it cannot check `needs` or `can`. The jobs stay text-only for now: `job` asks `text.generate` for a `ref` of the `text.generate` list.
 
 The page asks for an answer by asking again every second and shows `partial` while the model writes: a long call must not hold one
 request open behind a proxy. `state` never tells a «no» from a «no wallet».
@@ -62,7 +64,7 @@ request open behind a proxy. `state` never tells a «no» from a «no wallet».
 | `MaxCallMessages` | `128` | Messages of one call ([CONTRACT.md](https://github.com/bringyourownagent/bringyourownagent/blob/main/spec/CONTRACT.md) §3.2) |
 | `MaxCallTokens`, `DefaultCallTokens`, `DefaultTemperature` | `8 000`, `3000`, `0.7` | What a call may ask for, and what it asks for by default |
 | `MaxAnswerChars` | `128 000` | The longest answer the site keeps |
-| `MaxModels` | `64` | Participants read out of one grant |
+| `MaxModels` | `64` | Participants read out of one skill's list of a grant (at most eight skills are read) |
 | `MaxJobRequestBytes` | `1 500 000` | A bigger request body is refused (413) before it is read |
 | `CodeLifeSeconds` | `120` | How long a one-time code lives |
 | `CodesPerMinute`, `MaxCodes` | `10`, `2000` | Per visitor address, and the whole table |
@@ -77,9 +79,12 @@ var channel = hub.Channel(room, pairing);                       // the live conn
 if (channel is not null && channel.Has("audio.transcribe"))
 {
     var answer = await channel.CallAsync("audio.transcribe", input, @params,
-                                         maxChars: 4096, timeout: TimeSpan.FromSeconds(60), ct);
+                                         maxChars: 4096, timeout: TimeSpan.FromSeconds(60), ct,
+                                         onCallId: id => callId = id);   // channel.Cancel(callId) then tells the wallet to stop it
 }
 ```
+
+`channel.Cancel(id)` sends `{"type":"cancel","id":N}` to the wallet (CONTRACT-DIRECT.md §4, wallet 0.36): the wallet stops the call and answers `ok:false`, which the channel drops, and the id comes from `onCallId`. The relay's own `job/cancel` route does the same for a page's job.
 
 `AddByoaRelay` registers the `DirectHub` and the `WalletJobs` as singletons, so a minimal-API handler takes them as parameters and any
 other class of yours takes them from its constructor.

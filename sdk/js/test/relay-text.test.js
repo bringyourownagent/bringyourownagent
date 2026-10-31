@@ -40,7 +40,42 @@ test('an older wallet tells neither: no limits, no models, four calls in flight 
   const { wallet } = await connectWith(env, {});
   assert.equal(wallet.grant.limits, null);
   assert.deepEqual(wallet.grant.models, []);
+  assert.deepEqual(wallet.grant.modelsBySkill, {});
+  assert.deepEqual(wallet.grant.capabilities, []);        // it said nothing about what it understands
   assert.equal(wallet.maxInFlight, 4);
+});
+
+test('every skill\'s models, their verdicts and the capabilities reach the site', async () => {
+  const env = await start();
+  const models = {
+    'text.generate': [
+      { ref: 'm1', name: 'Claude', id: 'anthropic/claude', runs: 'api-key', kind: 'model',
+        can: { input: true, output: true, context: 'yes', runs: true, surprise: true }, abilities: { 'web.search': true } },
+      { ref: 'm2', name: 'Agent', id: 'agent/one', runs: 'subscription', kind: 'agent',
+        can: { input: true }, abilities: { 'web.search': true, 'web.read': false, extra: 1, 'x-a': true, 'x-b': true } },
+    ],
+    'image.generate': [{ ref: 'i1', name: 'Drawer', id: null, runs: 'api-key', kind: 'model', can: { output: true } }],
+    'Not-A-Skill': [],
+  };
+  const { wallet } = await connectWith(env, { capabilities: ['needs', 'can', 'bogus', 'needs', 'image.generate'], models });
+  assert.deepEqual(wallet.grant.capabilities, ['needs', 'can', 'image.generate']);     // the closed list, unknowns and repeats dropped
+  assert.deepEqual(wallet.grant.models.map((m) => m.ref), ['m1', 'm2']);                // `models` stays the text list the calls use
+  assert.deepEqual(wallet.grant.modelsBySkill['image.generate'].map((m) => m.ref), ['i1']);
+  assert.equal('Not-A-Skill' in wallet.grant.modelsBySkill, false);
+  assert.deepEqual(wallet.grant.models[0].can, { input: true, output: true, runs: true });   // booleans only, the four properties only
+  assert.equal('abilities' in wallet.grant.models[0], false);                                // abilities belong to an agent
+  assert.deepEqual(wallet.grant.models[1].can, { input: true });
+  assert.deepEqual(wallet.grant.models[1].abilities, { 'web.search': true, 'web.read': false, 'x-a': true, 'x-b': true });   // at most four
+});
+
+test('a grant frame changes the models and the limits but keeps the capabilities', async () => {
+  const env = await start();
+  const { w, wallet } = await connectWith(env, { capabilities: ['needs', 'can', 'cancel'], models: MODELS });
+  w.send({ type: 'grant', models: { 'text.generate': [{ ref: 'm3', name: 'Model C', id: null, runs: 'api-key' }] }, limits: { maxParallelCalls: 2 } });
+  await sleep(100);
+  assert.deepEqual(wallet.grant.capabilities, ['needs', 'can', 'cancel']);
+  assert.deepEqual(wallet.grant.models.map((m) => m.ref), ['m3']);
+  assert.deepEqual(wallet.grant.modelsBySkill['text.generate'].map((m) => m.ref), ['m3']);
 });
 
 test('as many calls are in flight as the wallet allows, and the relay option can only lower it', async () => {

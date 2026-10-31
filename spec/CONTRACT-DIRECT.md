@@ -46,7 +46,7 @@ A link can be sent to a visitor by somebody else (a message, a redirect). Withou
 
 ## 4. The channel
 
-JSON text frames over a WebSocket. The wallet accepts a frame of up to 4 MB from the site (a larger one ends the connection). A site MUST accept at least 1 MB per frame from a wallet and MAY refuse more. The wallet's frames stay below that: the largest is a `result` of `text.generate`, at most 128,000 characters escaped as JSON (about 768 KB in the worst case); a `chunk` carries at most 16,000 characters; `hello` is a few hundred bytes, plus the models the site was given if it asked for several; and the wallet never sends the manifest.
+JSON text frames over a WebSocket. The wallet accepts a frame of up to 4 MB from the site (a larger one ends the connection). A site MUST accept at least 1 MB per frame from a wallet and MAY refuse more. A site may say what it accepts with the manifest limit `purpose.limits.maxFrameBytes` (a whole number of bytes; default 1,048,576, at most 8,388,608): the wallet then sends frames of at most the smaller of that and its own setting. The extension transport has no such key — its messages are capped by the browser at 1 MB, so its picture parts are always at most 512 KB of base64 (wallet 0.37). The wallet's frames stay below the site's minimum: the largest is a `result` of `text.generate`, at most 128,000 characters escaped as JSON (about 768 KB in the worst case); a `chunk` carries at most 16,000 characters; an `image` frame carries at most 512 KB of base64 (wallet 0.37); `hello` is a few hundred bytes, plus the models the site was given if it asked for several; and the wallet never sends the manifest.
 
 Wallet to server, first frame:
 
@@ -54,7 +54,7 @@ Wallet to server, first frame:
 {"type":"hello","v":"0.1","session":"<code>","pairing":null,"wallet":{"name":"Agent wallet","version":"0.1"},"grant":{"skills":["audio.transcribe"],"expiresAt":"..."}}
 ```
 
-For a site that works with text, `grant` also carries `limits` (what the site was held to: `maxTextChars`, `maxAnswerTokens`, `maxCallSeconds`, `maxParallelCalls`, `maxCallsPerMinute`) and, if the site asked for several models, `models` (the list it was given, [CONTRACT.md](CONTRACT.md) sections 3.3 and 3.4).
+For a site that works with text, `grant` also carries `limits` (what the site was held to: `maxTextChars`, `maxAnswerTokens`, `maxCallSeconds`, `maxParallelCalls`, `maxCallsPerMinute`; the wallet's picture limits too from wallet 0.37, [CONTRACT.md](CONTRACT.md) section 3.4a), `capabilities` (wallet 0.36: the feature names of the closed list `needs`, `can`, `kind`, `cancel`, `image.generate`, `images-in`, `parts`, `frame-limit` that this wallet supports; an older wallet sends none) and, if the site asked for models, `models` (the lists it was given, one per skill, every skill and not only `text.generate`, each entry with `can` and an agent entry with `abilities` when the site asked by properties or for abilities, [CONTRACT.md](CONTRACT.md) sections 3.3 to 3.6).
 
 Server to wallet:
 
@@ -74,9 +74,12 @@ Server to wallet:
 Calls:
 
 - Server to wallet: `{"type":"call","id":N,"skill":"audio.transcribe","input":{...},"params":{...}}` (the input and params of the skill, see [CONTRACT.md](CONTRACT.md) §3).
-- Wallet to server: `{"type":"result","id":N,"ok":true,"output":{...},"receipt":{"cost":"0.000 USD","provider":"local"}}` or `{"type":"result","id":N,"ok":false}`. For a call that named one of the site's models the receipt also has `"model":"m2"`.
+- **`reason`** (wallet 0.36): an `ok:false` result carries `"reason"`, one of `timeout` (the wallet ended the call at its own `maxCallSeconds`; the slot it held is free again), `cancelled` (the site sent `cancel`), `limit` (a limit of the site or of the wallet was hit, for example `maxCallsPerMinute` or `maxTextChars`) and `failed` (anything else). The wallet never tells more: how the visitor's setup is made (no fitting model, a declined paid fallback, a provider's name) is `failed`, so a site learns only what it already knows. A site treats a missing or unknown `reason` as `failed`. The receipt is unchanged.
+- Server to wallet, **cancel** (wallet 0.36): `{"type":"cancel","id":N}` for a call still running. The wallet stops the call (an agent's whole process tree is killed; nothing more is spent on it) and answers `{"type":"result","id":N,"ok":false}`. A wallet that does not know the frame ignores it, so an old wallet behaves as today and the site's own timeout still applies. In the browser binding there is no cancel in this release.
+- Wallet to server: `{"type":"result","id":N,"ok":true,"output":{...},"receipt":{"cost":"0.000 USD","provider":"local"}}` or `{"type":"result","id":N,"ok":false}`. For a call that named one of the site's models the receipt also has `"model":"m2"`. A call answered by an agent that lacked an ability the site asked about also carries `"lacks":["web.read"]` next to `output` (wallet 0.36, [CONTRACT.md](CONTRACT.md) §3.6).
 - **Streaming.** A `text.generate` call with `"params":{"stream":true}` is answered with `{"type":"chunk","id":N,"text":"..."}` frames, in order, as the model writes (the wallet gathers them, at most one frame every 80 ms), and then the `result`, which has the whole answer. The pieces are a preview: the `result` replaces them, and an `ok:false` result discards them. A site that does not stream ignores `chunk` frames (unknown frames are ignored), and a call without `stream` gets no `chunk` at all.
-- **Changes.** When the visitor changes the models or the limits of the site (in the wallet's Sites page), the wallet sends `{"type":"grant","models":{...},"limits":{...}}`: the same two objects as in `hello`, whole. A site that does not read it keeps the old ones until its next connection.
+- **Pictures** (wallet 0.37). The answer of an `image.generate` call travels as `image` frames before the `result`, never inside it: `{"type":"image","id":N,"index":i,"seq":j,"of":k,"mime":"image/png","data":"<base64, at most 512 KB>"}`, then the `result`, whose `output` carries only each picture's metadata ([CONTRACT.md](CONTRACT.md) §3.7). `index` numbers the picture, `seq` its part and `of` the number of parts of that picture. The frames of one call all precede its `result`, and are sent only when the call succeeded: parts already received are discarded by the site when the `result` is `ok:false` or the connection closes — parts are void without their `result`. A site that does not know the frame ignores it, as any unknown frame.
+- **Changes.** When the visitor changes the models or the limits of the site (in the wallet's Sites page), the wallet sends `{"type":"grant","models":{...},"limits":{...}}`: the same two objects as in `hello`, whole (models for every skill, with their `can`). A site that does not read it keeps the old ones until its next connection.
 
 Rules for calls and the connection:
 
@@ -117,7 +120,7 @@ Rules for calls and the connection:
   - Codes are single use, expire after 120 seconds, and are rate-limited per IP.
   - A code the server did not issue, or one already used or expired, gets `error` with `bad-session`. This is a MUST: the wallet's proof that the server issued a link rests on it (§7).
   - At most one wallet connection per pairing.
-  - Frames from the wallet: at least 1 MB each. The server MAY refuse more, and then closes the connection.
+  - Frames from the wallet: at least 1 MB each. The server MAY refuse more, and then closes the connection. A server that can take bigger frames says so with the manifest limit `maxFrameBytes` (§4); the pictures of one call still come as parts of at most 512 KB each (wallet 0.37).
   - Unknown frames are ignored; malformed JSON closes the connection.
   - The server sends nothing before a valid `hello`.
 

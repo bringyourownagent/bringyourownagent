@@ -32,10 +32,28 @@ PRIVACY_CLASSES: Tuple[str, ...] = (
 )
 
 #: Hard limits a manifest (``purpose.limits``) or a grant (``limits``) may set.
-KNOWN_LIMITS: Tuple[str, ...] = ("maxCallsPerMinute", "maxClipSeconds", "maxTextChars")
+KNOWN_LIMITS: Tuple[str, ...] = ("maxCallsPerMinute", "maxClipSeconds", "maxFrameBytes", "maxTextChars")
 
 #: Limits that count things and therefore must be whole numbers.
-COUNT_LIMITS: Tuple[str, ...] = ("maxCallsPerMinute", "maxTextChars")
+COUNT_LIMITS: Tuple[str, ...] = ("maxCallsPerMinute", "maxFrameBytes", "maxTextChars")
+
+#: Source kinds a skill's ``models.kind`` may name (which sources may fill the skill).
+SOURCE_KINDS: Tuple[str, ...] = ("model", "agent", "any")
+
+#: What a wallet does with a source that fails a known condition (``models.onMismatch``).
+ON_MISMATCH: Tuple[str, ...] = ("drop", "show")
+
+#: The four properties a ``models.needs`` condition may name.
+NEEDS_PROPERTIES: Tuple[str, ...] = ("context", "input", "output", "runs")
+
+#: Modalities of the ``input`` and ``output`` properties.
+MODALITIES: Tuple[str, ...] = ("audio", "image", "text")
+
+#: Values of the ``runs`` property: the grant's own vocabulary, never a second one.
+RUNS: Tuple[str, ...] = ("api-key", "home-server", "local")
+
+#: Abilities a ``models.abilities`` entry may name; ``image.read`` is reserved and not enforced.
+ABILITIES: Tuple[str, ...] = ("web.read", "web.search")
 
 #: Periods allowed in the manifest ``expectedCost`` object.
 COST_PERIODS: Tuple[str, ...] = ("perCall", "perSession", "perHour")

@@ -157,10 +157,11 @@ public sealed class SiteTests : IAsyncLifetime
         var connected = await Post(_http, $"/api/r/{room}/byoa/wait", new { session = code.GetProperty("session").GetString() });
         Assert.Equal("connected", connected.GetProperty("state").GetString());
         var pairing = connected.GetProperty("pairing").GetString()!;
-        var models = connected.GetProperty("models").EnumerateArray().ToList();
+        var models = connected.GetProperty("models").GetProperty("text.generate").EnumerateArray().ToList();
         Assert.Equal(["m1", "m2", "m3", "m4"], models.Select(m => m.GetProperty("ref").GetString()));
         Assert.Equal(["model", "model", "model", "agent"], models.Select(m => m.GetProperty("kind").GetString()));
         Assert.Equal("Claude Code (Opus)", models[3].GetProperty("name").GetString());
+        Assert.Equal(0, connected.GetProperty("capabilities").GetArrayLength());          // the fake wallet sends none: the page is told "understands nothing", not left to guess
         Assert.Equal(60000, connected.GetProperty("limits").GetProperty("maxTextChars").GetInt32());
 
         // exactly what the page sends: a system message naming the participant, and one user message with the transcript
@@ -247,7 +248,7 @@ public sealed class SiteTests : IAsyncLifetime
         // a page that reloads finds its wallet again with the pairing it kept
         var again = await Post(_http, $"/api/r/{room}/byoa/status", new { pairing });
         Assert.Equal("live", again.GetProperty("state").GetString());
-        Assert.Equal(4, again.GetProperty("models").GetArrayLength());
+        Assert.Equal(4, again.GetProperty("models").GetProperty("text.generate").GetArrayLength());
 
         stop.Cancel();
         await Task.WhenAny(run, Task.Delay(3000));
@@ -268,11 +269,11 @@ public sealed class SiteTests : IAsyncLifetime
         while (DateTime.UtcNow < until)
         {
             status = await Post(_http, $"/api/r/{room}/byoa/status", new { pairing });
-            if (status.GetProperty("models").GetArrayLength() == 1) break;
+            if (status.GetProperty("models").GetProperty("text.generate").GetArrayLength() == 1) break;
             await Task.Delay(50);
         }
-        Assert.Equal("m7", status.GetProperty("models")[0].GetProperty("ref").GetString());
-        Assert.Equal("A new model", status.GetProperty("models")[0].GetProperty("name").GetString());
+        Assert.Equal("m7", status.GetProperty("models").GetProperty("text.generate")[0].GetProperty("ref").GetString());
+        Assert.Equal("A new model", status.GetProperty("models").GetProperty("text.generate")[0].GetProperty("name").GetString());
         Assert.Contains("text.generate", status.GetProperty("skills").EnumerateArray().Select(s => s.GetString()));   // a grant frame says nothing about skills
 
         // and the page lets the wallet go: the pairing is forgotten and the wallet is told bye

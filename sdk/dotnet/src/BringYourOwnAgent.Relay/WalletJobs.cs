@@ -25,7 +25,7 @@ public sealed record JobStarted(string? Id, string? Error);
 /// <param name="Ok">done and the wallet answered with something readable.</param>
 /// <param name="Text">done and ok: the answer, cleaned and cut.</param>
 /// <param name="Partial">While pending: the pieces the wallet has streamed so far (a preview; the final answer replaces them).</param>
-/// <param name="Reason">done and not ok: "failed" (the wallet refused or the model failed), "timeout" or "gone" (the wallet went away).</param>
+/// <param name="Reason">done and not ok: what the wallet said ("timeout", "cancelled", "limit" or "failed"; CONTRACT-DIRECT.md section 4), or "timeout" (nothing came back in the relay's time) or "gone" (the wallet went away).</param>
 public sealed record JobResult(string State, bool Ok = false, string? Text = null, string? Partial = null, string? Reason = null);
 
 /// <summary>
@@ -49,11 +49,16 @@ public sealed class WalletJobs
     static readonly TimeSpan Kept = TimeSpan.FromMinutes(10);
     static readonly HashSet<string> Roles = new(StringComparer.Ordinal) { "system", "user", "assistant" };
 
-    sealed class Job(string room, DateTimeOffset began, CancellationTokenSource stop)
+    sealed class Job(string room, DateTimeOffset began, CancellationTokenSource stop, WalletChannel channel)
     {
         public string Room { get; } = room;
         public DateTimeOffset Began { get; } = began;
         public CancellationTokenSource Stop { get; } = stop;
+        public WalletChannel Channel { get; } = channel;
+        /// <summary>The id the wallet knows this call by, once its frame is out; 0 before that.</summary>
+        public volatile int CallId;
+        /// <summary>The page stopped the job (the cancel frame is sent as soon as the wallet's call id is known).</summary>
+        public volatile bool Stopped;
         public Task<WalletAnswer> Answer { get; set; } = Task.FromResult(new WalletAnswer(WalletOutcome.Cancelled));
         /// <summary>The pieces streamed so far (written by the wallet's connection, read by the page's poll).</summary>
         public volatile string Partial = "";
@@ -92,7 +97,7 @@ public sealed class WalletJobs
         var channel = _hub.Channel(room, r.Pairing);
         if (channel is null) return new JobStarted(null, "offline");
         if (!channel.Has(Skill)) return new JobStarted(null, "no-text");
-        if (!channel.Knows(r.Model)) return new JobStarted(null, "bad-model");
+        if (!channel.Knows(Skill, r.Model)) return new JobStarted(null, "bad-model");
 
         var limits = channel.Limits;
         var text = r.Messages!.Sum(m => m.Content!.Length);
@@ -108,12 +113,16 @@ public sealed class WalletJobs
         var parameters = new { model = r.Model, maxTokens, temperature, stream = true };
         var id = DirectHub.NewSecret();
         var stop = new CancellationTokenSource();
-        var job = new Job(room, now, stop);
+        var job = new Job(room, now, stop, channel);
         // the wait is the site's own (300 s by default) but never longer than the grant allows for one call
         var wait = TimeSpan.FromSeconds(Math.Min(_timeout.TotalSeconds, limits.MaxCallSeconds));
         var maxChars = Math.Max(1, _options.MaxAnswerChars);
         job.Answer = channel.CallAsync(Skill, input, parameters, maxChars, wait, stop.Token, piece =>
-            job.Partial = piece.Length <= maxChars ? piece : piece[..maxChars]);
+            job.Partial = piece.Length <= maxChars ? piece : piece[..maxChars], callId =>
+            {
+                job.CallId = callId;
+                if (job.Stopped) job.Channel.CancelCall(callId);        // the page stopped it before the id was known
+            });
         _jobs[id] = job;
         return new JobStarted(id, null);
     }
@@ -135,18 +144,20 @@ public sealed class WalletJobs
             WalletOutcome.Text when a.Text.Length > 0 => new JobResult("done", true, a.Text),
             WalletOutcome.TimedOut => new JobResult("done", false, null, null, "timeout"),
             WalletOutcome.Cancelled => new JobResult("done", false, null, null, "gone"),
-            _ => new JobResult("done", false, null, null, "failed"),
+            _ => new JobResult("done", false, null, null, a.Reason ?? "failed"),
         };
     }
 
-    /// <summary>The page stops waiting for a job: it is forgotten at once and a late result is ignored. The wallet is not told
-    /// (the protocol has no cancel frame); it may still finish the call, and the answer is then dropped.</summary>
+    /// <summary>The page stops waiting for a job: it is forgotten at once and a late result is ignored. The wallet is told with
+    /// <c>{"type":"cancel","id":N}</c> (CONTRACT-DIRECT.md §4, wallet 0.36) so it stops the call instead of spending on it.</summary>
     public bool Cancel(string room, string? id)
     {
         // the room is checked before anything is removed: another room's page must not be able to stop this room's job
         if (!DirectHub.IsRoomId(room) || id is null || !_jobs.TryGetValue(id, out var job) || job.Room != room) return false;
         if (!_jobs.TryRemove(id, out _)) return false;
+        job.Stopped = true;
         job.Stop.Cancel();
+        if (job.CallId != 0) job.Channel.CancelCall(job.CallId);
         job.Stop.Dispose();
         return true;
     }

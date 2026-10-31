@@ -28,10 +28,28 @@ export const PRIVACY_CLASSES = Object.freeze([
 ]);
 
 /** Hard limits a manifest (`purpose.limits`) or a grant (`limits`) may set. */
-export const KNOWN_LIMITS = Object.freeze(['maxCallsPerMinute', 'maxClipSeconds', 'maxTextChars']);
+export const KNOWN_LIMITS = Object.freeze(['maxCallsPerMinute', 'maxClipSeconds', 'maxFrameBytes', 'maxTextChars']);
 
 /** Limits that count things and therefore must be whole numbers. */
-export const COUNT_LIMITS = Object.freeze(['maxCallsPerMinute', 'maxTextChars']);
+export const COUNT_LIMITS = Object.freeze(['maxCallsPerMinute', 'maxFrameBytes', 'maxTextChars']);
+
+/** Source kinds a skill's `models.kind` may name (which sources may fill the skill). */
+export const SOURCE_KINDS = Object.freeze(['model', 'agent', 'any']);
+
+/** What a wallet does with a source that fails a known condition (`models.onMismatch`). */
+export const ON_MISMATCH = Object.freeze(['drop', 'show']);
+
+/** The four properties a `models.needs` condition may name. */
+export const NEEDS_PROPERTIES = Object.freeze(['context', 'input', 'output', 'runs']);
+
+/** Modalities of the `input` and `output` properties. */
+export const MODALITIES = Object.freeze(['audio', 'image', 'text']);
+
+/** Values of the `runs` property: the grant's own vocabulary, never a second one. */
+export const RUNS = Object.freeze(['api-key', 'home-server', 'local']);
+
+/** Abilities a `models.abilities` entry may name; `image.read` is reserved and not enforced. */
+export const ABILITIES = Object.freeze(['web.read', 'web.search']);
 
 /** Periods allowed in the manifest `expectedCost` object. */
 export const COST_PERIODS = Object.freeze(['perCall', 'perSession', 'perHour']);

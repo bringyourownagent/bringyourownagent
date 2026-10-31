@@ -2,7 +2,7 @@
 
 > **DRAFT FOR DISCUSSION.** This is a first proposal, not a standard. Every code, field name and decision below may change before specification v0.1. Comments and objections are welcome as GitHub issues.
 
-This document lists the first rules of BYOA that a program can check, in plain English. Each rule has a stable code. The reference implementations in [`../sdk/`](../sdk/) (Python, Node.js and .NET, version 0.0.2) implement exactly these rules, and the shared test vectors in [`../sdk/test-vectors/`](../sdk/test-vectors/) pin down their behaviour.
+This document lists the first rules of BYOA that a program can check, in plain English. Each rule has a stable code. The reference implementations in [`../sdk/`](../sdk/) (Python, Node.js and .NET) implement all of these rules, including the `models` block (M22–M28) and `maxFrameBytes`; the released 0.0.2 and 0.0.3 packages predate them (the note after the rule table says so). The shared test vectors in [`../sdk/test-vectors/`](../sdk/test-vectors/) pin down their behaviour.
 
 There are two groups of rules:
 
@@ -29,10 +29,18 @@ The softer check of the declared purpose by a small model is out of scope here; 
 | Protocol version (`byoa`) | `"0.1-draft"` |
 | Skill vocabulary | `text.generate`, `text.understand`, `text.embed`, `audio.transcribe`, `audio.speak`, `image.understand`, `image.generate`, `video.understand`, `video.generate` |
 | Privacy classes | `public`, `personal`, `personal-voice`, `sensitive`, `local-only` |
-| Limits | `maxClipSeconds` (number), `maxCallsPerMinute` (count), `maxTextChars` (count) |
+| Limits | `maxClipSeconds` (number), `maxCallsPerMinute` (count), `maxFrameBytes` (count), `maxTextChars` (count) |
+| Source kinds (`models.kind`) | `model`, `agent`, `any` |
+| Mismatch (`models.onMismatch`) | `drop`, `show` |
+| Properties (`models.needs`) | `input`, `output`, `context`, `runs` |
+| Modalities (`input`, `output`) | `text`, `image`, `audio` |
+| Where a source runs (`needs.runs`) | `local`, `home-server`, `api-key` |
+| Abilities (`models.abilities`) | `web.search`, `web.read` (`image.read` is reserved) |
 | Expected cost periods | `perCall`, `perSession`, `perHour` |
 | Provider kinds | `subscription`, `api-key`, `connected-account`, `local-model`, `home-server` |
 | Decisions, mildest first | `allowed`, `warn`, `ask`, `blocked` |
+
+In `needs` and in `abilities`, a name that begins with `x-` is free for anyone; any other unknown name is a warning (M26, M28), never an error, so a newer manifest still works with an older wallet.
 
 **Privacy classes**, meaning of each:
 
@@ -76,7 +84,7 @@ The manifest shown on the BYOA site is valid and produces no warnings:
 | M4 | `purpose-missing` | error | `purpose` must be present and be an object. | Declared purpose is the core of the protocol. |
 | M5 | `summary-missing` | error | `purpose.summary` must be a string with at least one non-whitespace character. | The visitor sees it before granting anything. |
 | M6 | `summary-too-long` | error | `purpose.summary` must be at most 200 characters. | It is one short sentence for a consent screen, not a policy. Details belong elsewhere. |
-| M7 | `limit-invalid` | error | `purpose.limits`, if present, must be an object; each known limit must be a number from 0 to 2^53 - 1 (Section 1), and the counts (`maxCallsPerMinute`, `maxTextChars`) whole numbers. | These are the hard limits the gate enforces. |
+| M7 | `limit-invalid` | error | `purpose.limits`, if present, must be an object; each known limit must be a number from 0 to 2^53 - 1 (Section 1), and the counts (`maxCallsPerMinute`, `maxFrameBytes`, `maxTextChars`) whole numbers. | These are the hard limits the gate enforces. `maxFrameBytes` bounds a frame of the direct link, not a call: no gate rule counts it, but a wallet reads it to size its frames. |
 | M8 | `limit-unknown` | warning | A limit name that is not known. It is ignored, so a newer manifest still works with an older wallet. | Forward compatibility; also catches typos. |
 | M9 | `field-unknown` | warning | `purpose` has a field other than `summary` and `limits`. | Forward compatibility. |
 | M10 | `skills-missing` | error | `skills` must be an object with at least one skill. | A manifest that asks for nothing has no use. |
@@ -91,8 +99,21 @@ The manifest shown on the BYOA site is valid and produces no warnings:
 | M19 | `cost-invalid` | error | `expectedCost`, if present, must be an object; each known period must be a money string. | — |
 | M20 | `field-unknown` | warning | `expectedCost` has a field other than the known periods. | Forward compatibility. |
 | M21 | `field-unknown` | warning | The manifest has a top-level field other than `byoa`, `purpose`, `skills`, `privacy`, `expectedCost`. | Forward compatibility: older wallets ignore newer fields. |
+| M22 | `models-invalid` | error | Inside a skill, `models`, if present, must be an object. | The block says who may fill the skill; it cannot be read in another shape. |
+| M23 | `models-kind-invalid` | error | `models.kind`, if present, must be `model`, `agent` or `any`. | An unknown kind would silently mean the opposite of what the site wrote. |
+| M24 | `models-onmismatch-invalid` | error | `models.onMismatch`, if present, must be `drop` or `show`. | A wallet must not guess what to do with a source that does not fit. |
+| M25 | `needs-invalid` | error | `models.needs`, if present, must be an object, and each of the four known keys must have its shape: `input` and `output` an array of at least one of `text`, `image`, `audio`, or an object holding only `{"includes": [...]}` of those; `context` a number from 0 to 2^53 - 1, or an object holding only `{"min": n}`; `runs` an array of at least one of `local`, `home-server`, `api-key`, or an object holding only `{"oneOf": [...]}` of those. | A condition of another shape cannot be checked, and an unchecked condition silently lets an unfit source through. |
+| M26 | `needs-unknown` | warning | A `needs` key that is not one of the four properties and does not begin with `x-`. | Forward compatibility; also catches typos such as `ouput`. |
+| M27 | `abilities-invalid` | error | `models.abilities`, if present, must be an array of at least one string. | An ability of another shape is a promise no wallet can read. |
+| M28 | `abilities-unknown` | warning | An ability name that is not in the vocabulary and does not begin with `x-`. | New abilities will appear; `files.read`, `code.run` and the like are not enforced in 0.1 and a wallet must not be made to pretend they are. |
 
-Skill parameters other than `required` (such as `languages` or `size`) are skill-specific and are not checked in this draft.
+Where a rule looks at several keys of one object inside `models` (M25 and M26 over `needs`, M28 over `abilities`), the keys are visited in Unicode code point order, as everywhere else.
+
+A `models` block without `count` is valid: the contract's defaults apply (CONTRACT.md section 3.3) and the other keys of the block are read as they are.
+
+The rules of the `models` block (M22–M28) and the limit name `maxFrameBytes` are new in the libraries' next shared version: the released 0.0.2 and 0.0.3 packages report `maxFrameBytes` as `limit-unknown` and check nothing inside `models`. Every manifest the older libraries accept is still accepted.
+
+Skill parameters other than `required` and the `models` block (such as `languages` or `size`) are skill-specific and are not checked in this draft. Inside `models`, the rules check only `kind`, `onMismatch`, `needs` and `abilities`; `count`, `distinct`, `require`, `recommend`, `why`, `whyLong` and `names` stay the wallet's to read, as before.
 
 ## 4. Grant, call and state
 

@@ -53,12 +53,14 @@ test('the model list keeps text models with a readable price; free means both pr
       { id: 'c/image-out', pricing: { prompt: '0', completion: '0' }, architecture: { output_modalities: ['image'] } },
       { id: 'd/no-price', pricing: { prompt: 'x', completion: '0' } },
       { id: 'e/half-free', pricing: { prompt: '0', completion: '0.000001' } },
+      { id: 'f/also-image', name: 'Draws too', pricing: { prompt: '0', completion: '0' }, architecture: { input_modalities: ['text', 'image'], output_modalities: ['text', 'image'] } },
       { name: 'no id' },
     ],
   };
   const models = readModels(body);
   assert.deepEqual(models.map((m) => [m.id, m.free]), [['b/paid', false], ['e/half-free', false], ['a/free-one:free', true]].sort((x, y) => models.findIndex((m) => m.id === x[0]) - models.findIndex((m) => m.id === y[0])));
   assert.equal(models.length, 3);
+  assert.equal(models.some((m) => m.id === 'f/also-image'), false);   // the primary-role rule: it answers in pictures too, so it is not a text model here
   assert.equal(models.find((m) => m.id === 'b/paid').pricePerMillion.prompt, 1);
   assert.equal((await listModels({ fetch: async () => json(body) })).length, 3);
   await assert.rejects(listModels({ fetch: async () => json({}, 500) }), (e) => e.kind === 'provider');

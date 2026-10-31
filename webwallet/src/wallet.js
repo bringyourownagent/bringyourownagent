@@ -111,13 +111,16 @@ export class SiteConnection {
     this._closed = false;
   }
 
-  /** The `skills` the site asked for are served only if the visitor ticked models; the hello says what was granted. */
+  /** The `skills` the site asked for are served only if the visitor ticked models; the hello says what was granted.
+   * `capabilities` is the closed list of CONTRACT.md section 3.3: this wallet reads none of those features, and
+   * says so plainly instead of letting a site guess from missing keys. */
   helloFrame() {
     const asked = isObject(this.link.manifestJson?.skills?.['text.generate']?.models);
     const grant = {
       skills: ['text.generate'],
       expiresAt: iso(this.expiresAt),
       limits: { ...this.limits },
+      capabilities: [],
     };
     if (asked) grant.models = { 'text.generate': this.models.map((m) => m.wire) };
     return { type: 'hello', v: '0.1', session: this.link.session, pairing: null, wallet: { ...WALLET }, grant };

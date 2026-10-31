@@ -434,6 +434,362 @@
           { "code": "field-unknown", "path": "/extra" }
         ]
       }
+    },
+    {
+      "name": "a skill that asks by properties is valid with no warnings",
+      "manifestPatch": {
+        "skills": {
+          "audio.transcribe": null,
+          "text.understand": null,
+          "text.generate": {
+            "required": true,
+            "models": {
+              "count": 1,
+              "kind": "any",
+              "onMismatch": "show",
+              "needs": { "input": ["text", "image"], "output": ["text"], "context": 64, "runs": ["api-key"] },
+              "abilities": ["web.search", "web.read", "image.read", "x-mine"],
+              "recommend": ["anthropic/claude-sonnet-5.5", "agent/*"],
+              "why": "Looks at a candidate and writes clean SVG code for it."
+            }
+          }
+        }
+      },
+      "expect": {
+        "ok": true,
+        "errors": [],
+        "warnings": [{ "code": "abilities-unknown", "path": "/skills/text.generate/models/abilities/2" }]
+      }
+    },
+    {
+      "name": "the long forms of needs mean the same as the short ones",
+      "manifestPatch": {
+        "skills": {
+          "audio.transcribe": null,
+          "text.understand": null,
+          "text.generate": {
+            "required": true,
+            "models": { "needs": { "input": { "includes": ["text"] }, "output": { "includes": ["text", "image"] }, "context": { "min": 32 }, "runs": { "oneOf": ["local", "home-server"] } } }
+          }
+        }
+      },
+      "expect": { "ok": true, "errors": [], "warnings": [] }
+    },
+    {
+      "name": "a models block without count is accepted and its other keys are read",
+      "manifestPatch": {
+        "skills": {
+          "audio.transcribe": null,
+          "text.understand": null,
+          "text.generate": { "required": true, "models": { "kind": "agent", "needs": { "output": ["text"] } } }
+        }
+      },
+      "expect": { "ok": true, "errors": [], "warnings": [] }
+    },
+    {
+      "name": "models that is not an object",
+      "manifestPatch": {
+        "skills": {
+          "audio.transcribe": null,
+          "text.understand": null,
+          "text.generate": { "required": true, "models": ["m1"] }
+        }
+      },
+      "expect": { "ok": false, "errors": [{ "code": "models-invalid", "path": "/skills/text.generate/models" }], "warnings": [] }
+    },
+    {
+      "name": "kind must be model, agent or any",
+      "manifestPatch": {
+        "skills": {
+          "audio.transcribe": null,
+          "text.understand": null,
+          "text.generate": { "required": true, "models": { "kind": "wizard" } }
+        }
+      },
+      "expect": { "ok": false, "errors": [{ "code": "models-kind-invalid", "path": "/skills/text.generate/models/kind" }], "warnings": [] }
+    },
+    {
+      "name": "kind that is not a string",
+      "manifestPatch": {
+        "skills": {
+          "audio.transcribe": null,
+          "text.understand": null,
+          "text.generate": { "required": true, "models": { "kind": 1 } }
+        }
+      },
+      "expect": { "ok": false, "errors": [{ "code": "models-kind-invalid", "path": "/skills/text.generate/models/kind" }], "warnings": [] }
+    },
+    {
+      "name": "onMismatch must be drop or show",
+      "manifestPatch": {
+        "skills": {
+          "audio.transcribe": null,
+          "text.understand": null,
+          "text.generate": { "required": true, "models": { "onMismatch": "warn" } }
+        }
+      },
+      "expect": { "ok": false, "errors": [{ "code": "models-onmismatch-invalid", "path": "/skills/text.generate/models/onMismatch" }], "warnings": [] }
+    },
+    {
+      "name": "needs of a wrong shape, one error per key in code point order",
+      "manifestPatch": {
+        "skills": {
+          "audio.transcribe": null,
+          "text.understand": null,
+          "text.generate": {
+            "required": true,
+            "models": { "needs": { "input": "text", "runs": { "oneOf": "local" }, "context": -1, "output": { "includes": "text" } } }
+          }
+        }
+      },
+      "expect": {
+        "ok": false,
+        "errors": [
+          { "code": "needs-invalid", "path": "/skills/text.generate/models/needs/context" },
+          { "code": "needs-invalid", "path": "/skills/text.generate/models/needs/input" },
+          { "code": "needs-invalid", "path": "/skills/text.generate/models/needs/output" },
+          { "code": "needs-invalid", "path": "/skills/text.generate/models/needs/runs" }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "an unknown modality or runs value is not a condition",
+      "manifestPatch": {
+        "skills": {
+          "audio.transcribe": null,
+          "text.understand": null,
+          "text.generate": { "required": true, "models": { "needs": { "output": ["video"], "runs": ["cloud", "api-key"] } } }
+        }
+      },
+      "expect": {
+        "ok": false,
+        "errors": [
+          { "code": "needs-invalid", "path": "/skills/text.generate/models/needs/output" },
+          { "code": "needs-invalid", "path": "/skills/text.generate/models/needs/runs" }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "an empty needs array asks for nothing",
+      "manifestPatch": {
+        "skills": {
+          "audio.transcribe": null,
+          "text.understand": null,
+          "text.generate": { "required": true, "models": { "needs": { "output": [] } } }
+        }
+      },
+      "expect": { "ok": false, "errors": [{ "code": "needs-invalid", "path": "/skills/text.generate/models/needs/output" }], "warnings": [] }
+    },
+    {
+      "name": "a long form with more than the one key is not the shape",
+      "manifestPatch": {
+        "skills": {
+          "audio.transcribe": null,
+          "text.understand": null,
+          "text.generate": { "required": true, "models": { "needs": { "context": { "min": 32, "max": 200 } } } }
+        }
+      },
+      "expect": { "ok": false, "errors": [{ "code": "needs-invalid", "path": "/skills/text.generate/models/needs/context" }], "warnings": [] }
+    },
+    {
+      "name": "an unknown needs key is a warning, an x- key is not",
+      "manifestPatch": {
+        "skills": {
+          "audio.transcribe": null,
+          "text.understand": null,
+          "text.generate": { "required": true, "models": { "needs": { "ouput": ["text"], "x-vad": true, "output": ["text"] } } }
+        }
+      },
+      "expect": { "ok": true, "errors": [], "warnings": [{ "code": "needs-unknown", "path": "/skills/text.generate/models/needs/ouput" }] }
+    },
+    {
+      "name": "needs that is not an object",
+      "manifestPatch": {
+        "skills": {
+          "audio.transcribe": null,
+          "text.understand": null,
+          "text.generate": { "required": true, "models": { "needs": ["text"] } }
+        }
+      },
+      "expect": { "ok": false, "errors": [{ "code": "needs-invalid", "path": "/skills/text.generate/models/needs" }], "warnings": [] }
+    },
+    {
+      "name": "abilities must be an array of names",
+      "manifestPatch": {
+        "skills": {
+          "audio.transcribe": null,
+          "text.understand": null,
+          "text.generate": { "required": true, "models": { "kind": "any", "abilities": "web.search" } }
+        }
+      },
+      "expect": { "ok": false, "errors": [{ "code": "abilities-invalid", "path": "/skills/text.generate/models/abilities" }], "warnings": [] }
+    },
+    {
+      "name": "an empty abilities array is not an ask",
+      "manifestPatch": {
+        "skills": {
+          "audio.transcribe": null,
+          "text.understand": null,
+          "text.generate": { "required": true, "models": { "abilities": [] } }
+        }
+      },
+      "expect": { "ok": false, "errors": [{ "code": "abilities-invalid", "path": "/skills/text.generate/models/abilities" }], "warnings": [] }
+    },
+    {
+      "name": "an ability nobody enforces is a warning",
+      "manifestPatch": {
+        "skills": {
+          "audio.transcribe": null,
+          "text.understand": null,
+          "text.generate": { "required": true, "models": { "kind": "agent", "abilities": ["web.read", "files.read", "image.read"] } }
+        }
+      },
+      "expect": {
+        "ok": true,
+        "errors": [],
+        "warnings": [
+          { "code": "abilities-unknown", "path": "/skills/text.generate/models/abilities/1" },
+          { "code": "abilities-unknown", "path": "/skills/text.generate/models/abilities/2" }
+        ]
+      }
+    },
+    {
+      "name": "each skill's models block is checked on its own",
+      "manifestPatch": {
+        "skills": {
+          "audio.transcribe": { "required": true, "models": { "kind": "model", "needs": { "input": ["audio"] } } },
+          "text.understand": null,
+          "image.generate": { "required": false, "models": { "kind": "wizard", "needs": { "output": ["image"] } } }
+        }
+      },
+      "expect": {
+        "ok": false,
+        "errors": [{ "code": "models-kind-invalid", "path": "/skills/image.generate/models/kind" }],
+        "warnings": []
+      }
+    },
+    {
+      "name": "the icon site's manifest after the pictures release",
+      "manifest": {
+        "byoa": "0.1-draft",
+        "purpose": {
+          "summary": "Draws app-icon candidates as SVG code, one drawing per request",
+          "limits": { "maxTextChars": 60000, "maxAnswerTokens": 12000, "maxCallSeconds": 180, "maxParallelCalls": 3, "maxCallsPerMinute": 60 }
+        },
+        "skills": {
+          "image.generate": { "required": true, "models": { "count": { "min": 1, "max": 4 }, "needs": { "output": ["image"] }, "recommend": ["google/gemini-3.1-flash-image*", "openai/gpt-image-*"], "why": "Draws the picture candidates for your icon." } },
+          "text.generate": { "required": true, "models": { "count": 1, "kind": "any", "needs": { "input": ["text", "image"], "output": ["text"], "context": 64 }, "recommend": ["anthropic/claude-sonnet-5.5", "agent/*"], "why": "Looks at a candidate and writes clean SVG code for it." } }
+        },
+        "privacy": "personal",
+        "expectedCost": { "perSession": "0.50 USD" }
+      },
+      "expect": {
+        "ok": true,
+        "errors": [],
+        "warnings": [
+          { "code": "limit-unknown", "path": "/purpose/limits/maxAnswerTokens" },
+          { "code": "limit-unknown", "path": "/purpose/limits/maxCallSeconds" },
+          { "code": "limit-unknown", "path": "/purpose/limits/maxParallelCalls" }
+        ]
+      }
+    },
+    {
+      "name": "maxFrameBytes is a known limit",
+      "manifestPatch": { "purpose": { "limits": { "maxFrameBytes": 1048576 } } },
+      "expect": { "ok": true, "errors": [], "warnings": [] }
+    },
+    {
+      "name": "maxFrameBytes is a count: half a byte is refused",
+      "manifestPatch": { "purpose": { "limits": { "maxFrameBytes": 0.5 } } },
+      "expect": { "ok": false, "errors": [{ "code": "limit-invalid", "path": "/purpose/limits/maxFrameBytes" }], "warnings": [] }
+    },
+    {
+      "name": "maxFrameBytes over the largest number is refused",
+      "manifestPatch": { "purpose": { "limits": { "maxFrameBytes": -1 } } },
+      "expect": { "ok": false, "errors": [{ "code": "limit-invalid", "path": "/purpose/limits/maxFrameBytes" }], "warnings": [] }
+    },
+    {
+      "name": "null fields inside a models block count as absent",
+      "manifest": {
+        "byoa": "0.1-draft",
+        "purpose": { "summary": "Family geography game: recognise country names" },
+        "skills": {
+          "text.generate": { "required": true, "models": { "count": null, "kind": null, "onMismatch": null, "needs": null, "abilities": null } }
+        },
+        "privacy": "personal-voice",
+        "expectedCost": { "perSession": "0.06 USD" }
+      },
+      "expect": { "ok": true, "errors": [], "warnings": [] }
+    },
+    {
+      "name": "a needs condition whose value is null is not a condition",
+      "manifest": {
+        "byoa": "0.1-draft",
+        "purpose": { "summary": "Family geography game: recognise country names" },
+        "skills": {
+          "text.generate": { "required": true, "models": { "needs": { "input": null, "output": ["text"], "context": null } } }
+        },
+        "privacy": "personal-voice",
+        "expectedCost": { "perSession": "0.06 USD" }
+      },
+      "expect": { "ok": true, "errors": [], "warnings": [] }
+    },
+    {
+      "name": "a long form of a modality holds its one key and nothing else",
+      "manifestPatch": {
+        "skills": {
+          "audio.transcribe": null,
+          "text.understand": null,
+          "text.generate": { "required": true, "models": { "needs": { "output": { "includes": ["text", "image"], "exact": true } } } }
+        }
+      },
+      "expect": { "ok": false, "errors": [{ "code": "needs-invalid", "path": "/skills/text.generate/models/needs/output" }], "warnings": [] }
+    },
+    {
+      "name": "the long form must carry an array, not another object",
+      "manifestPatch": {
+        "skills": {
+          "audio.transcribe": null,
+          "text.understand": null,
+          "text.generate": { "required": true, "models": { "needs": { "output": { "includes": { "text": true } } } } }
+        }
+      },
+      "expect": { "ok": false, "errors": [{ "code": "needs-invalid", "path": "/skills/text.generate/models/needs/output" }], "warnings": [] }
+    },
+    {
+      "name": "an ability that is not a string is not an ability name",
+      "manifestPatch": {
+        "skills": {
+          "audio.transcribe": null,
+          "text.understand": null,
+          "text.generate": { "required": true, "models": { "kind": "agent", "abilities": ["web.search", 7] } }
+        }
+      },
+      "expect": { "ok": false, "errors": [{ "code": "abilities-invalid", "path": "/skills/text.generate/models/abilities" }], "warnings": [] }
+    },
+    {
+      "name": "the icon site's text-only manifest before the pictures release",
+      "manifest": {
+        "byoa": "0.1-draft",
+        "purpose": { "summary": "Draws app-icon candidates as SVG code, one drawing per request" },
+        "skills": {
+          "text.generate": {
+            "required": true,
+            "models": {
+              "count": 1,
+              "kind": "any",
+              "needs": { "output": ["text"] },
+              "recommend": ["anthropic/claude-sonnet-5.5", "agent/*"],
+              "why": "Writes clean SVG code from your description, and from a picture when your model can read one."
+            }
+          }
+        },
+        "privacy": "public",
+        "expectedCost": { "perSession": "0.50 USD" }
+      },
+      "expect": { "ok": true, "errors": [], "warnings": [] }
     }
   ]
 }

@@ -280,10 +280,10 @@ public class HubTests
         var token = welcome.GetProperty("pairing").GetString()!;
 
         var grant = hub.Grant(Rooms.A, token)!;
-        Assert.Equal(["m1", "m2", "m3", "m4"], grant.Models.Select(m => m.Ref));
-        Assert.Equal(["model", "model", "model", "agent"], grant.Models.Select(m => m.Kind));       // the agent is told apart by its id
-        Assert.Equal("Claude Code (Opus)", grant.Models[3].Name);
-        Assert.Equal("subscription", grant.Models[3].Runs);
+        Assert.Equal(["m1", "m2", "m3", "m4"], grant.ModelsOf("text.generate").Select(m => m.Ref));
+        Assert.Equal(["model", "model", "model", "agent"], grant.ModelsOf("text.generate").Select(m => m.Kind));       // the agent is told apart by its id
+        Assert.Equal("Claude Code (Opus)", grant.ModelsOf("text.generate")[3].Name);
+        Assert.Equal("subscription", grant.ModelsOf("text.generate")[3].Runs);
         Assert.Equal(["text.generate"], grant.Skills);
         Assert.Equal(60000, grant.Limits.MaxTextChars);
         Assert.Equal(4000, grant.Limits.MaxAnswerTokens);
