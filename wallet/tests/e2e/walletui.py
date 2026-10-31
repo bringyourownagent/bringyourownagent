@@ -3,8 +3,8 @@ buttons, tick boxes) and screenshots of a window's rectangle. Windows only. Need
 
 The wallet's windows are titled "Agent wallet notice", "Agent wallet consent", "Agent wallet paid fallback",
 "Agent wallet message", "Agent wallet download", "Agent wallet preparing" and "Agent wallet" (the settings); its controls carry
-AutomationIds such as NoticeShow, NoticeDecline, NoticeBlock, ConsentAllow, ConsentDecline, ConsentAuto,
-PaidOnce, PaidNo, Tab-sites, SourceEnabled-gigaam-v3.
+AutomationIds such as NoticeShow, NoticeDecline, NoticeBlock, ConsentAllow, ConsentDecline, ConsentCheckSame,
+PaidOnce, PaidNo, Tab-sites, SiteExpand-<host>, SiteAuto-<host>, SourceEnabled-gigaam-v3.
 """
 import hashlib
 import ctypes
@@ -131,6 +131,15 @@ def select(window, automation_id):
     c = control(window, automation_id)
     c.GetPattern(auto.PatternId.SelectionItemPattern).Select()
     return c
+
+
+def tick_site_auto(window, host, on=True):
+    """"Next time, decide on my own" of a site. The consent window has no such tick any more: it is in the settings, Sites, in the
+    site's row (open its arrow first). `window` is the settings window ("Agent wallet"); `host` is the row's host, such as localhost:8080."""
+    select(window, "Tab-sites")
+    time.sleep(1.2)
+    open_row(window, "SiteExpand-" + host)
+    return toggle(window, "SiteAuto-" + host, on)
 
 
 def shot(window, path, pad=0):

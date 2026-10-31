@@ -29,6 +29,7 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.parse
 import wave
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -466,9 +467,11 @@ with sync_playwright() as p:
     w = ui.find_window("Agent wallet notice", 20)
     ui.invoke(w, "NoticeShow")
     c = ui.find_window("Agent wallet consent", 10)
-    ui.toggle(c, "ConsentAuto", True)
     ui.invoke(c, "ConsentAllow")
     g1 = wait_grant(au)
+    subprocess.Popen([wallet_exe], env=env)                      # a second start opens the running wallet's settings
+    st = ui.find_window("Agent wallet", 15)
+    ui.tick_site_auto(st, urllib.parse.urlparse(servers["auto"]).netloc)      # the consent window has no such tick any more: it is in Sites
     au.reload()
     au.wait_for_function("window.byoa !== undefined")
     ev(au, "window.grant = undefined; window.requestLater(6500)")

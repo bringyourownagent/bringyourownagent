@@ -62,13 +62,16 @@ def check(label, ok, extra=""):
         failed.append(label)
 
 
-def seed_speech_source():
-    """The wallet holds no model: its settings name the program that runs one, as the Add a model window would write them."""
+def seed_speech_source(site_origin):
+    """The wallet holds no model: its settings name the program that runs one, as the Add a model window would write them.
+    The site of the test is there too, as one that decides on its own (Sites, "Next time, decide on my own"): the consent window
+    has no such tick any more, and only such a site keeps the pairing that the restart part of the test needs. It is still
+    not allowed: its first link asks, and Allow makes it allowed."""
     os.makedirs(HOME, exist_ok=True)
     source = {"id": "seeded", "enabled": True, "kind": "openai-compatible", "label": "Qwen3-ASR", "endpoint": a.llama, "model": a.model,
               "skills": ["audio.transcribe"], "endpointConfirmed": True}
     with open(os.path.join(HOME, "settings.json"), "w", encoding="utf-8") as f:
-        json.dump({"version": 1, "sources": [source]}, f)
+        json.dump({"version": 1, "sources": [source], "sites": [{"origin": site_origin, "autoDecide": True}]}, f)
 
 
 def llama_offers_the_model():
@@ -142,7 +145,7 @@ check("no wallet with this data folder is running before the test", not os.path.
 check("the speech program is up and offers the model", llama_offers_the_model(), a.llama + " " + a.model)
 if not llama_offers_the_model():
     sys.exit("start the Llama app with the speech model first")
-seed_speech_source()
+seed_speech_source(main.origin)
 
 # ---------------------------------------------------------------------------------------------- pair: link, notice, consent, hello
 t0 = time.time()
@@ -155,7 +158,6 @@ check("the wallet that the link started uses this test's data folder (it inherit
 time.sleep(0.8)
 ui.shot(consent, os.path.join(a.shots, "21-link-consent.png"))
 check("nothing reaches the site before Allow", main.requests == 0 and main.upgrades == 0)
-ui.toggle(consent, "ConsentAuto", True)
 allowed_at = time.time()
 ui.click(consent, "ConsentAllow")
 prep = ui.find_window("Agent wallet preparing", 4)
@@ -198,7 +200,7 @@ check("the activity marks the request and the calls \"via link\"", all(c["via"] 
 # ---------------------------------------------------------------------------------------------- restart with the stored pairing
 pairings = os.path.join(HOME, "pairings.dat")
 token = hello and main.pairings and next(iter(main.pairings))
-check("the pairing is stored (\"decide on my own\" was ticked), encrypted", os.path.exists(pairings) and token
+check("the pairing is stored (the site decides on its own), encrypted", os.path.exists(pairings) and token
       and token.encode() not in open(pairings, "rb").read())
 kill_mine()
 check("the wallet quit: the site sees the connection end", wait(lambda: main.live is None, 10))
@@ -230,8 +232,7 @@ c = ui.to_consent(20)
 time.sleep(0.8)
 only_new = c.TextControl(Name="Only what is new", searchDepth=30).Exists(2, 0.2)
 ui.shot(c, os.path.join(a.shots, "26-link-difference.png"))
-ui.toggle(c, "ConsentAuto", True)
-ui.invoke(c, "ConsentAllow")
+ui.invoke(c, "ConsentAllow")                       # the site still decides on its own: the window does not ask for it again
 check("a new link then shows only the difference, and Allow connects again", only_new and main.wait_hello(45) and main.live is not None)
 
 # ---------------------------------------------------------------------------------------------- a site whose welcome does not echo its link's manifest
