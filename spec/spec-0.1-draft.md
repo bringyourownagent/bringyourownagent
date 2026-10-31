@@ -58,7 +58,7 @@ Rules that hold for every skill:
 
 - **The answer is user input.** The requester MUST NOT treat a wallet's output as trusted: validate it, limit its length, escape it when it is displayed.
 - **The wallet measures; the page does not say.** The wallet takes sizes and durations from the data itself, never from a field the requester filled in.
-- **Failure is one shape.** A call that cannot be served is `{ ok: false }`: blocked by a limit, no model answered, the grant ended, a paid fallback was refused. The requester MUST then use its own path; it is told no more.
+- **Failure is one shape.** A call that cannot be served is `{ ok: false }` (wallet 0.36 adds a coarse `reason`: `timeout`, `cancelled`, `limit` or `failed`, which tells a site only what it already knows): blocked by a limit, no model answered, the grant ended, a paid fallback was refused. The requester MUST then use its own path; it is told no more.
 - **The model is not revealed.** Which provider or model answered is the wallet's business.
 - **A skill is filled by fit** (wallet 0.36). A requester may state conditions on the properties of the sources it wants (`needs`) and the kind of source (`model`, `agent`, `any`); the wallet offers only what fits the skill's own built-in rule first, and answers with verdicts, never values, in `can` (CONTRACT.md sections 3.3, 3.5 and 3.6).
 

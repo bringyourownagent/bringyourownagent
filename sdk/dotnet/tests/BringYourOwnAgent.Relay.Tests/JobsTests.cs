@@ -238,6 +238,14 @@ public class JobsTests
         Assert.Equal(new JobResult("done", false, null, null, "failed"),
                      await jobs.PollAsync(Rooms.A, refused.Id, TimeSpan.FromSeconds(5), CancellationToken.None));
 
+        // the wallet's own reason reaches the page; a word that is not on the closed list is just "failed"
+        foreach (var (said, told) in new[] { ("timeout", "timeout"), ("cancelled", "cancelled"), ("limit", "limit"), ("failed", "failed"), ("no model for you", "failed") })
+        {
+            var job = jobs.Start(Rooms.A, Ask(token, "m1"));
+            await wallet.Send(WalletFrames.Result((await wallet.NextOf("call")).GetProperty("id").GetInt32(), false, reason: said));
+            Assert.Equal(told, (await jobs.PollAsync(Rooms.A, job.Id, TimeSpan.FromSeconds(5), CancellationToken.None)).Reason);
+        }
+
         var wordless = jobs.Start(Rooms.A, Ask(token, "m2"));
         await wallet.Send(WalletFrames.Result((await wallet.NextOf("call")).GetProperty("id").GetInt32(), true, "  ​ \n "));
         Assert.Equal("failed", (await jobs.PollAsync(Rooms.A, wordless.Id, TimeSpan.FromSeconds(5), CancellationToken.None)).Reason);      // nothing readable is no answer

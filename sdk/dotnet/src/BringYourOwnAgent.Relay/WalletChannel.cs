@@ -47,7 +47,7 @@ public enum WalletOutcome
 }
 
 /// <summary>One call's answer: <paramref name="Text"/> is the wallet's text, cleaned and cut (<see cref="WalletText"/>).</summary>
-public sealed record WalletAnswer(WalletOutcome Outcome, string Text = "");
+public sealed record WalletAnswer(WalletOutcome Outcome, string Text = "", string? Reason = null);
 
 /// <summary>
 /// One visitor's agent wallet connected straight to the server (<c>wss://host/byoa/ws</c>, BYOA «direct» transport, CONTRACT-DIRECT.md §4–5, §7),
@@ -136,7 +136,7 @@ public sealed class WalletChannel
     /// <summary>One incoming JSON message, read without copying it: only what the server uses.</summary>
     sealed record Frame(string? Type, string? Session, string? Pairing, int? Id, bool Ok, string? Text, string? Chunk,
                         string[]? Skills = null, JsonElement? Models = null, JsonElement? Limits = null, bool HasLimits = false,
-                        string[]? Capabilities = null);
+                        string[]? Capabilities = null, string? Reason = null);
 
     /// <summary>Serves one wallet connection until it closes.</summary>
     public static async Task RunAsync(WebSocket ws, DirectHub hub, ILogger log, CancellationToken ct, WalletChannelLimits? limits = null)
@@ -178,7 +178,7 @@ public sealed class WalletChannel
                 switch (frame?.Type)
                 {
                     case "result" when frame.Id is { } id:
-                        channel.Result(id, frame.Ok && frame.Text is not null, frame.Text);       // ok without a text is no answer
+                        channel.Result(id, frame.Ok && frame.Text is not null, frame.Text, frame.Reason);       // ok without a text is no answer
                         break;
                     case "chunk" when frame.Id is { } id:
                         channel.Chunk(id, frame.Chunk);
@@ -268,11 +268,14 @@ public sealed class WalletChannel
         return true;
     }
 
+    /// <summary>The reasons a wallet may give for an <c>ok:false</c> (CONTRACT-DIRECT.md section 4); any other word is "failed".</summary>
+    static readonly HashSet<string?> Reasons = new(StringComparer.Ordinal) { "timeout", "cancelled", "limit", "failed" };
+
     /// <summary>The wallet's result for a call; false when no such call is waiting (late, repeated, made up, or let go by the page).</summary>
-    public bool Result(int id, bool ok, string? text)
+    public bool Result(int id, bool ok, string? text, string? reason = null)
     {
         if (!_pending.TryRemove(id, out var waiting)) return false;
-        if (!ok) return waiting.Answer.TrySetResult(new WalletAnswer(WalletOutcome.Failed));
+        if (!ok) return waiting.Answer.TrySetResult(new WalletAnswer(WalletOutcome.Failed, "", Reasons.Contains(reason) ? reason : "failed"));
         var clean = WalletText.CleanBlock(text, waiting.MaxChars);
         return waiting.Answer.TrySetResult(new WalletAnswer(WalletOutcome.Text, clean));
     }
@@ -535,7 +538,7 @@ public sealed class WalletChannel
                 capabilities = capabilitiesNode.EnumerateArray().Where(x => x.ValueKind == JsonValueKind.String).Select(x => x.GetString()!).Take(32).ToArray();
             frame = new Frame(Str(root, "type"), Str(root, "session"), Str(root, "pairing"), id, ok, text,
                               root.TryGetProperty("text", out var c) && c.ValueKind == JsonValueKind.String ? c.GetString() : null,
-                              skills, modelsNode?.Clone(), limitsNode?.Clone(), limitsNode is not null, capabilities);
+                              skills, modelsNode?.Clone(), limitsNode?.Clone(), limitsNode is not null, capabilities, Str(root, "reason"));
             return true;
         }
         catch (JsonException) { return false; }

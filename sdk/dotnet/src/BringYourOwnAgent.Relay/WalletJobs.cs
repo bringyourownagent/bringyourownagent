@@ -25,7 +25,7 @@ public sealed record JobStarted(string? Id, string? Error);
 /// <param name="Ok">done and the wallet answered with something readable.</param>
 /// <param name="Text">done and ok: the answer, cleaned and cut.</param>
 /// <param name="Partial">While pending: the pieces the wallet has streamed so far (a preview; the final answer replaces them).</param>
-/// <param name="Reason">done and not ok: "failed" (the wallet refused or the model failed), "timeout" or "gone" (the wallet went away).</param>
+/// <param name="Reason">done and not ok: what the wallet said ("timeout", "cancelled", "limit" or "failed"; CONTRACT-DIRECT.md section 4), or "timeout" (nothing came back in the relay's time) or "gone" (the wallet went away).</param>
 public sealed record JobResult(string State, bool Ok = false, string? Text = null, string? Partial = null, string? Reason = null);
 
 /// <summary>
@@ -144,7 +144,7 @@ public sealed class WalletJobs
             WalletOutcome.Text when a.Text.Length > 0 => new JobResult("done", true, a.Text),
             WalletOutcome.TimedOut => new JobResult("done", false, null, null, "timeout"),
             WalletOutcome.Cancelled => new JobResult("done", false, null, null, "gone"),
-            _ => new JobResult("done", false, null, null, "failed"),
+            _ => new JobResult("done", false, null, null, a.Reason ?? "failed"),
         };
     }
 
