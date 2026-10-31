@@ -140,7 +140,7 @@ public class NeedsInTheEngineTests
         var gemma = section.Choices.Single(c => c.Key == "lm:gemma");
         Assert.Equal(FitState.Unknown, gemma.Fit);                              // nothing is known of a local model's input
         Assert.False(gemma.Checked);
-        Assert.Equal(["not known: what it reads, what it makes"], gemma.Marks);
+        Assert.Equal(["not known: what it reads"], gemma.Marks);               // (that it writes text is no secret: it was added to write text)
         var gpt = section.Choices.Single(c => c.Key == "openrouter:openai/gpt-5-mini");
         Assert.Equal(FitState.Fits, gpt.Fit);
         Assert.True(gpt.Checked);                                               // the one that surely fits
@@ -338,8 +338,8 @@ public class NeedsInTheEngineTests
         Assert.Equal(["needs", "can", "kind", "cancel"], granted!["capabilities"]!.AsArray().Select(c => c!.GetValue<string>()));
         var list = granted["models"]!["text.generate"]!.AsArray();
         Assert.Equal("{\"input\":true,\"output\":true,\"context\":true,\"runs\":true}", list[0]!["can"]!.ToJsonString());
-        // A local model: what it reads, what it makes and how much it reads are not known, so the keys are not there; where it runs is known, and is not what was asked.
-        Assert.Equal("{\"runs\":false}", list[1]!["can"]!.ToJsonString());
+        // A local model: what it reads and how much it reads are not known, so those keys are not there; it writes text (it was added for that); where it runs is known, and is not what was asked.
+        Assert.Equal("{\"output\":true,\"runs\":false}", list[1]!["can"]!.ToJsonString());
         foreach (var entry in list)
         {
             var can = entry!["can"]!.AsObject();

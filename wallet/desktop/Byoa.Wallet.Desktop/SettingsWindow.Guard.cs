@@ -56,6 +56,12 @@ sealed partial class SettingsWindow
 
         page.Children.Add(Ui.Box("card", strictness));
 
+        // what the guard cannot see
+        var reads = Ui.Wrap("The guard reads text only. A picture is not text, so the guard cannot read one: a site that sends pictures asks you to trust a channel the wallet cannot check. "
+            + "That is why pictures go only to models, never to your agent.", "muted", "small");
+        AutomationProperties.SetAutomationId(reads, "GuardReadsTextOnly");
+        page.Children.Add(Ui.Box("card", Ui.Column(6, Ui.Text("What the guard reads", "h2"), reads)));
+
         // when the guard cannot be asked
         var down = Ui.Column(6, Ui.Text("If the guard cannot be asked", "h2"));
         foreach (var (stop, name, id) in new[] { (true, "Stop the agent: no request reaches it (recommended)", "GuardWhenDown-stop"), (false, "Let requests through without a look", "GuardWhenDown-let") })
@@ -165,7 +171,17 @@ sealed partial class SettingsWindow
             Ui.Wrap("Runs " + (source.AgentCommand ?? "?") + " · " + AgentFlavors.Name(source.AgentFlavor)
                 + (string.IsNullOrWhiteSpace(source.AgentModel) ? "" : " · model " + source.AgentModel), "mono", "small"),
             Ui.Wrap("One question at a time, with web search and page reading only. A site gets it only when you tick it in that site's window (or in Sites), and every request goes through the guard. " + given, "muted", "small"),
+            AgentAbilitiesText(source),
             Ui.Row(8, test, remove));
+    }
+
+    /// <summary>What the agent can do, as text and not as boxes: the wallet works it out from the tools it launches the agent with, and neither a site nor the visitor sets it.</summary>
+    static Control AgentAbilitiesText(SourceSetting source)
+    {
+        var text = Ui.Wrap("What it can do: " + string.Join(", ", AgentProfile.Abilities.Select(AgentProfile.Words))
+            + ". It cannot look at pictures. The wallet works this out from the tools it gives the agent; a site cannot widen them.", "muted", "small");
+        AutomationProperties.SetAutomationId(text, "AgentAbilities-" + SafeId(source.Id));
+        return text;
     }
 
     async Task TestAgentAsync(SourceSetting source)

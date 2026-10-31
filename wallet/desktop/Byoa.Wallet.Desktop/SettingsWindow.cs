@@ -652,6 +652,7 @@ sealed partial class SettingsWindow : Window
             Ui.Wrap(detail, "muted"),
             Ui.Wrap((source.Endpoint is null ? "No endpoint" : source.Endpoint) + (source.Model is null ? "" : " · " + source.Model), "mono", "small"));
         if (OfferRow(source) is { } offer) card.Children.Add(offer);
+        if (CanDoRow(source) is { } canDo) card.Children.Add(canDo);
         if (ThinkingRow(source) is { } thinking) card.Children.Add(thinking);
         card.Children.Add(AddedSourceOrder(source));
         card.Children.Add(Ui.Row(8, edit, remove));

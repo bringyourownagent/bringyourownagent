@@ -87,9 +87,23 @@ public class ModelFitTests
         Assert.True(verdict.Offered(dropOnMismatch: true));                    // an unknown never drops anything
 
         // A known failure wins over an unknown property.
-        var both = Evaluate(new ModelFacts(Input: Text), spec: """{"count":1,"needs":{"input":["image"],"output":["text"]}}""");
+        var both = Evaluate(new ModelFacts(Input: Text), spec: """{"count":1,"needs":{"input":["image"],"context":64}}""");
         Assert.Equal(FitState.Mismatch, both.State);
-        Assert.Equal(["output"], both.UnknownProperties);
+        Assert.Equal(["context"], both.UnknownProperties);
+    }
+
+    [Fact]
+    public void ASourceAddedForTextSurelyTakesAndWritesTextWhateverElseNobodyKnowsOfIt()
+    {
+        // Nothing is known of a local model, yet it was added to answer text: "text" in and "text" out are not unknown, the pictures are.
+        var verdict = Evaluate(ModelFacts.Unknown, spec: """{"count":1,"needs":{"input":["text","image"],"output":["text"]}}""");
+        Assert.Equal(FitState.Unknown, verdict.State);
+        Assert.Equal(["input"], verdict.UnknownProperties);
+        Assert.Equal(new Dictionary<string, bool> { ["output"] = true }, verdict.Can);
+        Assert.Equal(FitState.Fits, Evaluate(ModelFacts.Unknown, spec: """{"count":1,"needs":{"input":["text"],"output":["text"]}}""").State);
+
+        // The picture skill gives no such assurance: a source that is not known to draw pictures is not offered for it at all.
+        Assert.Equal(FitState.Excluded, Evaluate(ModelFacts.Unknown, Vocabulary.ImageGenerate, spec: """{"count":1,"needs":{"output":["image"]}}""").State);
     }
 
     [Fact]

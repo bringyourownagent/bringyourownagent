@@ -59,11 +59,15 @@ sealed class AddModelWindow : Window
     bool _fetching;
     bool _replaceKey;
     int _scanNumber;
+    readonly CanDoEditor _canDo;
 
     public AddModelWindow(WalletServices services, string? sourceId = null)
     {
         _w = services;
         _editingId = sourceId;
+        var existing = sourceId is null ? null : services.Store.Snapshot().Sources.FirstOrDefault(s => s.Id == sourceId);
+        _canDo = new CanDoEditor(sourceId is null ? "new" : "edit", existing?.Inputs, existing?.Outputs, existing?.AlsoText ?? false,
+            () => sourceId is null ? null : services.Engine.FactsOfSource(sourceId), () => { });
         _model.Classes.Add("mono");
         _endpoint.Classes.Add("mono");
         _knownAs.Classes.Add("mono");
@@ -174,6 +178,7 @@ sealed class AddModelWindow : Window
         _body.Children.Add(_skill);
         _body.Children.Add(Ui.Text("Languages", "label"));
         _body.Children.Add(_languages);
+        if (SelectedSkill() == Vocabulary.Generate) _body.Children.Add(_canDo.View);          // (a speech model has no pictures to read or draw)
         UpdateSuggestion();
         _body.Children.Add(_suggestion);
         _body.Children.Add(Ui.Rule(4, 0));
@@ -641,6 +646,16 @@ sealed class AddModelWindow : Window
         {
             var known = _knownAs.Text?.Trim();
             _w.Store.Update(s => s.Source(added[0]).ModelId = string.IsNullOrWhiteSpace(known) ? null : known);
+        }
+
+        // What he says it can do goes to every model added now (or to the one he edits); when he said nothing, a new model is left as it is.
+        if (result.Ok && SelectedSkill() == Vocabulary.Generate && added.Count > 0 && (_editingId is not null || _canDo.Inputs is not null || _canDo.Outputs is not null || _canDo.AlsoText))
+        {
+            _w.Store.Update(s =>
+            {
+                foreach (var id in added) _canDo.WriteTo(s.Source(id));
+            });
+            _w.Engine.SourcePropertiesChanged();
         }
 
         _key.Text = "";

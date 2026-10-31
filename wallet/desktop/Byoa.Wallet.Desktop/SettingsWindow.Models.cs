@@ -125,6 +125,7 @@ sealed partial class SettingsWindow
         var all = _w.Registry.ListSources(Vocabulary.Generate).Where(s => !s.BuiltIn || s.Kind is not null).ToList();
         string NameOf(string id) => all.FirstOrDefault(s => s.Id == id) is { } info ? info.Name : id;
         var ids = entry.SourceIds.ToList();
+        var notes = _w.Engine.SiteModelNotes(site.Origin);         // what is amiss with a model for this site: it falls short, or the wallet does not know
 
         var panel = new StackPanel { Spacing = 5 };
         panel.Children.Add(Ui.Text("Models this site is given", "label"));
@@ -145,6 +146,14 @@ sealed partial class SettingsWindow
             down.IsEnabled = index < ids.Count - 1;
             var line = known is null ? "no longer in your models" : known.StateText;
             var text = Ui.Column(1, Ui.Wrap((index + 1).ToString(CultureInfo.InvariantCulture) + ".  " + NameOf(id), "strong"), Ui.Wrap(line, "muted", "small"));
+            if (notes.TryGetValue(id, out var note))
+            {
+                var mark = Ui.Wrap(note, "small");
+                mark.Foreground = Ui.Brush("SignalDark");
+                AutomationProperties.SetAutomationId(mark, "SiteModelNote-" + host + "-" + SafeId(id));
+                text.Children.Add(mark);
+            }
+
             panel.Children.Add(Ui.Columns("*,Auto,Auto,Auto", text, up, down, remove));
         }
 
@@ -191,6 +200,19 @@ sealed partial class SettingsWindow
         offer.IsCheckedChanged += (_, _) => _w.Store.Update(s => s.Source(source.Id).Offer = offer.IsChecked == true);
         var known = ModelNamesOf(source);
         return Ui.Column(2, offer, Ui.Wrap("A site that asks for several models gets the ones in your default set first. Known as: " + (known.Length == 0 ? "unknown" : known) + ".", "muted", "small"));
+    }
+
+    /// <summary>"What it can do" and "Also use as a text model": what the visitor says about a text model, which beats the public list. Text models only.</summary>
+    Control? CanDoRow(SourceSetting source)
+    {
+        if (source.Skills.Count > 0 && !source.Skills.Contains(Vocabulary.Generate)) return null;
+        CanDoEditor? editor = null;
+        editor = new CanDoEditor(SafeId(source.Id), source.Inputs, source.Outputs, source.AlsoText, () => _w.Engine.FactsOfSource(source.Id), () =>
+        {
+            _w.Store.Update(s => editor!.WriteTo(s.Source(source.Id)));
+            _w.Engine.SourcePropertiesChanged();            // the sites that are connected hear it at once
+        });
+        return editor.View;
     }
 
     /// <summary>"Let the model think": a model that reasons before it answers can be told to answer at once. Text models that run on this PC or a server of yours, and GLM at Z.ai.</summary>

@@ -400,6 +400,9 @@ public sealed partial class WalletEngine
         foreach (var site in _sessions.Values.Select(s => s.Origin).Distinct(StringComparer.Ordinal).ToList()) RefreshLiveGrants(site);
     }
 
+    /// <summary>The visitor changed what one of his models can do: every live grant is built again at once (a model that no longer fits goes out of it, the verdicts the site is told follow).</summary>
+    public void SourcePropertiesChanged() => LimitsChanged();
+
     void RefreshLiveGrants(string origin)
     {
         var settings = _store.Snapshot();

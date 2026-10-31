@@ -57,8 +57,10 @@ public static class ModelFit
         var can = new Dictionary<string, bool>(StringComparer.Ordinal);
         if (spec?.Needs is { } needs)
         {
-            CheckModalities("input", needs.Input, facts.Input);
-            CheckModalities("output", needs.Output, facts.Output);
+            // (a source the visitor added for text surely takes text and writes text, whatever else nobody knows of it)
+            var sure = skill == Vocabulary.Generate ? new[] { Modalities.Text } : [];
+            CheckModalities("input", needs.Input, facts.Input, sure);
+            CheckModalities("output", needs.Output, facts.Output, sure);
             if (needs.ContextThousands is { } wanted)
             {
                 if (facts.ContextThousands is { } has)
@@ -84,18 +86,19 @@ public static class ModelFit
         var state = wrong.Count > 0 ? FitState.Mismatch : unknown.Count > 0 ? FitState.Unknown : FitState.Fits;
         return new FitVerdict(state, wrong, unknown, can);
 
-        void CheckModalities(string key, IReadOnlyList<string>? asked, IReadOnlyList<string>? has)
+        void CheckModalities(string key, IReadOnlyList<string>? asked, IReadOnlyList<string>? has, IReadOnlyList<string> sure)
         {
             if (asked is null) return;
-            if (has is null)
+            // The words nobody can vouch for: with the property known, they are missing (a mismatch); with it unknown, they are not known.
+            var unvouched = asked.Where(word => !(has ?? sure).Contains(word)).ToList();
+            if (has is null && unvouched.Count > 0)
             {
                 unknown.Add(key);
                 return;
             }
 
-            var missing = asked.Where(word => !has.Contains(word)).ToList();
-            can[key] = missing.Count == 0;
-            wrong.AddRange(missing.Select(word => Lacks(key, word)));
+            can[key] = unvouched.Count == 0;
+            wrong.AddRange(unvouched.Select(word => Lacks(key, word)));
         }
     }
 

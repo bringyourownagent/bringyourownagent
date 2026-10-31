@@ -6,6 +6,7 @@ using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Layout;
 using Byoa.Wallet.Engine;
+using Byoa.Wallet.Sources;
 
 namespace Byoa.Wallet.Desktop;
 
@@ -115,13 +116,20 @@ sealed partial class ConsentWindow
             + " You choose which of your models it gets; it never sees the others.";
         var whole = reason + "\n\n" + (spec.WhyLong ?? "The site did not say more. It asks for " + how + (spec.ByVendor ? ", from different companies where possible" : "") + ".") + "\n\n" + detail;
         panel.Children.Add(Ui.Box("field", Expandable(reason, whole, "ConsentModelsWhy")));
+        if (NeedsChips(spec) is { } wanted) panel.Children.Add(wanted);
 
         if (section.MissingRequired.Count > 0 || section.Shortfall is not null)
         {
             var problem = section.MissingRequired.Count > 0
                 ? "The site cannot work without " + string.Join(", ", section.MissingRequired) + "."
                 : "The site " + section.Shortfall + ".";
-            panel.Children.Add(Ui.Wrap(problem + " Add a model, or an OpenRouter key, and try again.", "muted"));
+            // what would fix it: a model that is what the site asked for
+            var fix = ModelFit.NeedsWords(spec) is { Count: > 0 } words
+                ? " Add a model that fits (" + string.Join(" · ", words) + "), or an OpenRouter key, and try again."
+                : " Add a model, or an OpenRouter key, and try again.";
+            var explanation = Ui.Wrap(problem + fix, "muted");
+            AutomationProperties.SetAutomationId(explanation, "ConsentModelsProblem");
+            panel.Children.Add(explanation);
             panel.Children.Add(Ui.Link("Add a model or a key…", "ConsentFix", () => _openSettings("add-model")));
         }
 
@@ -131,6 +139,8 @@ sealed partial class ConsentWindow
         change.HorizontalAlignment = HorizontalAlignment.Right;
         panel.Children.Add(Ui.Columns("*,Auto", pick.Count, change));
         panel.Children.Add(pick.List);
+        if (MissesBlock(section) is { } misses) panel.Children.Add(misses);
+        if (ExamplesBlock(section) is { } examples) panel.Children.Add(examples);
         panel.Children.Add(ExtraModels(pick));
         change.Click += (_, _) =>
         {
@@ -143,6 +153,74 @@ sealed partial class ConsentWindow
         FillModels(pick);
         var box = Ui.Box("row", panel);
         return box;
+    }
+
+    /// <summary>What the site asked of the models, as short chips under its reason ("reads pictures", "context 64k+", "your own agent"); null when it asked nothing.</summary>
+    static Control? NeedsChips(RequestedModels spec)
+    {
+        var words = ModelFit.NeedsWords(spec);
+        if (words.Count == 0) return null;
+        var chips = new WrapPanel { Orientation = Orientation.Horizontal };
+        var lead = Ui.Text("it wants", "muted", "small");
+        lead.Margin = new Thickness(0, 3, 6, 4);
+        lead.VerticalAlignment = VerticalAlignment.Top;
+        chips.Children.Add(lead);
+        foreach (var word in words)
+        {
+            var chip = Ui.Chip(word, "outline");
+            chip.Margin = new Thickness(0, 0, 4, 4);
+            chips.Children.Add(chip);
+        }
+
+        AutomationProperties.SetAutomationId(chips, "ConsentModelsNeeds");
+        AutomationProperties.SetName(chips, "The site wants models that: " + string.Join(", ", words));
+        return chips;
+    }
+
+    /// <summary>"3 of your models do not fit": a line that opens to the reason for each one the wallet left out of the list. Null when none was left out.</summary>
+    static Control? MissesBlock(ModelSection section)
+    {
+        if (section.Misses.Count == 0) return null;
+        var reasons = Ui.Column(3);
+        reasons.Margin = new Thickness(18, 0, 0, 0);
+        var count = section.Misses.Count;
+        var title = Number(count) + (count == 1 ? " of your models does not fit" : " of your models do not fit");
+        var toggle = Ui.Link(title, "ConsentModelsMisses", () => { });
+        toggle.Click += (_, _) =>
+        {
+            var open = reasons.Children.Count == 0;
+            reasons.Children.Clear();
+            if (open)
+            {
+                // (the lines are made when it opens, not hidden and shown: a window that is read by other programs sees only what is there)
+                for (var i = 0; i < count; i++)
+                {
+                    var line = Ui.Wrap(section.Misses[i].Name + ": " + section.Misses[i].Why, "muted", "small");
+                    AutomationProperties.SetAutomationId(line, "ConsentModelsMiss-" + i.ToString(CultureInfo.InvariantCulture));
+                    reasons.Children.Add(line);
+                }
+            }
+
+            ((TextBlock)toggle.Content!).Text = title + (open ? " (hide)" : "");
+        };
+        AutomationProperties.SetHelpText(toggle, "Opens the reason for each");
+        return Ui.Column(4, toggle, reasons);
+    }
+
+    /// <summary>The names the site likes that none of the visitor's models answers to, as examples with a way to add one. Null when there are none.</summary>
+    Control? ExamplesBlock(ModelSection section)
+    {
+        if (section.ExampleNames.Count == 0) return null;
+        var text = Ui.Wrap("The site suggests " + string.Join(", ", section.ExampleNames) + ". None of your models is one of these.", "muted", "small");
+        AutomationProperties.SetAutomationId(text, "ConsentModelsExamples");
+        return Ui.Column(3, text, Ui.Link("Add a model…", "ConsentModelsExampleAdd", () => _openSettings("add-model")));
+    }
+
+    /// <summary>"can: search the web, read web pages · may lack: look at pictures": what his agent can do, and what the site hoped for that it cannot.</summary>
+    static string AgentAbilitiesLine(RequestedModels spec)
+    {
+        var line = "can: " + string.Join(", ", AgentProfile.Abilities.Select(AgentProfile.Words));
+        return AgentProfile.Lacks(spec.Abilities) is { Count: > 0 } lacks ? line + " · may lack: " + string.Join(", ", lacks.Select(AgentProfile.Words)) : line;
     }
 
     /// <summary>What "Change models…" opens: a search of the public list, for the models behind the visitor's own OpenRouter key.</summary>
@@ -189,12 +267,14 @@ sealed partial class ConsentWindow
     {
         var spec = pick.Section.Spec;
         pick.List.Children.Clear();
+        // The ticked ones first, then the ones that fit, then the ones whose properties are not known, then the ones that fall short (shown, never ticked by the wallet).
         var ordered = pick.Known.Values
             .Where(c => !(c.IsNew && !pick.Order.Contains(c.Key) && !pick.Section.Choices.Any(x => x.Key == c.Key)))      // search results live in their own list
             .OrderBy(c => pick.Order.Contains(c.Key) ? pick.Order.IndexOf(c.Key) : int.MaxValue)
+            .ThenBy(c => c.Fit)
             .ThenBy(c => c.Role == ModelRole.Required ? 0 : c.Role == ModelRole.Recommended ? 1 : 2)
             .ToList();
-        var shown = pick.Expanded ? ordered : ordered.Where(c => pick.Order.Contains(c.Key) || c.Role != ModelRole.Yours).Take(CollapsedRows).ToList();
+        var shown = pick.Expanded ? ordered : ordered.Where(c => pick.Order.Contains(c.Key) || c.Role != ModelRole.Yours || c.Fit != FitState.Fits).Take(CollapsedRows).ToList();
         if (MasterTick(pick, shown) is { } master) pick.List.Children.Add(master);
         foreach (var choice in shown) pick.List.Children.Add(ModelLine(pick, choice));
         if (!pick.Expanded && ordered.Count > shown.Count)
@@ -271,13 +351,32 @@ sealed partial class ConsentWindow
         // His own agent is not a model: it searches the web for the site, so the window says what comes with it.
         if (choice.Where == "your agent") about += " · it searches the web for this site; the guard looks at every request";
         var text = Ui.Column(1, name, Ui.Wrap(about, "muted", "small"));
-        Control chip = choice.Role switch
+        var agent = choice.Where == "your agent";
+        if (agent)
+        {
+            var abilities = Ui.Wrap(AgentAbilitiesLine(pick.Section.Spec), "muted", "small");
+            AutomationProperties.SetAutomationId(abilities, "ConsentAgentAbilities-" + choice.Key);
+            text.Children.Add(abilities);
+        }
+
+        // What falls short, or what the wallet does not know: said in plain words under the name, in the warm colour when it is a known mismatch.
+        if (choice.Marks is { Count: > 0 } marks)
+        {
+            var mark = Ui.Wrap(string.Join("; ", marks), "small");
+            mark.Foreground = choice.Fit == FitState.Mismatch ? Ui.Brush("SignalDark") : Ui.Brush("Muted");
+            AutomationProperties.SetAutomationId(mark, "ConsentModelMark-" + choice.Key);
+            text.Children.Add(mark);
+        }
+
+        var chips = Ui.Row(4);
+        if (agent) chips.Children.Add(Ui.Chip("agent", "outline"));
+        chips.Children.Add(choice.Role switch
         {
             ModelRole.Required => Ui.Chip("required", "ink"),
             ModelRole.Recommended => Ui.Chip("recommended", "outline"),
             _ => new Panel(),
-        };
-        var line = Ui.Columns("Auto,*,Auto", box, text, chip);
+        });
+        var line = Ui.Columns("Auto,*,Auto", box, text, chips);
         text.Margin = new Thickness(8, 0, 6, 0);
         if (!choice.Ready) line.Opacity = 0.6;
         return line;

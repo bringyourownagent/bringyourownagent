@@ -3,6 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Media.Imaging;
 using Avalonia.Threading;
+using System.Text.Json.Nodes;
 using Byoa.Wallet.Engine;
 using Byoa.Wallet.Guard;
 using Byoa.Wallet.Protocol;
@@ -62,6 +63,14 @@ static class ShotsMode
             withModels.Cancel();
             await Task.Delay(500);
 
+            // a site that asks for models by what they can do: the chips of its needs, the ones that fit, one whose abilities are not known, one that falls short,
+            // the visitor's agent with what it can and may lack, the line of the models that do not fit, and the names the site suggests that he has none of
+            using var withNeeds = new CancellationTokenSource();
+            _ = w.Ui.ShowConsentAsync(SampleConsentWithNeeds(), withNeeds.Token);
+            await Snap(desktop, folder, "consent-needs", log, excludeSettings: true);
+            withNeeds.Cancel();
+            await Task.Delay(500);
+
             using var raise = new CancellationTokenSource();
             _ = w.Ui.AskRaiseAsync(WalletEngine.RaiseModelOf("https://geo.example.com", "geo.example.com", "budget", 0.10m, 0.1294m), raise.Token);
             await Snap(desktop, folder, "raise", log, excludeSettings: true);
@@ -118,6 +127,34 @@ static class ShotsMode
         return new ConsentModel("https://mafia.example.com", "mafia.example.com", true,
             "A game of Mafia played by the visitor's own AI models at one table: each is a player with a secret role who talks, accuses and votes; one model may comment. The visitor is the host and may pause the game, give the floor to a player and write to the table.",
             [row], 1.00m, null, false, false, null, true, null, "AAM6", true, false);
+    }
+
+    static ConsentModel SampleConsentWithNeeds()
+    {
+        var spec = RequestedModels.From(JsonNode.Parse("""
+            {"count":{"min":1,"max":2},"kind":"any","onMismatch":"show","needs":{"input":["text","image"],"output":["text"],"context":64},
+             "recommend":["anthropic/claude-sonnet-5.5","openai/gpt-image-*","agent/*"],"abilities":["web.search","image.read"],
+             "why":"Looks at a candidate and writes clean SVG code for it."}
+            """))!;
+        ModelChoice Pick(string key, string name, string where, string cost, ModelRole role, bool on, FitState fit = FitState.Fits, params string[] marks) =>
+            new(key, key, name, "x/" + key, where, where.Contains("key"), cost, role, on, true, null, null, fit, marks.Length == 0 ? null : marks);
+        var choices = new[]
+        {
+            Pick("sonnet", "Claude Sonnet 5.5", "OpenRouter key", "about $0.004 an answer", ModelRole.Recommended, true),
+            Pick("gemma", "gemma-3-12b-it", "this PC", "free", ModelRole.Yours, false, FitState.Unknown, "not known: what it reads, how much it reads at once"),
+            Pick("mistral", "Mistral Small", "OpenRouter key", "about $0.0004 an answer", ModelRole.Yours, false, FitState.Mismatch, "cannot read pictures", "reads 32k at most; the site wants 64k or more"),
+            Pick("agent:claude", "My Claude (your agent)", "your agent", "free", ModelRole.Recommended, false, FitState.Mismatch, "cannot read pictures"),
+        };
+        var misses = new[]
+        {
+            new ModelMiss("Gemini Image", "draws pictures; to use it for text, tick “Also use as a text model” in its settings", "google/gemini-3.1-flash-image"),
+            new ModelMiss("Qwen3 Embedding", "does not write text", "qwen/qwen3-embedding"),
+        };
+        var section = new ModelSection("text.generate", spec, choices, [], null, misses, ["openai/gpt-image-*"]);
+        return new ConsentModel("https://icons.example.com", "icons.example.com", true,
+            "An icon designer: it draws candidates for your icon and asks a model that can look at them to write the clean SVG code for the best one.",
+            [new ConsentRow("text.generate", "Text generation", true, true, true, [], [], "", section)],
+            0.25m, null, false, false);
     }
 
     static ConsentModel SampleConsentWithCode() => new(
