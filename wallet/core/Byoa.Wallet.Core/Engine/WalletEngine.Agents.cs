@@ -64,6 +64,7 @@ public sealed partial class WalletEngine
         }
 
         if (string.Equals(site.AgentPurposeOk, purpose, StringComparison.Ordinal)) return (true, purpose, false);
+        if (site.TrustAgentRequests) return (true, purpose, false);              // the visitor trusts this site fully
         var verdict = Guard is { } guard
             ? await guard.CheckPurposeAsync(origin, purpose, AgentAbilities, ct).ConfigureAwait(false)
             : GuardVerdict.Unavailable("the guard is not set up");
@@ -73,7 +74,8 @@ public sealed partial class WalletEngine
                 return (true, purpose, false);
             case GuardOutcome.Hold:
                 var answer = await AskGuardAsync(new GuardPrompt(origin, host, ForPurpose: true, purpose, null, verdict.Tripped, agent), ct).ConfigureAwait(false);
-                return answer == GuardAnswer.Allow ? (true, purpose, false) : (false, null, true);
+                if (answer == GuardAnswer.AllowAlways) SetTrustAgentRequests(origin, true);
+                return answer is GuardAnswer.Allow or GuardAnswer.AllowAlways ? (true, purpose, false) : (false, null, true);
             default:
                 if (StopWhenGuardUnavailable)
                 {
@@ -133,6 +135,7 @@ public sealed partial class WalletEngine
         var site = _store.Read(s => s.Site(session.Origin) is { } r ? Copy(r) : null);
         if (site is null || purpose.Length < MinPurposeChars)
             return new AgentClearance(false, true, "the site stated no goal for your agent");
+        if (site.TrustAgentRequests) return new AgentClearance(true, false, "trusted site: the guard does not look at its requests");
         if (site.AgentPurposeOk is not null && !string.Equals(site.AgentPurposeOk, purpose, StringComparison.Ordinal))
             return new AgentClearance(false, true, "the goal the site states changed since you gave it your agent");
 
@@ -152,6 +155,9 @@ public sealed partial class WalletEngine
                 {
                     case GuardAnswer.Allow:
                         return new AgentClearance(true, false, "guard held it (" + why + "); you let it through");
+                    case GuardAnswer.AllowAlways:
+                        SetTrustAgentRequests(session.Origin, true);
+                        return new AgentClearance(true, false, "guard held it (" + why + "); you let it through and trust this site from now on");
                     case GuardAnswer.TakeAway:
                         TakeAgentAway(session.Origin, agent.Id);
                         return new AgentClearance(false, true, "guard held it (" + why + "); you refused it and took your agent away from the site");
@@ -163,6 +169,13 @@ public sealed partial class WalletEngine
                     ? new AgentClearance(false, false, "the guard could not be asked (" + verdict.Why + "): the agent did not run")
                     : new AgentClearance(true, false, "the guard could not be asked (" + verdict.Why + "): you chose to let requests through");
         }
+    }
+
+    /// <summary>"Trust this site fully": the guard stops looking at its goal and its requests to the visitor's agent (or looks again, when turned off).</summary>
+    public void SetTrustAgentRequests(string origin, bool trust)
+    {
+        _store.Update(s => Site(s, origin).TrustAgentRequests = trust);
+        SitesChanged?.Invoke();
     }
 
     /// <summary>The agent leaves the models of a site, and the site's live grants follow at once.</summary>

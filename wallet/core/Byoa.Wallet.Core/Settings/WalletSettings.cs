@@ -157,6 +157,12 @@ public sealed class SiteRecord
     /// </summary>
     public string? AgentPurposeOk { get; set; }
 
+    /// <summary>
+    /// "Trust this site fully": the guard does not look at this site's goal or at its requests to the visitor's agent any more. Off by default;
+    /// the visitor ticks it on the site's page in Sites, or in the window that holds one of its requests.
+    /// </summary>
+    public bool TrustAgentRequests { get; set; }
+
     public SiteModels? ModelsFor(string skill) => Models.FirstOrDefault(m => m.Skill == skill);
 }
 

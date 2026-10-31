@@ -485,6 +485,11 @@ sealed partial class SettingsWindow : Window
             AutomationProperties.SetAutomationId(auto, "SiteAuto-" + host);
             auto.IsCheckedChanged += (_, _) => _w.Engine.SetAutoDecide(site.Origin, auto.IsChecked == true);
             card.Children.Add(auto);
+            var trust = new CheckBox { Content = "Trust this site fully: do not check its requests to my agents", IsChecked = site.TrustAgentRequests };
+            AutomationProperties.SetAutomationId(trust, "SiteTrust-" + host);
+            trust.IsCheckedChanged += (_, _) => _w.Engine.SetTrustAgentRequests(site.Origin, trust.IsChecked == true);
+            card.Children.Add(trust);
+            card.Children.Add(Ui.Wrap("The guard reads what a site sends to your own agents (My agents). With this on, it lets everything from this site through without asking.", "muted", "small"));
         }
 
         if (site.QuietRequests > 0)

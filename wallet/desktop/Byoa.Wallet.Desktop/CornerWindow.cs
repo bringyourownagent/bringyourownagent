@@ -49,6 +49,14 @@ abstract class CornerWindow : Window
     /// <summary>The visitor dragged this window somewhere: it stays there, and the stack leaves it alone.</summary>
     internal bool Moved { get; private set; }
 
+    /// <summary>The visitor is changing the window's size or place by hand: it stays where it is, and the stack leaves it alone.</summary>
+    internal void Detach()
+    {
+        if (Moved) return;
+        Moved = true;
+        CornerStack.Remember(this);
+    }
+
     /// <summary>The cursor of the parts that drag the window.</summary>
     protected static Cursor DragCursor { get; } = new(StandardCursorType.SizeAll);
 
@@ -143,6 +151,16 @@ abstract class CornerWindow : Window
         var x = Math.Max(area.X - margin, Math.Min(p.X, area.Right - width + margin));
         var y = Math.Max(area.Y - margin, Math.Min(p.Y, area.Bottom - height + margin));
         return new PixelPoint(x, y);
+    }
+
+    /// <summary>The width of the working area in DIPs (for limiting wide windows).</summary>
+    protected double WorkingWidth
+    {
+        get
+        {
+            var (area, scale) = ScreenArea.Current(this);
+            return area.Width / scale;
+        }
     }
 
     /// <summary>The height of the working area in DIPs (for limiting tall windows).</summary>
@@ -244,6 +262,19 @@ static class ScreenArea
         return screen is null ? (new PixelRect(0, 0, 1920, 1040), 1.0) : (screen.WorkingArea, screen.Scaling);
     }
 
+    /// <summary>The pointer's place on the screen in pixels, from Windows (the window itself moves while a left edge is dragged); null elsewhere.</summary>
+    public static int? CursorX()
+    {
+        try
+        {
+            return GetCursorPos(out var p) ? p.X : null;
+        }
+        catch (Exception e) when (e is DllNotFoundException or EntryPointNotFoundException or MarshalDirectiveException)
+        {
+            return null;
+        }
+    }
+
     /// <summary>A window's rectangle in pixels, from Windows; null when it cannot be read.</summary>
     public static PixelRect? WindowRect(IntPtr window)
     {
@@ -265,6 +296,10 @@ static class ScreenArea
     [StructLayout(LayoutKind.Sequential)]
     struct MonitorInfo { public int Size; public Rect Monitor; public Rect Work; public uint Flags; }
 
+    [StructLayout(LayoutKind.Sequential)]
+    struct CursorPoint { public int X, Y; }
+
+    [DllImport("user32.dll")] static extern bool GetCursorPos(out CursorPoint point);
     [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] static extern IntPtr MonitorFromWindow(IntPtr window, uint flags);
     [DllImport("user32.dll")] static extern bool GetMonitorInfo(IntPtr monitor, ref MonitorInfo info);

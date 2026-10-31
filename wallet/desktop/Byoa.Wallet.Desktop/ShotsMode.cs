@@ -48,6 +48,13 @@ static class ShotsMode
             consent.Cancel();
             await Task.Delay(500);
 
+            // a connection by link: a long goal, and the check code with its tick beside Allow
+            using var withCode = new CancellationTokenSource();
+            _ = w.Ui.ShowConsentAsync(SampleConsentWithCode(), withCode.Token);
+            await Snap(desktop, folder, "consent-code", log, excludeSettings: true);
+            withCode.Cancel();
+            await Task.Delay(500);
+
             using var raise = new CancellationTokenSource();
             _ = w.Ui.AskRaiseAsync(WalletEngine.RaiseModelOf("https://geo.example.com", "geo.example.com", "budget", 0.10m, 0.1294m), raise.Token);
             await Snap(desktop, folder, "raise", log, excludeSettings: true);
@@ -83,6 +90,15 @@ static class ShotsMode
         [new ConsentRow("text.generate", "Answer questions", true, true, true,
             [new RouteLine(null, "Qwen3 4B", "this computer", false, true)], [], "Needed to give the news of the countries the players name.")],
         0.25m, null, false, false);
+
+    static ConsentModel SampleConsentWithCode() => new(
+        "https://mafia.example.com", "mafia.example.com", true,
+        "A game of Mafia played by the visitor's own AI models at one table: each is a player with a secret role who talks, accuses and votes; one model may comment. "
+        + "The visitor is the host and may pause the game, give the floor to a player and write to the table. Nothing leaves the visitor's browser except the calls to the models, "
+        + "and the game log only if the visitor leaves the box ticked. A game takes about half an hour.",
+        [new ConsentRow("text.generate", "Answer questions", true, true, true,
+            [new RouteLine(null, "Qwen3 4B", "this computer", false, true)], [], "Needed to let the players speak.")],
+        0.50m, null, false, false, null, true, null, "K7Q2", true, false);
 
     /// <summary>Draws every open window (or all but the settings window) into <c>name-N.png</c>, then closes the ones other than the settings window.</summary>
     static async Task Snap(IClassicDesktopStyleApplicationLifetime desktop, string folder, string name, List<string> log, bool excludeSettings = false)

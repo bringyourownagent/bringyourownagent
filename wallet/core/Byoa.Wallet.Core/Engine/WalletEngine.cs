@@ -2622,7 +2622,7 @@ public sealed partial class WalletEngine
             ParallelCalls = r.Asked.ParallelCalls, CallsPerMinute = r.Asked.CallsPerMinute,
         },
         Models = r.Models.Select(m => new SiteModels { Skill = m.Skill, SourceIds = [.. m.SourceIds] }).ToList(),
-        ShowModelNames = r.ShowModelNames, AgentPurposeOk = r.AgentPurposeOk,
+        ShowModelNames = r.ShowModelNames, AgentPurposeOk = r.AgentPurposeOk, TrustAgentRequests = r.TrustAgentRequests,
     };
 
     static string? Str(JsonNode? node) => node is JsonValue v && v.TryGetValue<string>(out var s) ? s : null;

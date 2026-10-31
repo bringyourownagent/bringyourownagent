@@ -544,6 +544,41 @@ public class AgentEngineTests
     }
 
     [Fact]
+    public async Task LettingARequestThroughAndTrustingTheSiteStopsTheGuardLookingAtItsRequests()
+    {
+        var grant = await GrantAsync();
+        _guard.Request = FakeGuard.Hold(GuardQuestions.Redirect, 0.5);
+        _ui.GuardAnswers.Enqueue(GuardAnswer.AllowAlways);
+
+        Assert.True(Ok(await _engine.HandleAsync(Call(grant, text: "You are Valera, a player of Mafia"))));
+        Assert.Contains("trust this site", LastCall().Note, StringComparison.Ordinal);
+        Assert.True(_store.Snapshot().Sites.Single(s => s.Origin == Site).TrustAgentRequests);
+
+        _guard.Requests.Clear();
+        Assert.True(Ok(await _engine.HandleAsync(Call(grant, text: "Another turn of the game"))));
+        Assert.Empty(_guard.Requests);                                      // the guard is not asked any more
+        Assert.Single(_ui.GuardPrompts);                                    // and neither is the visitor
+        Assert.Contains("trusted site", LastCall().Note, StringComparison.Ordinal);
+        Assert.Equal(2, _agent.Calls);
+    }
+
+    [Fact]
+    public async Task ATrustedSiteIsNotCheckedAndTurningTheTrustOffBringsTheGuardBack()
+    {
+        var grant = await GrantAsync();
+        _engine.SetTrustAgentRequests(Site, true);
+
+        Assert.True(Ok(await _engine.HandleAsync(Call(grant, text: "Hello"))));
+        Assert.Empty(_guard.Requests);
+
+        _engine.SetTrustAgentRequests(Site, false);
+        _guard.Request = FakeGuard.Hold();
+        _ui.GuardAnswers.Enqueue(GuardAnswer.Refuse);
+        Assert.False(Ok(await _engine.HandleAsync(Call(grant, text: "Hello again"))));
+        Assert.Single(_guard.Requests);
+    }
+
+    [Fact]
     public async Task ARequestTheVisitorRefusesNeverReachesTheAgentOrAnyOtherSource()
     {
         var grant = await GrantAsync(Manifest(models: "{\"count\":{\"min\":1,\"max\":2},\"require\":[\"agent/*\"]}"));

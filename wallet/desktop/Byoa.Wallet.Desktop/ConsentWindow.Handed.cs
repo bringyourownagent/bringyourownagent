@@ -13,7 +13,6 @@ sealed partial class ConsentWindow
     Control HandedNotice()
     {
         var note = Ui.Wrap("This link did not come through the browser on this computer. It came from another device or was pasted by hand: check the code.", "strong", "small");
-        note.Width = 330;
         AutomationProperties.SetAutomationId(note, "ConsentHanded");
         return Ui.Box("field", note);
     }

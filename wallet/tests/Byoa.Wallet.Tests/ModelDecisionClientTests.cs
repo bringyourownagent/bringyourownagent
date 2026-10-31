@@ -424,7 +424,7 @@ public class GuardJudgeSelectionTests
 
         var prompt = source.LastRequest!.Messages.Single(m => m.Role == "user").Content;
         Assert.Contains("The request asks for anything about money.", prompt, StringComparison.Ordinal);
-        Assert.Contains("orders of its own", prompt, StringComparison.Ordinal);          // the wallet's own wording for the rest
+        Assert.Contains("take the agent over", prompt, StringComparison.Ordinal);          // the wallet's own wording for the rest
     }
 
     [Fact]

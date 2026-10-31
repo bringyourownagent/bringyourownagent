@@ -35,6 +35,7 @@ sealed partial class ConsentWindow : CornerWindow
     bool _closed;
     TextBlock? _budgetText;
     Control? _stepper;
+    static double? _preferredCard;                 // the card's width (DIPs) the visitor last chose: the next windows open as wide
 
     /// <param name="searchModels">Searches the public model list for the models behind the visitor's own OpenRouter key; null when there is none.</param>
     public ConsentWindow(ConsentModel model, Action<string?> openSettings, Func<string?, IReadOnlyList<ModelChoice>>? searchModels = null, bool canSearch = false) : base(400)
@@ -46,6 +47,9 @@ sealed partial class ConsentWindow : CornerWindow
         _budget = model.Budget;
         Title = "Agent wallet consent";
         ShowActivated = true;
+        MinWidth = 340 + 2 * ShadowMargin;
+        MaxWidth = 960;
+        if (_preferredCard is { } wide) Width = Math.Clamp(wide, 340, 960 - 2 * ShadowMargin) + 2 * ShadowMargin;
 
         _auto = new CheckBox
         {
@@ -71,14 +75,19 @@ sealed partial class ConsentWindow : CornerWindow
         var scroll = new ScrollViewer
         {
             Content = Body(),
-            MaxHeight = Math.Max(240, WorkingHeight - 170),
+            MaxHeight = Math.Max(240, WorkingHeight - 300),
             HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled,
             HorizontalContentAlignment = HorizontalAlignment.Stretch,
             VerticalContentAlignment = VerticalAlignment.Top,
         };
         layout.Children.Add(scroll);
         card.Child = layout;
-        Content = card;
+        // thin strips over the card's left and right edges change the width of the window
+        var frame = new Grid();
+        frame.Children.Add(card);
+        frame.Children.Add(EdgeGrip(left: true));
+        frame.Children.Add(EdgeGrip(left: false));
+        Content = frame;
         UpdateAllow();
 
         KeyDown += (_, e) =>
@@ -107,6 +116,50 @@ sealed partial class ConsentWindow : CornerWindow
     }
 
     public Task<ConsentAnswer> Result => _answer.Task;
+
+    /// <summary>
+    /// A strip over the card's left or right edge: dragging it widens or narrows the window. The window is a corner window with no frame of its own,
+    /// so the width is set here from the pointer's place on the screen; a left edge keeps the right edge where it is, a right edge keeps the left one.
+    /// </summary>
+    Control EdgeGrip(bool left)
+    {
+        var grip = new Border
+        {
+            Width = 6, Background = Brushes.Transparent, Cursor = new Cursor(StandardCursorType.SizeWestEast),
+            HorizontalAlignment = left ? HorizontalAlignment.Left : HorizontalAlignment.Right,
+            Margin = left ? new Thickness(ShadowMargin, 0, 0, 0) : new Thickness(0, 0, ShadowMargin, 0),
+        };
+        AutomationProperties.SetAutomationId(grip, left ? "ConsentGripLeft" : "ConsentGripRight");
+        var startX = 0;
+        var startWidth = 0.0;
+        var startPosition = new PixelPoint();
+        int ScreenX(PointerEventArgs e) => ScreenArea.CursorX() ?? this.PointToScreen(e.GetPosition(this)).X;
+        grip.PointerPressed += (_, e) =>
+        {
+            if (!e.GetCurrentPoint(this).Properties.IsLeftButtonPressed) return;
+            e.Handled = true;                                   // not a drag of the whole window
+            e.Pointer.Capture(grip);
+            startX = ScreenX(e);
+            startWidth = Width;
+            startPosition = Frame()?.Position ?? Position;
+            Detach();
+        };
+        grip.PointerMoved += (_, e) =>
+        {
+            if (!ReferenceEquals(e.Pointer.Captured, grip)) return;
+            var moved = (ScreenX(e) - startX) / RenderScaling;      // DIPs; to the right is positive
+            var wanted = Math.Clamp(left ? startWidth - moved : startWidth + moved, MinWidth, Math.Min(MaxWidth, WorkingWidth));
+            Width = wanted;
+            if (left) Position = new PixelPoint(startPosition.X + (int)Math.Round((startWidth - wanted) * RenderScaling), startPosition.Y);
+        };
+        grip.PointerReleased += (_, e) =>
+        {
+            if (!ReferenceEquals(e.Pointer.Captured, grip)) return;
+            e.Pointer.Capture(null);
+            _preferredCard = Width - 2 * ShadowMargin;
+        };
+        return grip;
+    }
 
     public void CloseOn(CancellationToken ct) => _timeout = ct.Register(() => DesktopUi.PostSafe(() =>
     {
@@ -137,27 +190,27 @@ sealed partial class ConsentWindow : CornerWindow
         };
         AutomationProperties.SetAutomationId(big, "ConsentCheckCode");
         AutomationProperties.SetName(big, code);
-        var column = Ui.Column(6, Ui.Text("Check code", "strong"), big);
+        var left = Ui.Column(2, Ui.Text("Check code", "strong"), big);
+        var right = Ui.Column(6);
+        right.Margin = new Thickness(14, 0, 0, 0);
         if (_model.CheckRequired)
         {
             var how = Ui.Wrap("The page where you pressed Connect shows the same code. If you did not just press Connect on this site yourself, Decline.", "muted", "small");
-            how.Width = 330;
             _checkSame = new CheckBox { Content = Ui.Wrap("The code is the same on the site's page"), FontSize = 14 };
             AutomationProperties.SetAutomationId(_checkSame, "ConsentCheckSame");
             AutomationProperties.SetName(_checkSame, "The code is the same on the site's page");
             _checkSame.IsCheckedChanged += (_, _) => UpdateAllow();
-            column.Children.Add(how);
-            column.Children.Add(_checkSame);
+            right.Children.Add(how);
+            right.Children.Add(_checkSame);
         }
         else
         {
             var warn = Ui.Wrap(_model.Handed ? HandedNoCheck : "This site gives no way to check that you started this connection. Allow only if you pressed Connect on its page a moment ago.", "strong", "small");
-            warn.Width = 330;
             AutomationProperties.SetAutomationId(warn, "ConsentNoCheck");
-            column.Children.Add(warn);
+            right.Children.Add(warn);
         }
 
-        return Ui.Box("field", column);
+        return Ui.Box("field", Ui.Columns("Auto,*", left, right));
     }
 
     Control TitleBar()
@@ -184,12 +237,11 @@ sealed partial class ConsentWindow : CornerWindow
 
     Control Body()
     {
-        var body = new StackPanel { Spacing = 10, Margin = new Thickness(16, 14, 16, 14), Width = 368 };
+        var body = new StackPanel { Spacing = 10, Margin = new Thickness(16, 14, 16, 14) };
 
         // The browser vouches for an extension origin. A direct link has no such proof until the site's welcome echoes the link, after the visitor allows it.
         var host = Ui.Text(_model.Host, "hostmono");
         var linkProof = Ui.Wrap("came by a link:\nconfirmed after you allow", "muted", "small");
-        linkProof.Width = 220;
         linkProof.TextTrimming = TextTrimming.CharacterEllipsis;
         var verified = _model.FromLink
             ? Ui.Row(4, linkProof)
@@ -198,27 +250,51 @@ sealed partial class ConsentWindow : CornerWindow
             : Ui.Row(4, Ui.Text("local test page (http)", "muted", "small"));
         if (_model.Secure && !_model.FromLink) ((TextBlock)verified.Children[1]).Foreground = Ui.Brush("Sign");
         var hostInfo = Ui.Column(3, host, verified);
-        // the chips ("updated", "paused") sit to the right of the host: they take their room from the host's column, not from the window's edge
-        var chips = (_model.IsDifference ? 1 : 0) + (_model.PausedNote is not null ? 1 : 0);
-        hostInfo.Width = chips switch { 0 => 290, 1 => 240, _ => 170 };
-        linkProof.Width = Math.Min(220, hostInfo.Width);
-        var hostRow = Ui.Row(9, Ui.Tile(Ui.Globe, 28), hostInfo);
-        if (_model.IsDifference) hostRow.Children.Add(Ui.Chip("updated", "outline"));
-        if (_model.PausedNote is not null) hostRow.Children.Add(Ui.Chip("paused", "outline"));
+        hostInfo.Margin = new Thickness(9, 0, 6, 0);
+        // the chips ("updated", "paused") sit at the right end of the row; the host takes the room that is left
+        var chipRow = Ui.Row(4);
+        if (_model.IsDifference) chipRow.Children.Add(Ui.Chip("updated", "outline"));
+        if (_model.PausedNote is not null) chipRow.Children.Add(Ui.Chip("paused", "outline"));
+        var hostRow = Ui.Columns("Auto,*,Auto", Ui.Tile(Ui.Globe, 28), hostInfo, chipRow);
         AutomationProperties.SetName(hostRow, _model.Host);
         body.Children.Add(hostRow);
         if (_model.Handed) body.Children.Add(HandedNotice());
-        if (_model.CheckCode is { } checkCode) body.Children.Add(CheckBlock(checkCode));
 
-        // The declared purpose, quoted as the site's own words.
+        // The declared purpose, quoted as the site's own words: its first five lines, the rest under an arrow.
+        const int purposeLines = 5;
         var purpose = Ui.Runs(("“" + _model.Summary + "”", false));
-        purpose.Width = 300;
+        purpose.TextWrapping = TextWrapping.Wrap;
         purpose.TextTrimming = TextTrimming.CharacterEllipsis;
-        purpose.MaxLines = 2;
+        purpose.MaxLines = purposeLines;
         purpose.Inlines!.Clear();
         purpose.Text = "\"" + _model.Summary + "\"  from the site";
         purpose.FontWeight = FontWeight.Medium;
-        body.Children.Add(Ui.Box("field", purpose));
+        var purposeBox = Ui.Column(4, purpose);
+        var more = Ui.Link("▾ show all", "ConsentPurposeMore", () => { });
+        more.IsVisible = false;
+        more.HorizontalAlignment = HorizontalAlignment.Left;
+        var open = false;
+        more.Click += (_, _) =>
+        {
+            open = !open;
+            purpose.MaxLines = open ? 0 : purposeLines;
+            ((TextBlock)more.Content!).Text = open ? "▴ show less" : "▾ show all";
+        };
+        // the arrow shows only when the words do not fit in five lines at the width the window has now
+        void CheckPurpose()
+        {
+            if (purpose.Bounds.Width <= 0) return;
+            var probe = new TextBlock { Text = purpose.Text, TextWrapping = TextWrapping.Wrap, FontWeight = purpose.FontWeight, FontSize = purpose.FontSize, FontFamily = purpose.FontFamily };
+            probe.Measure(new Size(purpose.Bounds.Width, double.PositiveInfinity));
+            var full = probe.DesiredSize.Height;
+            probe.MaxLines = purposeLines;
+            probe.Measure(new Size(purpose.Bounds.Width, double.PositiveInfinity));
+            more.IsVisible = full > probe.DesiredSize.Height + 1;
+        }
+
+        purpose.SizeChanged += (_, _) => CheckPurpose();
+        purposeBox.Children.Add(more);
+        body.Children.Add(Ui.Box("field", purposeBox));
 
         if (_model.PausedNote is { } paused)
         {
@@ -312,7 +388,7 @@ sealed partial class ConsentWindow : CornerWindow
 
         // "why?" opens the needs as tags and the manager's reason, under a dashed rule.
         var details = new StackPanel { Spacing = 6, IsVisible = false, Margin = new Thickness(0, 4, 0, 0) };
-        details.Children.Add(new Avalonia.Controls.Shapes.Line { StartPoint = new Point(0, 0), EndPoint = new Point(330, 0), Stroke = Ui.Brush("Rule"), StrokeThickness = 1, StrokeDashArray = [3, 3] });
+        details.Children.Add(new Border { Height = 1, Background = Ui.Brush("Rule"), Margin = new Thickness(0, 2) });
         var tags = new WrapPanel { Orientation = Orientation.Horizontal };
         tags.Children.Add(TagBox("skill", row.Skill));
         if (row.Languages.Count > 0) tags.Children.Add(TagBox("languages", string.Join(", ", row.Languages)));
@@ -393,13 +469,16 @@ sealed partial class ConsentWindow : CornerWindow
         var details = Ui.Link("Detailed settings…", "ConsentDetails", () => _openSettings("sites"), underline: true);
         var buttons = Ui.Row(8, decline, _allow);
         buttons.HorizontalAlignment = HorizontalAlignment.Right;
+        var row = Ui.Columns("Auto,*", details, buttons);
+        // the check code and its tick are in the footer, right above Allow: nothing to scroll to before the decision
+        Control content = _model.CheckCode is { } code ? Ui.Column(12, CheckBlock(code), row) : row;
         return new Border
         {
             Background = Ui.Brush("WinBar"),
             BorderBrush = Ui.Brush("WinRule"),
             BorderThickness = new Thickness(0, 1, 0, 0),
             Padding = new Thickness(14, 10, 14, 10),
-            Child = Ui.Columns("Auto,*", details, buttons),
+            Child = content,
         };
     }
 }

@@ -25,7 +25,7 @@ sealed class GuardWindow : Window
         MinWidth = 520;
         Background = Brushes.White;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
-        CanResize = false;
+        CanResize = true;
         Topmost = true;
         WindowLayout.Prepare(this, 300);
 
@@ -61,7 +61,13 @@ sealed class GuardWindow : Window
         var body = Ui.Column(12, [.. parts]);
         body.Margin = new Thickness(26, 24, 26, 16);
 
-        var allow = Ui.Button(model.ForPurpose ? "Give it my agent" : "Let it through", "allow", "GuardAllow", () => Answer(GuardAnswer.Allow), "small");
+        // "always allow this site" sits beside the button that lets the request through: one tick, then the button
+        var trust = new CheckBox { Content = Ui.Wrap("Always allow this site: the guard stops checking its requests to my agent (undo it in Sites)", "small"), FontSize = 13 };
+        AutomationProperties.SetAutomationId(trust, "GuardTrust");
+        AutomationProperties.SetName(trust, "Always allow this site");
+        trust.Margin = new Thickness(26, 4, 26, 10);
+        var allow = Ui.Button(model.ForPurpose ? "Give it my agent" : "Let it through", "allow", "GuardAllow",
+            () => Answer(trust.IsChecked == true ? GuardAnswer.AllowAlways : GuardAnswer.Allow), "small");
         var refuse = Ui.Button(model.ForPurpose ? "Do not give it" : "Refuse", "deny", "GuardRefuse", () => Answer(GuardAnswer.Refuse), "small");
         Panel buttons;
         if (model.ForPurpose) buttons = Ui.Row(8, allow, refuse);
@@ -74,7 +80,7 @@ sealed class GuardWindow : Window
 
         buttons.Margin = new Thickness(26, 0, 26, 22);
         // The answer row stays outside the scroll viewer: a long request must never hide the buttons.
-        Content = Ui.Column(0, WindowLayout.Body(this, body, 100, 300), buttons);
+        Content = Ui.Column(0, WindowLayout.Body(this, body, 150, 300), trust, buttons);
         KeyDown += (_, e) =>
         {
             if (e.Key == Key.Escape) { e.Handled = true; Answer(GuardAnswer.Refuse); }

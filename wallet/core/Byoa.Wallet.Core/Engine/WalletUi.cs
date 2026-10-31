@@ -34,6 +34,9 @@ public enum GuardAnswer
 
     /// <summary>Refuse it and take the agent away from this site.</summary>
     TakeAway,
+
+    /// <summary>Let this one through and trust the site: the guard does not look at its goal or its requests to the agent any more (undone in Sites).</summary>
+    AllowAlways,
 }
 
 /// <summary>
