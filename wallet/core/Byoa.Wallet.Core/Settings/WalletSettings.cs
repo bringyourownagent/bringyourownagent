@@ -44,8 +44,7 @@ public sealed class WalletSettings
     public bool NeverStartModels { get; set; }
 
     /// <summary>
-    /// On: the settings window shows every tab. Off (the start): only Sites, My models and Activity — plus the Everywhere tab when it is there.
-    /// Any notice or button that opens a detailed page switches it on and it stays on.
+    /// No longer used: the settings window always shows every tab. Kept so that a settings file that has it loads as before.
     /// </summary>
     public bool ShowAllSettings { get; set; }
 

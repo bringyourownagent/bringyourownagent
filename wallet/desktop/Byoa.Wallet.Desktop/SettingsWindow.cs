@@ -92,19 +92,8 @@ sealed partial class SettingsWindow : Window
         _content.SizeChanged += (_, _) => ResizePageToViewport();
 
         _todayBar.Classes.Add("meter");
-        // the switch at the bottom of the tab list: small until it is on
-        var allSettings = new CheckBox { Content = "Show all settings", IsChecked = _w.Store.Read(s => s.ShowAllSettings) };
-        AutomationProperties.SetAutomationId(allSettings, "ShowAllSettings");
-        allSettings.IsCheckedChanged += (_, _) =>
-        {
-            var on = allSettings.IsChecked == true;
-            if (on == _w.Store.Read(s => s.ShowAllSettings)) return;
-            _w.Store.Update(s => s.ShowAllSettings = on);
-            FillTabs();                                       // hiding while on a detailed page lands on Sites
-            Render();
-        };
         var today = Ui.Column(4, Ui.Text("Wallet today", "muted", "small"), _todayText, _todayBar);
-        var sidebarFoot = Ui.Column(8, allSettings, Ui.Rule(2, 6), today, Ui.Rule(2, 6), _updateBox);
+        var sidebarFoot = Ui.Column(8, Ui.Rule(2, 6), today, Ui.Rule(2, 6), _updateBox);
         sidebarFoot.Margin = new Thickness(16, 12, 16, 16);
         var sidebar = new DockPanel { Background = Ui.Brush("Field") };
         var head = Ui.Row(8,
@@ -143,24 +132,18 @@ sealed partial class SettingsWindow : Window
         foreach (var (id, path) in _tabGlyphs) path.Stroke = Ui.Brush(id == _page ? "Sign" : "Ink2");
     }
 
-    // The tabs a visitor sees until "Show all settings" is switched on at the bottom of the tab list. Pages above is
-    // the one list of tabs: another tab (the Everywhere tab lives in its own file) is added there with one line, and
-    // SimplePages decides by id whether it is simple enough for the short list.
-    static readonly string[] SimplePages = ["sites", "sources", "activity", "everywhere"];
+    // Every tab is always in the list (there used to be a "Show all settings" switch at its foot): the list scrolls when the window is low.
+    // Pages above is the one list of tabs: another tab (the Everywhere tab lives in its own file) is added there with one line.
 
-    /// <summary>The tabs the list shows now: the simple ones, or all of them.</summary>
-    internal static IReadOnlyList<(string Id, string Name, string Glyph)> VisiblePages(bool showAll) =>
+    /// <summary>The tabs the list shows: all of them (Everywhere only where it works).</summary>
+    internal static IReadOnlyList<(string Id, string Name, string Glyph)> VisiblePages() =>
         // Everywhere (dictation and the check in every program) listens to the keyboard system-wide: Windows only for now
-        VisiblePages(showAll, Pages.Where(p => p.Id != "everywhere" || OperatingSystem.IsWindows()).ToList());
+        Pages.Where(p => p.Id != "everywhere" || OperatingSystem.IsWindows()).ToList();
 
-    internal static IReadOnlyList<(string Id, string Name, string Glyph)> VisiblePages(bool showAll,
-        IReadOnlyList<(string Id, string Name, string Glyph)> pages) =>
-        pages.Where(p => showAll || SimplePages.Contains(p.Id)).ToList();
-
-    /// <summary>Rebuilds the tab list from the setting, keeping the open page when it stays visible (Sites when it does not).</summary>
+    /// <summary>Builds the tab list, keeping the open page (Sites when that page has no tab here).</summary>
     void FillTabs()
     {
-        var visible = VisiblePages(_w.Store.Read(s => s.ShowAllSettings));
+        var visible = VisiblePages();
         if (!visible.Any(p => p.Id == _page)) _page = "sites";
         _tabGlyphs.Clear();
         _tabs.Items.Clear();
@@ -189,16 +172,10 @@ sealed partial class SettingsWindow : Window
         _limitsFirst = page?.StartsWith("limits:", StringComparison.Ordinal) == true ? page["limits:".Length..] : null;
         if (_limitsFirst is not null) page = "limits";
         var wanted = Pages.Any(p => p.Id == page) ? page! : _page;
-        if (!VisiblePages(_w.Store.Read(s => s.ShowAllSettings)).Any(p => p.Id == wanted))
-        {
-            // A notice or a button asked for a detailed page (Agent guard, Limits, a help page's neighbour…):
-            // the switch goes on so the visitor can see where he landed, and it stays on.
-            _w.Store.Update(s => s.ShowAllSettings = true);
-            FillTabs();
-        }
+        if (!VisiblePages().Any(p => p.Id == wanted)) wanted = "sites";          // a page with no tab here (Everywhere off Windows)
 
         _page = wanted;
-        _tabs.SelectedIndex = VisiblePages(_w.Store.Read(s => s.ShowAllSettings)).Select((p, i) => (p.Id, i)).FirstOrDefault(x => x.Id == _page).i;
+        _tabs.SelectedIndex = VisiblePages().Select((p, i) => (p.Id, i)).FirstOrDefault(x => x.Id == _page).i;
         PaintTabs();
         Render();
         if (_page == "sites") _w.Engine.ClearBadge();

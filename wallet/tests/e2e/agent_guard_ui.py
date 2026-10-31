@@ -205,14 +205,7 @@ try:
 
     # ------------------------------------------------------------------------------------------ the menu
     w = settle("sites")
-    try:
-        ui.control(w, "Tab-guard", 1)
-        short = False
-    except LookupError:
-        short = True
-    check("the tab list is short at first: Agent guard waits behind \"Show all settings\", Everywhere is in the short list", short and ui.control(w, "Tab-everywhere", 5) is not None)
-    ui.toggle(w, "ShowAllSettings", True)
-    time.sleep(1.2)
+    check("every tab is in the list from the start: Agent guard and Everywhere are there", ui.control(w, "Tab-guard", 5) is not None and ui.control(w, "Tab-everywhere", 5) is not None)
     w = settle("sites")
     names = {i: ui.control(w, i, 10).Name for i in ("Tab-sources", "Tab-myagents", "Tab-guard", "Tab-connect")}
     check("the menu says My models, My agents, Agent guard and My MCP", names == {"Tab-sources": "My models", "Tab-myagents": "My agents", "Tab-guard": "Agent guard", "Tab-connect": "My MCP"}, str(names))

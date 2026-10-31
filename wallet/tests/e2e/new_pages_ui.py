@@ -72,10 +72,9 @@ try:
 
     # ------------------------------------------------------------------------------------------ the short tab list
     w = settle("sites")
-    check("the tab list is short at first: Sites, My models, Everywhere, Activity",
-          all(has_control(w, "Tab-" + t) for t in ("sites", "sources", "everywhere", "activity")))
-    check("... and Agent guard and My MCP wait behind \"Show all settings\"", not has_control(w, "Tab-guard", 1) and not has_control(w, "Tab-connect", 1))
-    check("the switch \"Show all settings\" is there", has_control(w, "ShowAllSettings"))
+    check("every tab is in the list from the start: Sites, My models, Everywhere, Activity, Agent guard, My MCP, My agents",
+          all(has_control(w, "Tab-" + t) for t in ("sites", "sources", "everywhere", "activity", "guard", "connect", "myagents")))
+    check("... and there is no \"Show all settings\" switch any more", not has_control(w, "ShowAllSettings", 1))
 
     # ------------------------------------------------------------------------------------------ Get started
     check("a wallet with no model shows the Get started card on Sites", has_text(w, "Get started"))
@@ -114,11 +113,6 @@ try:
     if a.shots:
         desk.shot(w, os.path.join(a.shots, "everywhere.png"))
 
-    # ------------------------------------------------------------------------------------------ Show all settings
-    ui.toggle(w, "ShowAllSettings", True)
-    time.sleep(1.5)
-    w = ui.find_window("Agent wallet", 10)
-    check("with \"Show all settings\" the other tabs appear", all(has_control(w, "Tab-" + t) for t in ("guard", "connect", "myagents")))
 finally:
     desk.terminate(wallet)
 

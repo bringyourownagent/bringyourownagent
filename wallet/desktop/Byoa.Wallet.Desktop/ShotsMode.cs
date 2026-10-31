@@ -30,7 +30,7 @@ static class ShotsMode
             await Task.Delay(1500);
             w.Ui.OpenSettings("sites");
             await Task.Delay(1500);
-            foreach (var (id, _, _) in SettingsWindow.VisiblePages(showAll: true))
+            foreach (var (id, _, _) in SettingsWindow.VisiblePages())
             {
                 w.Ui.OpenSettings(id);
                 await Snap(desktop, folder, "settings-" + id, log);

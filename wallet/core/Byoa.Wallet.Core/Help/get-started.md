@@ -13,7 +13,3 @@ OpenRouter is one key for hundreds of models, and some of them are free. The sig
 ## Free demo models, no sign-up
 
 Two public services answer with no key and no account at all: LLM7.io and OVHcloud AI Endpoints. The card labels them demo and asks one plain confirmation first, because a public service has real limits: it may keep what you send, it is slow and rate-limited (OVHcloud's anonymous tier is about two requests a minute), and it is not for private text. A demo model costs nothing and counts no money, but it still counts as cloud: a site that may only use models on this computer never receives it. It also stays out of the sites' default set — a site uses it only after you tick it in that site's window. For a serious start, replace the demo later with a local model or your own OpenRouter key.
-
-## Show all settings
-
-The settings window starts with a short tab list: Sites, My models, and Activity. The "Show all settings" switch at the bottom of the tab list shows the rest (My agents, Agent guard, Skills & fallbacks, Limits, My MCP, Help). Any notice or button that opens a detailed page switches it on by itself, and it stays on.
