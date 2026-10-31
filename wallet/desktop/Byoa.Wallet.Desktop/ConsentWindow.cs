@@ -1,4 +1,6 @@
 using Avalonia;
+using Avalonia.Animation;
+using Avalonia.Animation.Easings;
 using Avalonia.Automation;
 using Avalonia.Controls;
 using Avalonia.Input;
@@ -35,6 +37,9 @@ sealed partial class ConsentWindow : CornerWindow
     bool _closed;
     TextBlock? _budgetText;
     Control? _stepper;
+    Border? _glow;                                 // the ring of light around the check tick, while the visitor has not ticked it
+    DispatcherTimer? _pulse;
+    bool _glowBright;
     static double? _preferredCard;                 // the card's width (DIPs) the visitor last chose: the next windows open as wide
 
     /// <param name="searchModels">Searches the public model list for the models behind the visitor's own OpenRouter key; null when there is none.</param>
@@ -199,9 +204,13 @@ sealed partial class ConsentWindow : CornerWindow
             _checkSame = new CheckBox { Content = Ui.Wrap("The code is the same on the site's page"), FontSize = 14 };
             AutomationProperties.SetAutomationId(_checkSame, "ConsentCheckSame");
             AutomationProperties.SetName(_checkSame, "The code is the same on the site's page");
-            _checkSame.IsCheckedChanged += (_, _) => UpdateAllow();
+            _checkSame.IsCheckedChanged += (_, _) =>
+            {
+                UpdateAllow();
+                RefreshGlow();
+            };
             right.Children.Add(how);
-            right.Children.Add(_checkSame);
+            right.Children.Add(Glow(_checkSame));
         }
         else
         {
@@ -211,6 +220,77 @@ sealed partial class ConsentWindow : CornerWindow
         }
 
         return Ui.Box("field", Ui.Columns("Auto,*", left, right));
+    }
+
+    /// <summary>
+    /// The tick that confirms the code is what the visitor must press before Allow works, and it is easy to miss: it sits in a ring of amber light
+    /// that swells and fades once a second until the tick is made.
+    /// </summary>
+    Control Glow(CheckBox tick)
+    {
+        var duration = TimeSpan.FromMilliseconds(500);
+        _glow = new Border
+        {
+            Padding = new Thickness(8, 5, 10, 5),
+            CornerRadius = new CornerRadius(10),
+            BorderThickness = new Thickness(1.5),
+            BorderBrush = Brushes.Transparent,
+            Background = Brushes.Transparent,
+            Child = tick,
+            Transitions = new Transitions
+            {
+                new BoxShadowsTransition { Property = Border.BoxShadowProperty, Duration = duration, Easing = new SineEaseInOut() },
+                new BrushTransition { Property = Border.BorderBrushProperty, Duration = duration, Easing = new SineEaseInOut() },
+                new BrushTransition { Property = Border.BackgroundProperty, Duration = duration, Easing = new SineEaseInOut() },
+            },
+        };
+        _pulse = new DispatcherTimer { Interval = duration };
+        _pulse.Tick += (_, _) =>
+        {
+            _glowBright = !_glowBright;
+            ShowGlow();
+        };
+        Closed += (_, _) => _pulse.Stop();
+        RefreshGlow();
+        return _glow;
+    }
+
+    /// <summary>The ring pulses while the tick is not made; once it is made the ring goes out and stays out (and comes back if the tick is taken away).</summary>
+    void RefreshGlow()
+    {
+        if (_glow is null || _pulse is null) return;
+        if (_checkSame is { IsChecked: not true })
+        {
+            if (!_pulse.IsEnabled)
+            {
+                _glowBright = true;
+                _pulse.Start();
+            }
+        }
+        else
+        {
+            _pulse.Stop();
+            _glowBright = false;
+        }
+
+        ShowGlow();
+    }
+
+    void ShowGlow()
+    {
+        if (_glow is null) return;
+        if (_checkSame is not { IsChecked: not true })
+        {
+            _glow.BoxShadow = default;
+            _glow.BorderBrush = Brushes.Transparent;
+            _glow.Background = Brushes.Transparent;
+            return;
+        }
+
+        var bright = _glowBright;
+        _glow.BoxShadow = new BoxShadows(new BoxShadow { Blur = bright ? 22 : 8, Spread = bright ? 2 : 0, Color = Color.FromArgb((byte)(bright ? 215 : 85), 255, 168, 40) });
+        _glow.BorderBrush = new SolidColorBrush(Color.FromArgb((byte)(bright ? 255 : 120), 255, 176, 48));
+        _glow.Background = new SolidColorBrush(Color.FromArgb((byte)(bright ? 42 : 14), 255, 176, 48));
     }
 
     Control TitleBar()

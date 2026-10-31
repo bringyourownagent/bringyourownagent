@@ -248,6 +248,11 @@ sealed partial class ConsentWindow
         var plain = _model.Rows.Any(r => r.Required && r.Models is null && !r.CanServe);
         var models = _picks.Any(p => p.Value.Required && !_leftOff.Contains(p.Key) && !Satisfied(p.Value));
         _allow.IsEnabled = !plain && !models && (_checkSame is null || _checkSame.IsChecked == true);
+        // a button that does not work says why: the code has to be confirmed first (a hint shows on a disabled button too)
+        var needsCode = _checkSame is { IsChecked: not true };
+        ToolTip.SetShowOnDisabled(_allow, true);
+        ToolTip.SetTip(_allow, needsCode ? "First confirm the code: tick “The code is the same on the site's page”. Allow works after that." : null);
+        AutomationProperties.SetHelpText(_allow, needsCode ? "Confirm the code first: tick “The code is the same on the site's page”." : "");
     }
 
     /// <summary>What the site asked for above the visitor's limits, with one tick to accept it.</summary>
