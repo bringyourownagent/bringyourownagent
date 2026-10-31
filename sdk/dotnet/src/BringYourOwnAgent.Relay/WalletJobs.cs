@@ -25,8 +25,9 @@ public sealed record JobStarted(string? Id, string? Error);
 /// <param name="Ok">done and the wallet answered with something readable.</param>
 /// <param name="Text">done and ok: the answer, cleaned and cut.</param>
 /// <param name="Partial">While pending: the pieces the wallet has streamed so far (a preview; the final answer replaces them).</param>
+/// <param name="Lacks">done and ok, from the visitor's agent: the abilities the site hoped for that the agent does not have (<c>web.read</c>, ...), so the answer is to be read as partial; null when nothing is lacking.</param>
 /// <param name="Reason">done and not ok: what the wallet said ("timeout", "cancelled", "limit" or "failed"; CONTRACT-DIRECT.md section 4), or "timeout" (nothing came back in the relay's time) or "gone" (the wallet went away).</param>
-public sealed record JobResult(string State, bool Ok = false, string? Text = null, string? Partial = null, string? Reason = null);
+public sealed record JobResult(string State, bool Ok = false, string? Text = null, string? Partial = null, string? Reason = null, string[]? Lacks = null);
 
 /// <summary>
 /// The page's road to the visitor's wallet when it is connected without the extension: the page cannot call that wallet itself, so it asks the
@@ -141,7 +142,7 @@ public sealed class WalletJobs
         var a = job.Answer.Result;
         return a.Outcome switch
         {
-            WalletOutcome.Text when a.Text.Length > 0 => new JobResult("done", true, a.Text),
+            WalletOutcome.Text when a.Text.Length > 0 => new JobResult("done", true, a.Text, Lacks: a.Lacks is { Length: > 0 } ? a.Lacks : null),
             WalletOutcome.TimedOut => new JobResult("done", false, null, null, "timeout"),
             WalletOutcome.Cancelled => new JobResult("done", false, null, null, "gone"),
             _ => new JobResult("done", false, null, null, a.Reason ?? "failed"),

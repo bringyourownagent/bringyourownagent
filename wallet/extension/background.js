@@ -116,6 +116,12 @@ const isCount = (v) => Number.isInteger(v) && v >= 0 && v <= 9007199254740991;
 // The closed list of CONTRACT.md section 3.3 (wallet 0.36): feature names a site may find in grant.capabilities.
 const CAPABILITIES = ["needs", "can", "kind", "cancel", "image.generate", "images-in", "parts", "frame-limit"];
 const CAN_NAMES = ["input", "output", "context", "runs"];
+// The page API has no cancel call (CONTRACT-DIRECT.md section 4: not in the browser binding in this release), so a feature the page cannot use
+// is not offered to it: `cancel` is the wallet's, for the direct link, and is not passed on here.
+const PAGE_CAPABILITIES = CAPABILITIES.filter((name) => name !== "cancel");
+// Why a call failed (a closed list) and the ability names an agent lacked: the only extra words a call's answer may carry.
+const REASONS = ["timeout", "cancelled", "limit", "failed"];
+const ABILITY_NAME = /^[a-z][a-z0-9.-]{0,31}$/;
 
 // The wallet's verdicts for the conditions (can) or abilities (abilities) the site asked about: booleans only, at most four
 // keys, only names a site can ask about. Anything else is dropped before the page sees it.
@@ -139,8 +145,8 @@ function shapeCapabilities(value) {
   if (!Array.isArray(value)) return undefined;
   const out = [];
   for (const name of value) {
-    if (CAPABILITIES.includes(name) && !out.includes(name)) out.push(name);
-    if (out.length === CAPABILITIES.length) break;
+    if (PAGE_CAPABILITIES.includes(name) && !out.includes(name)) out.push(name);
+    if (out.length === PAGE_CAPABILITIES.length) break;
   }
   return out;
 }
@@ -198,11 +204,18 @@ function shape(type, result) {
     return granted;
   }
   if (type === "call") {
-    if (!result || result.ok !== true || !result.output || typeof result.output !== "object") return { ok: false };
+    if (!result || result.ok !== true || !result.output || typeof result.output !== "object") {
+      const failed = { ok: false };
+      if (result && result.reason !== undefined) failed.reason = REASONS.includes(result.reason) ? result.reason : "failed";
+      return failed;
+    }
     const receipt = result.receipt || {};
     const shaped = { cost: isString(receipt.cost) ? receipt.cost : "0.000 USD", provider: receipt.provider === "api-key" ? "api-key" : "local" };
     if (isString(receipt.model) && receipt.model.length <= 16) shaped.model = receipt.model;
-    return { ok: true, output: result.output, receipt: shaped };
+    const answer = { ok: true, output: result.output, receipt: shaped };
+    const lacks = Array.isArray(result.lacks) ? [...new Set(result.lacks.filter((a) => isString(a) && ABILITY_NAME.test(a)))].slice(0, 8) : [];
+    if (lacks.length > 0) answer.lacks = lacks;
+    return answer;
   }
   return null;
 }

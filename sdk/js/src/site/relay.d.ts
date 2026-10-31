@@ -8,10 +8,12 @@ import type { Server as HttpsServer } from 'node:https';
  * The answer to one call. Never an exception: `{ ok: false }` means "unavailable for this call"; use your own path.
  * `output` is what the visitor's software sent: it is user input, never trusted; validate it and cap it before use.
  * `receipt` is reduced to two short strings or null.
+ * `lacks` (the visitor's agent only): abilities the site hoped for that the agent does not have, so the answer is to be read as partial.
+ * `reason` (wallet 0.36): why a call failed, a closed list; absent when the wallet said nothing (an older wallet), "timeout" when the site's own wait ran out.
  */
 export type CallResult =
-  | { ok: true; output: Record<string, unknown>; receipt: { cost: string; provider: string; model?: string } | null }
-  | { ok: false; timedOut?: boolean; cancelled?: boolean; tooBig?: boolean };
+  | { ok: true; output: Record<string, unknown>; receipt: { cost: string; provider: string; model?: string } | null; lacks?: string[] }
+  | { ok: false; reason?: 'timeout' | 'cancelled' | 'limit' | 'failed'; timedOut?: boolean; cancelled?: boolean; tooBig?: boolean };
 
 /** The visitor's address as the limits count it: IPv4-mapped IPv6 becomes IPv4, any other IPv6 becomes its /64. */
 export function addressKey(ip: string): string;

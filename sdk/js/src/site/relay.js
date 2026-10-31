@@ -81,6 +81,16 @@ function cleanReceipt(receipt) {
   return model === undefined ? { cost, provider } : { cost, provider, model };
 }
 
+/** Why a wallet says a call failed (spec/CONTRACT-DIRECT.md section 4): a closed list; any other word is "failed". */
+const REASONS = new Set(['timeout', 'cancelled', 'limit', 'failed']);
+
+/** The abilities a visitor's agent lacked for an answer: ability names only, once each, at most 8; undefined when none. */
+function cleanLacks(lacks) {
+  if (!Array.isArray(lacks)) return undefined;
+  const names = [...new Set(lacks.filter((a) => typeof a === 'string' && /^[a-z][a-z0-9.-]{0,31}$/.test(a)))].slice(0, 8);
+  return names.length > 0 ? names : undefined;
+}
+
 const LIMIT_NAMES = ['maxTextChars', 'maxAnswerTokens', 'maxCallSeconds', 'maxParallelCalls', 'maxCallsPerMinute'];
 
 /** What a wallet says it holds the site to (hello.grant.limits, or a "grant" frame): known names, positive integers only; null when it says nothing. */
@@ -209,8 +219,13 @@ export class WalletConnection extends EventEmitter {
     if (job.done) return;
     const at = this._queue.indexOf(job);
     if (at >= 0) this._queue.splice(at, 1);
-    this._finish(job, { ok: false, timedOut: true });
+    // a call the wallet is working on is stopped there too (an old wallet ignores the frame), so its place is free again
+    if (job.id !== undefined && this.capable('cancel')) this._send({ type: 'cancel', id: job.id });
+    this._finish(job, { ok: false, timedOut: true, reason: 'timeout' });
   }
+
+  /** Whether the wallet says it supports this feature (grant.capabilities; an older wallet says nothing, so nothing is assumed). */
+  capable(feature) { return Array.isArray(this.grant?.capabilities) && this.grant.capabilities.includes(feature); }
 
   _finish(job, answer) {
     if (job.done) return;
@@ -252,7 +267,17 @@ export class WalletConnection extends EventEmitter {
     const output = frame.output;
     const sane = frame.ok === true && output !== null && typeof output === 'object' && !Array.isArray(output)
       && JSON.stringify(output).length <= this.options.maxOutputBytes;
-    this._finish(job, sane ? { ok: true, output, receipt: cleanReceipt(frame.receipt) } : { ok: false });
+    if (sane) {
+      const answer = { ok: true, output, receipt: cleanReceipt(frame.receipt) };
+      const lacks = cleanLacks(frame.lacks);
+      if (lacks) answer.lacks = lacks;
+      this._finish(job, answer);
+      return;
+    }
+
+    const failed = { ok: false };
+    if (frame.reason !== undefined) failed.reason = REASONS.has(frame.reason) ? frame.reason : 'failed';
+    this._finish(job, failed);
   }
 
   _chunk(frame) {

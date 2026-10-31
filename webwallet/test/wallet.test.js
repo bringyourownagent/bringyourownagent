@@ -143,6 +143,7 @@ test('a call that names a model gets that model, and a model not given is refuse
   assert.equal(byId[1].ok, true);
   assert.equal(byId[1].receipt.model, 'm2');
   assert.equal(byId[2].ok, false);
+  assert.equal(byId[2].reason, 'failed');                    // a model not given is "failed": the site is told nothing of how the visitor's models are set up
   env.connection.close();
 });
 

@@ -159,8 +159,8 @@ static class Rooms
 /// <summary>The frames a wallet sends, built with the serializer so a test never fights JSON braces.</summary>
 static class WalletFrames
 {
-    public static string Result(int id, bool ok, string? text = null, string? reason = null) =>
-        JsonSerializer.Serialize(new { type = "result", id, ok, reason, output = text is null ? null : new { text } });
+    public static string Result(int id, bool ok, string? text = null, string? reason = null, string[]? lacks = null) =>
+        JsonSerializer.Serialize(new { type = "result", id, ok, reason, lacks, output = text is null ? null : new { text } });
 
     public static string Chunk(int id, string text) => JsonSerializer.Serialize(new { type = "chunk", id, text });
 

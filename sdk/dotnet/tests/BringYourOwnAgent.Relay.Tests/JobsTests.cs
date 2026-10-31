@@ -262,6 +262,30 @@ public class JobsTests
     }
 
     [Fact]
+    public async Task WhatTheAgentCouldNotDoReachesThePageAsLacksAndNothingElseDoes()
+    {
+        var (_, jobs, wallet, token, run, tcp) = await Pair();
+        using var _t = tcp;
+
+        var partial = jobs.Start(Rooms.A, Ask(token, "m4"));
+        await wallet.Send(WalletFrames.Result((await wallet.NextOf("call")).GetProperty("id").GetInt32(), true, "Done, without the web.",
+            lacks: ["web.read", "web.read", "Not An Ability", "image.read"]));
+        var told = await jobs.PollAsync(Rooms.A, partial.Id, TimeSpan.FromSeconds(5), CancellationToken.None);
+        Assert.True(told.Ok);
+        Assert.Equal(["web.read", "image.read"], told.Lacks!);                          // ability names only, once each
+
+        var whole = jobs.Start(Rooms.A, Ask(token, "m4"));
+        await wallet.Send(WalletFrames.Result((await wallet.NextOf("call")).GetProperty("id").GetInt32(), true, "Done."));
+        Assert.Null((await jobs.PollAsync(Rooms.A, whole.Id, TimeSpan.FromSeconds(5), CancellationToken.None)).Lacks);       // nothing lacking: no field
+
+        var failed = jobs.Start(Rooms.A, Ask(token, "m4"));
+        await wallet.Send(WalletFrames.Result((await wallet.NextOf("call")).GetProperty("id").GetInt32(), false, reason: "failed", lacks: ["web.read"]));
+        Assert.Null((await jobs.PollAsync(Rooms.A, failed.Id, TimeSpan.FromSeconds(5), CancellationToken.None)).Lacks);      // a failure carries a reason, not lacks
+        await wallet.Ws.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "bye", CancellationToken.None);
+        await run.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
     public async Task ThePageCanStopWaitingAndALateAnswerIsDropped()
     {
         var (_, jobs, wallet, token, run, tcp) = await Pair();

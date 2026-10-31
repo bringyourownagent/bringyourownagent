@@ -25,8 +25,26 @@ const grant = (extra = {}) => ({
 });
 
 test("capabilities: the closed list reaches the page, unknown and repeated names do not", () => {
-  const answer = shaped("request", grant({ capabilities: ["needs", "can", "bogus", "needs", "image.generate", "cancel"] }));
-  assert.deepEqual(answer.capabilities, ["needs", "can", "image.generate", "cancel"]);
+  const answer = shaped("request", grant({ capabilities: ["needs", "can", "bogus", "needs", "image.generate", "kind"] }));
+  assert.deepEqual(answer.capabilities, ["needs", "can", "image.generate", "kind"]);
+});
+
+test("capabilities: `cancel` does not reach the page, which has no way to cancel", () => {
+  assert.deepEqual(shaped("request", grant({ capabilities: ["needs", "cancel", "can"] })).capabilities, ["needs", "can"]);
+});
+
+test("a failed call keeps its reason from the closed list, any other word becomes failed, and no reason stays none", () => {
+  assert.deepEqual(shaped("call", { ok: false, reason: "limit" }), { ok: false, reason: "limit" });
+  assert.deepEqual(shaped("call", { ok: false, reason: "the model is not installed" }), { ok: false, reason: "failed" });
+  assert.deepEqual(shaped("call", { ok: false }), { ok: false });
+  assert.deepEqual(shaped("call", { ok: true, output: null, reason: "timeout" }), { ok: false, reason: "timeout" });
+  assert.deepEqual(shaped("call", null), { ok: false });
+});
+
+test("a call that worked carries what the agent lacked as ability names only, once each", () => {
+  const answer = shaped("call", { ok: true, output: { text: "hi" }, receipt: { cost: "0.000 USD", provider: "local" }, lacks: ["web.read", "web.read", "Not An Ability", 7, "image.read"] });
+  assert.deepEqual(answer.lacks, ["web.read", "image.read"]);
+  assert.equal("lacks" in shaped("call", { ok: true, output: { text: "hi" }, lacks: [] }), false);
 });
 
 test("capabilities: an empty list is passed on (the wallet understands none), a missing one stays missing", () => {

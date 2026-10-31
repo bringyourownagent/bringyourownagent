@@ -47,7 +47,7 @@ public enum WalletOutcome
 }
 
 /// <summary>One call's answer: <paramref name="Text"/> is the wallet's text, cleaned and cut (<see cref="WalletText"/>).</summary>
-public sealed record WalletAnswer(WalletOutcome Outcome, string Text = "", string? Reason = null);
+public sealed record WalletAnswer(WalletOutcome Outcome, string Text = "", string? Reason = null, string[]? Lacks = null);
 
 /// <summary>
 /// One visitor's agent wallet connected straight to the server (<c>wss://host/byoa/ws</c>, BYOA «direct» transport, CONTRACT-DIRECT.md §4–5, §7),
@@ -139,7 +139,7 @@ public sealed class WalletChannel
     /// <summary>One incoming JSON message, read without copying it: only what the server uses.</summary>
     sealed record Frame(string? Type, string? Session, string? Pairing, int? Id, bool Ok, string? Text, string? Chunk,
                         string[]? Skills = null, JsonElement? Models = null, JsonElement? Limits = null, bool HasLimits = false,
-                        string[]? Capabilities = null, string? Reason = null);
+                        string[]? Capabilities = null, string? Reason = null, string[]? Lacks = null);
 
     /// <summary>Serves one wallet connection until it closes.</summary>
     public static async Task RunAsync(WebSocket ws, DirectHub hub, ILogger log, CancellationToken ct, WalletChannelLimits? limits = null)
@@ -181,7 +181,7 @@ public sealed class WalletChannel
                 switch (frame?.Type)
                 {
                     case "result" when frame.Id is { } id:
-                        channel.Result(id, frame.Ok && frame.Text is not null, frame.Text, frame.Reason);       // ok without a text is no answer
+                        channel.Result(id, frame.Ok && frame.Text is not null, frame.Text, frame.Reason, frame.Lacks);       // ok without a text is no answer
                         break;
                     case "chunk" when frame.Id is { } id:
                         channel.Chunk(id, frame.Chunk);
@@ -271,16 +271,19 @@ public sealed class WalletChannel
         return true;
     }
 
+    /// <summary>An ability name as the contract writes it (<c>web.search</c>, <c>image.read</c>); a result's <c>lacks</c> keeps only such words.</summary>
+    static readonly System.Text.RegularExpressions.Regex AbilityName = new("^[a-z][a-z0-9.-]{0,31}$", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
     /// <summary>The reasons a wallet may give for an <c>ok:false</c> (CONTRACT-DIRECT.md section 4); any other word is "failed".</summary>
     static readonly HashSet<string?> Reasons = new(StringComparer.Ordinal) { "timeout", "cancelled", "limit", "failed" };
 
     /// <summary>The wallet's result for a call; false when no such call is waiting (late, repeated, made up, or let go by the page).</summary>
-    public bool Result(int id, bool ok, string? text, string? reason = null)
+    public bool Result(int id, bool ok, string? text, string? reason = null, string[]? lacks = null)
     {
         if (!_pending.TryRemove(id, out var waiting)) return false;
         if (!ok) return waiting.Answer.TrySetResult(new WalletAnswer(WalletOutcome.Failed, "", Reasons.Contains(reason) ? reason : "failed"));
         var clean = WalletText.CleanBlock(text, waiting.MaxChars);
-        return waiting.Answer.TrySetResult(new WalletAnswer(WalletOutcome.Text, clean));
+        return waiting.Answer.TrySetResult(new WalletAnswer(WalletOutcome.Text, clean, Lacks: lacks));
     }
 
     /// <summary>The site stops a call it still waits for: the wallet is told with <c>{"type":"cancel","id":N}</c>
@@ -540,9 +543,13 @@ public sealed class WalletChannel
             string[]? capabilities = null;
             if (Array(grant, "capabilities") is { } capabilitiesNode)
                 capabilities = capabilitiesNode.EnumerateArray().Where(x => x.ValueKind == JsonValueKind.String).Select(x => x.GetString()!).Take(32).ToArray();
+            string[]? lacks = null;
+            if (Array(root, "lacks") is { } lacksNode)
+                lacks = lacksNode.EnumerateArray().Where(x => x.ValueKind == JsonValueKind.String).Select(x => x.GetString()!)
+                    .Where(x => AbilityName.IsMatch(x)).Distinct(StringComparer.Ordinal).Take(8).ToArray();
             frame = new Frame(Str(root, "type"), Str(root, "session"), Str(root, "pairing"), id, ok, text,
                               root.TryGetProperty("text", out var c) && c.ValueKind == JsonValueKind.String ? c.GetString() : null,
-                              skills, modelsNode?.Clone(), limitsNode?.Clone(), limitsNode is not null, capabilities, Str(root, "reason"));
+                              skills, modelsNode?.Clone(), limitsNode?.Clone(), limitsNode is not null, capabilities, Str(root, "reason"), lacks);
             return true;
         }
         catch (JsonException) { return false; }

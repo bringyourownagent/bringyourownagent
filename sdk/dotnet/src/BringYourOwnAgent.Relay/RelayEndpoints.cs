@@ -139,7 +139,7 @@ public static class RelayEndpoints
         {
             if (Bad(room) is { } bad) return bad;
             var result = await jobs.PollAsync(room, r.Id, TimeSpan.Zero, ct);
-            return Results.Ok(new { state = result.State, ok = result.Ok, text = result.Text, partial = result.Partial, reason = result.Reason });
+            return Results.Ok(new { state = result.State, ok = result.Ok, text = result.Text, partial = result.Partial, reason = result.Reason, lacks = result.Lacks });
         });
 
         // the page stops waiting for a job (the protocol has no cancel frame: the job is forgotten and a late answer is dropped)

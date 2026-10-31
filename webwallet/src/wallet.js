@@ -250,7 +250,9 @@ export class SiteConnection {
   }
 
   _refuse(id, skill, ref, why) {
-    this._send({ type: 'result', id, ok: false });
+    // the site is told one of four words (spec/CONTRACT-DIRECT.md section 4), never why in the visitor's terms
+    const reason = why === 'text too long' || why === 'too many at once' ? 'limit' : why === 'timed out' ? 'timeout' : 'failed';
+    this._send({ type: 'result', id, ok: false, reason });
     this.onEvent({ type: 'call', skill, ref: ref ?? null, ok: false, why, costUsd: 0 });
   }
 
