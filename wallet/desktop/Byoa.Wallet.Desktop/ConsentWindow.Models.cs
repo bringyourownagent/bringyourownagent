@@ -195,6 +195,7 @@ sealed partial class ConsentWindow
             .ThenBy(c => c.Role == ModelRole.Required ? 0 : c.Role == ModelRole.Recommended ? 1 : 2)
             .ToList();
         var shown = pick.Expanded ? ordered : ordered.Where(c => pick.Order.Contains(c.Key) || c.Role != ModelRole.Yours).Take(CollapsedRows).ToList();
+        if (MasterTick(pick, shown) is { } master) pick.List.Children.Add(master);
         foreach (var choice in shown) pick.List.Children.Add(ModelLine(pick, choice));
         if (!pick.Expanded && ordered.Count > shown.Count)
             pick.List.Children.Add(Ui.Wrap("and " + Number(ordered.Count - shown.Count) + " more of yours under “Change models”", "muted", "small"));
@@ -205,12 +206,48 @@ sealed partial class ConsentWindow
         UpdateAllow();
     }
 
+    /// <summary>One model, and the site cannot do without it: a choice among several, so round buttons (picking one lets go of the other).</summary>
+    static bool IsChoiceOfOne(ModelPick pick) => pick.Section.Spec is { Max: 1, Min: >= 1 };
+
+    /// <summary>
+    /// The master box over a list of boxes. One press lets go of every tick (the visitor was handed a crowd of models and wants one); with nothing
+    /// ticked, one press ticks the models the site takes first (its required ones, then its recommended ones, up to the most it uses).
+    /// Its state shows all, some or none of them ticked. Null over round buttons (a choice of one) and over a list that has nothing to clear.
+    /// </summary>
+    Control? MasterTick(ModelPick pick, List<ModelChoice> shown)
+    {
+        if (IsChoiceOfOne(pick)) return null;
+        var ready = shown.Where(c => c.Ready).ToList();
+        if (ready.Count < 2 && pick.Order.Count < 2) return null;
+        bool? state = pick.Order.Count == 0 ? false : ready.All(c => pick.Order.Contains(c.Key)) ? true : null;
+        var master = new CheckBox
+        {
+            IsThreeState = true,
+            IsChecked = state,
+            MinWidth = 0,
+            Padding = new Thickness(8, 0, 0, 0),
+        };
+        var hint = Ui.Text(pick.Order.Count > 0 ? "press to untick all" : "press to tick the first ones", "muted", "small");
+        hint.Margin = new Thickness(8, 0, 0, 0);
+        master.Content = Ui.Columns("Auto,*", Ui.Text("All of them", "strong"), hint);
+        AutomationProperties.SetAutomationId(master, "ConsentModelsAll");
+        AutomationProperties.SetName(master, "All models");
+        ToolTip.SetTip(master, pick.Order.Count > 0 ? "Untick all the models" : "Tick the models the site takes first");
+        master.IsCheckedChanged += (_, _) =>             // the state it was drawn with is set before this is hooked: only a press gets here
+        {
+            if (pick.Order.Count > 0) pick.Order.Clear();
+            else foreach (var choice in ready.Take(pick.Section.Spec.Max)) pick.Order.Add(choice.Key);
+            FillModels(pick);
+            if (pick.Extra.IsVisible && pick.Results.Children.Count > 0) RefreshResultTicks(pick);
+        };
+        return master;
+    }
+
     Control ModelLine(ModelPick pick, ModelChoice choice)
     {
         var ticked = pick.Order.Contains(choice.Key);
-        // One model, and the site cannot do without it: a choice among several, so round buttons (picking one lets go of the other).
         // Otherwise boxes; a box is never greyed because the list is full: ticking one more lets go of the oldest tick that is not required.
-        var radio = pick.Section.Spec is { Max: 1, Min: >= 1 };
+        var radio = IsChoiceOfOne(pick);
         ToggleButton box = radio
             ? new RadioButton { GroupName = "ConsentModels-" + RuntimeHelpers.GetHashCode(pick), IsChecked = ticked, IsEnabled = choice.Ready, MinWidth = 0, Padding = new Thickness(0), VerticalAlignment = VerticalAlignment.Top }
             : new CheckBox { IsChecked = ticked, IsEnabled = choice.Ready, MinWidth = 0, Padding = new Thickness(0), VerticalAlignment = VerticalAlignment.Top };
