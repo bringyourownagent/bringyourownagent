@@ -103,6 +103,7 @@ mkdir -p "$MACOS" "$RESOURCES"
 for f in "$PUBLISH/app"/*; do
   case "$f" in
     *.pdb) ;;
+    */icons) ;;      # the PNG icons beside the program are for the Linux desktop entries; the app's icon here is Byoa.icns, and a PNG in Contents/MacOS would be taken for code
     *) cp -Rp "$f" "$MACOS/" ;;
   esac
 done
