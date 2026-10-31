@@ -120,7 +120,8 @@ public sealed record ConsentModel(
     LimitsAsk? Limits = null,
     string? CheckCode = null,
     bool CheckRequired = false,
-    bool Handed = false)
+    bool Handed = false,
+    bool ShowModelNames = true)
 {
     /// <summary>A required skill no source can serve: Allow is not offered.</summary>
     public bool MissingRequired => Rows.Any(r => r.Required && !r.CanServe);

@@ -5,7 +5,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
-    <Version>0.32.1</Version>
+    <Version>0.33.0</Version>
     <Authors>ultrathinker</Authors>
     <Product>BYOA agent wallet</Product>
     <Copyright>BYOA contributors, Apache License 2.0</Copyright>

@@ -162,6 +162,32 @@
       <Setter Property="Background" Value="{StaticResource Field}" />
       <Setter Property="BorderBrush" Value="{StaticResource Ink2}" />
     </Style>
+    <!-- a tinted button: Exit Orange on a light ground (Change models); a small icon button (the refresh sign beside the version) -->
+    <Style Selector="Button.tint">
+      <Setter Property="Background" Value="#fff1ea" />
+      <Setter Property="Foreground" Value="{StaticResource SignalDeep}" />
+      <Setter Property="BorderBrush" Value="{StaticResource Signal}" />
+      <Setter Property="BorderThickness" Value="1.5" />
+    </Style>
+    <Style Selector="Button.tint:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="{StaticResource Signal}" />
+      <Setter Property="BorderBrush" Value="{StaticResource Signal}" />
+      <Setter Property="Foreground" Value="White" />
+    </Style>
+    <Style Selector="Button.tint:pressed /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="{StaticResource SignalDark}" />
+      <Setter Property="BorderBrush" Value="{StaticResource SignalDark}" />
+      <Setter Property="Foreground" Value="White" />
+    </Style>
+    <Style Selector="Button.iconbtn">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="Padding" Value="4" />
+      <Setter Property="CornerRadius" Value="6" />
+    </Style>
+    <Style Selector="Button.iconbtn:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="{StaticResource Field}" />
+    </Style>
     <Style Selector="Button.manager">
       <Setter Property="Background" Value="{StaticResource Sign}" />
       <Setter Property="Foreground" Value="White" />

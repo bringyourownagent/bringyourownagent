@@ -35,6 +35,63 @@ sealed partial class ConsentWindow
 
     static string Number(int value) => value.ToString("N0", CultureInfo.InvariantCulture);
 
+    /// <summary>
+    /// A text in a field: its first two lines, and "More" under it when there is more to read. Pressed, the field opens to the whole text, up to
+    /// seventeen lines tall (with a scroll when it is longer than that), and "Less" folds it back.
+    /// </summary>
+    /// <param name="shown">What shows while it is folded.</param>
+    /// <param name="whole">What shows when it is open; null when it is the same text.</param>
+    static Control Expandable(string shown, string? whole, string id)
+    {
+        const int closedLines = 2;
+        const int openLines = 17;
+        var text = Ui.Wrap(shown);
+        text.TextTrimming = Avalonia.Media.TextTrimming.CharacterEllipsis;
+        text.MaxLines = closedLines;
+        AutomationProperties.SetAutomationId(text, id);
+        var scroll = new ScrollViewer { Content = text, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, VerticalScrollBarVisibility = ScrollBarVisibility.Disabled };
+        var more = Ui.Link("More", id + "More", () => { });
+        more.HorizontalAlignment = HorizontalAlignment.Right;
+        var longer = whole is not null && !string.Equals(whole, shown, StringComparison.Ordinal);
+        more.IsVisible = longer;
+        var open = false;
+        more.Click += (_, _) =>
+        {
+            open = !open;
+            if (open)
+            {
+                text.Text = whole ?? shown;
+                text.MaxLines = 0;
+                text.TextTrimming = Avalonia.Media.TextTrimming.None;
+                scroll.MaxHeight = Math.Round(text.FontSize * 1.45 * openLines);
+                scroll.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
+            }
+            else
+            {
+                text.Text = shown;
+                text.MaxLines = closedLines;
+                text.TextTrimming = Avalonia.Media.TextTrimming.CharacterEllipsis;
+                scroll.MaxHeight = double.PositiveInfinity;
+                scroll.VerticalScrollBarVisibility = ScrollBarVisibility.Disabled;
+                scroll.Offset = default;
+            }
+
+            ((TextBlock)more.Content!).Text = open ? "Less" : "More";
+        };
+        // a text that is the same open and folded gets its button only when two lines are not enough at the width the window has now
+        text.SizeChanged += (_, _) =>
+        {
+            if (open || longer || text.Bounds.Width <= 0) return;
+            var probe = new TextBlock { Text = shown, TextWrapping = Avalonia.Media.TextWrapping.Wrap, FontWeight = text.FontWeight, FontSize = text.FontSize, FontFamily = text.FontFamily };
+            probe.Measure(new Size(text.Bounds.Width, double.PositiveInfinity));
+            var full = probe.DesiredSize.Height;
+            probe.MaxLines = closedLines;
+            probe.Measure(new Size(text.Bounds.Width, double.PositiveInfinity));
+            more.IsVisible = full > probe.DesiredSize.Height + 1;
+        };
+        return Ui.Column(4, scroll, more);
+    }
+
     Control ModelRow(ConsentRow row, StackPanel panel, StackPanel title)
     {
         var section = row.Models!;
@@ -49,27 +106,15 @@ sealed partial class ConsentWindow
         _picks[row.Skill] = pick;
         panel.Children.Add(title);
 
-        // The site's reason: one short line always, the long one behind "More".
+        // The site's reason in a field: its first two lines, and all of it (what the site wrote, what it asks, what the visitor keeps) behind "More".
         var how = spec.Min == spec.Max ? (spec.Min == 1 ? "one model" : Number(spec.Min) + " different models") : Number(spec.Min) + " to " + Number(spec.Max) + " different models";
         var reason = spec.Why ?? "The site uses " + how + ".";
-        var reasonLine = Ui.Wrap(reason, "muted");
-        AutomationProperties.SetAutomationId(reasonLine, "ConsentModelsWhy");
-        var more = Ui.Link("More", "ConsentModelsMore", () => { });
-        more.HorizontalAlignment = HorizontalAlignment.Right;
-        panel.Children.Add(Ui.Columns("*,Auto", reasonLine, more));
-
-        var longer = new StackPanel { Spacing = 5, IsVisible = false, Margin = new Thickness(0, 2, 0, 2) };
-        longer.Children.Add(Ui.Wrap(spec.WhyLong ?? "The site did not say more. It asks for " + how + (spec.ByVendor ? ", from different companies where possible" : "") + ".", "wrap"));
-        longer.Children.Add(Ui.Wrap("It uses " + how + (spec.ByVendor ? ", from different companies where possible" : "") + "."
+        var detail = "It uses " + how + (spec.ByVendor ? ", from different companies where possible" : "") + "."
             + (spec.Require.Count > 0 ? " It cannot work without " + string.Join(", ", spec.Require.Select(w => string.Join(" or ", w.AnyOf))) + "." : "")
             + (spec.Recommend.Count > 0 ? " It recommends " + string.Join(", ", spec.Recommend.Take(6)) + (spec.Recommend.Count > 6 ? " and " + Number(spec.Recommend.Count - 6) + " more" : "") + "." : "")
-            + " You choose which of your models it gets; it never sees the others.", "muted", "small"));
-        panel.Children.Add(longer);
-        more.Click += (_, _) =>
-        {
-            longer.IsVisible = !longer.IsVisible;
-            ((TextBlock)more.Content!).Text = longer.IsVisible ? "Less" : "More";
-        };
+            + " You choose which of your models it gets; it never sees the others.";
+        var whole = reason + "\n\n" + (spec.WhyLong ?? "The site did not say more. It asks for " + how + (spec.ByVendor ? ", from different companies where possible" : "") + ".") + "\n\n" + detail;
+        panel.Children.Add(Ui.Box("field", Expandable(reason, whole, "ConsentModelsWhy")));
 
         if (section.MissingRequired.Count > 0 || section.Shortfall is not null)
         {
@@ -82,7 +127,7 @@ sealed partial class ConsentWindow
 
         pick.Count.Classes.Add("muted");
         AutomationProperties.SetAutomationId(pick.Count, "ConsentModelsCount");
-        var change = Ui.Link("Change models…", "ConsentModelsChange", () => { });
+        var change = Ui.Button("Change models", "tint", "ConsentModelsChange", () => { }, "small");
         change.HorizontalAlignment = HorizontalAlignment.Right;
         panel.Children.Add(Ui.Columns("*,Auto", pick.Count, change));
         panel.Children.Add(pick.List);
@@ -91,17 +136,9 @@ sealed partial class ConsentWindow
         {
             pick.Expanded = !pick.Expanded;
             pick.Extra.IsVisible = pick.Expanded;
-            ((TextBlock)change.Content!).Text = pick.Expanded ? "Fewer models" : "Change models…";
+            change.Content = pick.Expanded ? "Fewer models" : "Change models";
             FillModels(pick);
         };
-
-        if (spec.Names)
-        {
-            _names = new CheckBox { IsChecked = true, Content = Ui.Wrap("The site sees the names of these models", "small"), FontSize = 13 };
-            AutomationProperties.SetAutomationId(_names, "ConsentModelNames");
-            AutomationProperties.SetName(_names, "The site sees the names of these models");
-            panel.Children.Add(_names);
-        }
 
         FillModels(pick);
         var box = Ui.Box("row", panel);
@@ -111,7 +148,7 @@ sealed partial class ConsentWindow
     /// <summary>What "Change models…" opens: a search of the public list, for the models behind the visitor's own OpenRouter key.</summary>
     Control ExtraModels(ModelPick pick)
     {
-        pick.Extra.Children.Add(new Avalonia.Controls.Shapes.Line { StartPoint = new Point(0, 0), EndPoint = new Point(330, 0), Stroke = Ui.Brush("Rule"), StrokeThickness = 1, StrokeDashArray = [3, 3] });
+        pick.Extra.Children.Add(new Border { Height = 1, Background = Ui.Brush("Rule"), Margin = new Thickness(0, 2) });
         if (_search is null || !_canSearch)
         {
             pick.Extra.Children.Add(Ui.Wrap("To pick from hundreds more models, add your OpenRouter key in My models. Models you already have are in the list above.", "muted", "small"));
@@ -160,7 +197,7 @@ sealed partial class ConsentWindow
         var shown = pick.Expanded ? ordered : ordered.Where(c => pick.Order.Contains(c.Key) || c.Role != ModelRole.Yours).Take(CollapsedRows).ToList();
         foreach (var choice in shown) pick.List.Children.Add(ModelLine(pick, choice));
         if (!pick.Expanded && ordered.Count > shown.Count)
-            pick.List.Children.Add(Ui.Wrap("and " + Number(ordered.Count - shown.Count) + " more of yours under “Change models…”", "muted", "small"));
+            pick.List.Children.Add(Ui.Wrap("and " + Number(ordered.Count - shown.Count) + " more of yours under “Change models”", "muted", "small"));
         if (shown.Count == 0) pick.List.Children.Add(Ui.Wrap("None of your models can answer this site yet.", "muted"));
 
         var limit = spec.Min == spec.Max ? "the site uses " + Number(spec.Max) : "the site uses " + Number(spec.Min) + " to " + Number(spec.Max);

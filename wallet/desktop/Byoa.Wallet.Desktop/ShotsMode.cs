@@ -55,6 +55,13 @@ static class ShotsMode
             withCode.Cancel();
             await Task.Delay(500);
 
+            // a site that asks for several models: its reason in a field, the models to tick, the orange Change models, the budget
+            using var withModels = new CancellationTokenSource();
+            _ = w.Ui.ShowConsentAsync(SampleConsentWithModels(), withModels.Token);
+            await Snap(desktop, folder, "consent-models", log, excludeSettings: true);
+            withModels.Cancel();
+            await Task.Delay(500);
+
             using var raise = new CancellationTokenSource();
             _ = w.Ui.AskRaiseAsync(WalletEngine.RaiseModelOf("https://geo.example.com", "geo.example.com", "budget", 0.10m, 0.1294m), raise.Token);
             await Snap(desktop, folder, "raise", log, excludeSettings: true);
@@ -90,6 +97,28 @@ static class ShotsMode
         [new ConsentRow("text.generate", "Answer questions", true, true, true,
             [new RouteLine(null, "Qwen3 4B", "this computer", false, true)], [], "Needed to give the news of the countries the players name.")],
         0.25m, null, false, false);
+
+    static ConsentModel SampleConsentWithModels()
+    {
+        var spec = new RequestedModels(2, 64, "vendor", [], ["GPT-6 Luna", "Gemini 3.5 Flash Lite"],
+            "Your AIs play Mafia against each other: tick as many of your models as you like. One model can take several seats; the table seats 8, plus a commentator.",
+            "Each model is a player with a secret role who talks, accuses and votes; one more may comment on what happens. The site pays nothing for them: your own models answer, within your limits. "
+            + "A game takes about half an hour and 60 to 120 short calls. You can pick the models and see their names on the table.", true);
+        ModelChoice Pick(string key, string name, string where, string cost, ModelRole role, bool on) =>
+            new(key, key, name, "x/" + key, where, where.Contains("key"), cost, role, on, true, null);
+        var choices = new[]
+        {
+            Pick("glm", "glm-5.3-flash", "Z.ai Coding Plan (GLM) key", "about $0.000126 an answer", ModelRole.Recommended, true),
+            Pick("luna", "GPT-6 Luna", "OpenRouter key", "about $0.0005 an answer", ModelRole.Recommended, true),
+            Pick("gem", "Gemini 3.5 Flash Lite", "OpenRouter key", "about $0.0022 an answer", ModelRole.Recommended, true),
+            Pick("grok", "Grok 4.3", "OpenRouter key", "about $0.003625 an answer", ModelRole.Yours, true),
+        };
+        var section = new ModelSection("text.generate", spec, choices, [], null);
+        var row = new ConsentRow("text.generate", "Text generation", true, true, true, [], [], "", section);
+        return new ConsentModel("https://mafia.example.com", "mafia.example.com", true,
+            "A game of Mafia played by the visitor's own AI models at one table: each is a player with a secret role who talks, accuses and votes; one model may comment. The visitor is the host and may pause the game, give the floor to a player and write to the table.",
+            [row], 1.00m, null, false, false, null, true, null, "AAM6", true, false);
+    }
 
     static ConsentModel SampleConsentWithCode() => new(
         "https://mafia.example.com", "mafia.example.com", true,

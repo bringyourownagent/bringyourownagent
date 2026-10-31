@@ -851,7 +851,7 @@ public sealed partial class WalletEngine
             site.Status == SiteStatus.Allowed && site.Paused ? PauseText(site) : null, via == ViaLink, limitsAsk,
             via == ViaLink && linkSession is not null ? Direct.ConnectCheck.Compute(linkSession) : null,
             via == ViaLink && linkSession is not null && manifest.ConnectCheck,
-            via == ViaLink && handed);
+            via == ViaLink && handed, site.ShowModelNames);
     }
 
     ConsentRow Row(RequestedSkill skill, WalletSettings settings, SiteRecord site, bool isNew)

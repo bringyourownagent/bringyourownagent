@@ -25,12 +25,10 @@ sealed partial class ConsentWindow : CornerWindow
     readonly Func<string?, IReadOnlyList<ModelChoice>>? _search;
     readonly bool _canSearch;
     readonly Dictionary<string, ModelPick> _picks = new(StringComparer.Ordinal);
-    CheckBox? _names;
     CheckBox? _siteLimits;
     CheckBox? _checkSame;
     readonly TaskCompletionSource<ConsentAnswer> _answer = new(TaskCreationOptions.RunContinuationsAsynchronously);
     readonly HashSet<string> _leftOff = [];
-    readonly CheckBox _auto;
     readonly Button _allow;
     decimal _budget;
     CancellationTokenRegistration _timeout;
@@ -56,14 +54,6 @@ sealed partial class ConsentWindow : CornerWindow
         MaxWidth = 960;
         if (_preferredCard is { } wide) Width = Math.Clamp(wide, 340, 960 - 2 * ShadowMargin) + 2 * ShadowMargin;
 
-        _auto = new CheckBox
-        {
-            Content = Ui.Wrap("Next time, decide on my own within these limits"),
-            IsChecked = model.AutoDecide,
-            FontSize = 14,
-        };
-        AutomationProperties.SetAutomationId(_auto, "ConsentAuto");
-        AutomationProperties.SetName(_auto, "Next time, decide on my own within these limits");
 
         _allow = Ui.Button(model.PausedNote is null ? "Allow" : "Resume", "allow", "ConsentAllow", () => Answer(true));
         var decline = Ui.Button("Decline", "deny", "ConsentDecline", () => Answer(false));
@@ -175,9 +165,9 @@ sealed partial class ConsentWindow : CornerWindow
     void Answer(bool allow)
     {
         _answer.TrySetResult(allow
-            ? new ConsentAnswer(true, _budget, _auto.IsChecked == true, _leftOff.ToList(),
+            ? new ConsentAnswer(true, _budget, _model.AutoDecide, _leftOff.ToList(),
                 _picks.Count == 0 ? null : _picks.ToDictionary(p => p.Key, p => (IReadOnlyList<string>)p.Value.Order.ToList(), StringComparer.Ordinal),
-                _names?.IsChecked != false, _siteLimits?.IsChecked != false, _checkSame?.IsChecked == true)
+                _model.ShowModelNames, _siteLimits?.IsChecked != false, _checkSame?.IsChecked == true)
             : ConsentAnswer.Declined);
         if (!_closed) Close();
     }
@@ -308,7 +298,7 @@ sealed partial class ConsentWindow : CornerWindow
             BorderBrush = Ui.Brush("WinRule"),
             BorderThickness = new Thickness(0, 0, 0, 1),
             Background = Brushes.White,
-            Child = Ui.Columns("Auto,*,Auto", icon, Ui.Text("Agent wallet", "label"), close),
+            Child = Ui.Columns("Auto,*,Auto", icon, Ui.Plain("Agent wallet", "label"), close),
         };
         icon.Margin = new Thickness(0, 0, 8, 0);
         bar.Cursor = DragCursor;        // the whole window drags (CornerWindow); the title bar is where one looks for the handle
@@ -321,15 +311,13 @@ sealed partial class ConsentWindow : CornerWindow
 
         // The browser vouches for an extension origin. A direct link has no such proof until the site's welcome echoes the link, after the visitor allows it.
         var host = Ui.Text(_model.Host, "hostmono");
-        var linkProof = Ui.Wrap("came by a link:\nconfirmed after you allow", "muted", "small");
-        linkProof.TextTrimming = TextTrimming.CharacterEllipsis;
-        var verified = _model.FromLink
-            ? Ui.Row(4, linkProof)
-            : _model.Secure
-            ? Ui.Row(4, Ui.InkCheck(14), Ui.Text("verified", "small", "strong"))
+        // A link has no proof of where it came from until the site answers after Allow; the check code below is what the visitor can act on,
+        // so no line here says "came by a link". Only a page that is not secure is told.
+        StackPanel? verified = _model.FromLink ? null
+            : _model.Secure ? Ui.Row(4, Ui.InkCheck(14), Ui.Text("verified", "small", "strong"))
             : Ui.Row(4, Ui.Text("local test page (http)", "muted", "small"));
-        if (_model.Secure && !_model.FromLink) ((TextBlock)verified.Children[1]).Foreground = Ui.Brush("Sign");
-        var hostInfo = Ui.Column(3, host, verified);
+        if (verified is not null && _model.Secure) ((TextBlock)verified.Children[1]).Foreground = Ui.Brush("Sign");
+        var hostInfo = verified is null ? Ui.Column(3, host) : Ui.Column(3, host, verified);
         hostInfo.Margin = new Thickness(9, 0, 6, 0);
         // the chips ("updated", "paused") sit at the right end of the row; the host takes the room that is left
         var chipRow = Ui.Row(4);
@@ -340,41 +328,8 @@ sealed partial class ConsentWindow : CornerWindow
         body.Children.Add(hostRow);
         if (_model.Handed) body.Children.Add(HandedNotice());
 
-        // The declared purpose, quoted as the site's own words: its first five lines, the rest under an arrow.
-        const int purposeLines = 5;
-        var purpose = Ui.Runs(("“" + _model.Summary + "”", false));
-        purpose.TextWrapping = TextWrapping.Wrap;
-        purpose.TextTrimming = TextTrimming.CharacterEllipsis;
-        purpose.MaxLines = purposeLines;
-        purpose.Inlines!.Clear();
-        purpose.Text = "\"" + _model.Summary + "\"  from the site";
-        purpose.FontWeight = FontWeight.Medium;
-        var purposeBox = Ui.Column(4, purpose);
-        var more = Ui.Link("▾ show all", "ConsentPurposeMore", () => { });
-        more.IsVisible = false;
-        more.HorizontalAlignment = HorizontalAlignment.Left;
-        var open = false;
-        more.Click += (_, _) =>
-        {
-            open = !open;
-            purpose.MaxLines = open ? 0 : purposeLines;
-            ((TextBlock)more.Content!).Text = open ? "▴ show less" : "▾ show all";
-        };
-        // the arrow shows only when the words do not fit in five lines at the width the window has now
-        void CheckPurpose()
-        {
-            if (purpose.Bounds.Width <= 0) return;
-            var probe = new TextBlock { Text = purpose.Text, TextWrapping = TextWrapping.Wrap, FontWeight = purpose.FontWeight, FontSize = purpose.FontSize, FontFamily = purpose.FontFamily };
-            probe.Measure(new Size(purpose.Bounds.Width, double.PositiveInfinity));
-            var full = probe.DesiredSize.Height;
-            probe.MaxLines = purposeLines;
-            probe.Measure(new Size(purpose.Bounds.Width, double.PositiveInfinity));
-            more.IsVisible = full > probe.DesiredSize.Height + 1;
-        }
-
-        purpose.SizeChanged += (_, _) => CheckPurpose();
-        purposeBox.Children.Add(more);
-        body.Children.Add(Ui.Box("field", purposeBox));
+        // What the site says it is for, as it wrote it (no quotes): its first two lines, the rest behind "More".
+        body.Children.Add(Ui.Box("field", Expandable(_model.Summary, null, "ConsentPurpose")));
 
         if (_model.PausedNote is { } paused)
         {
@@ -397,7 +352,6 @@ sealed partial class ConsentWindow : CornerWindow
 
         if (_model.Limits is { } ask) body.Children.Add(LimitsBlock(ask));
         body.Children.Add(BudgetLine());
-        body.Children.Add(_auto);
         return body;
     }
 
@@ -517,7 +471,7 @@ sealed partial class ConsentWindow : CornerWindow
         AutomationProperties.SetName(up, "Raise the budget");
         _stepper = Ui.Row(8, down, up);
         _stepper.IsVisible = false;
-        return Ui.Column(6, Ui.Row(6, _budgetText, Ui.Text("·", "muted"), change), _stepper);
+        return Ui.Column(6, Ui.Text("How much may this site spend?", "strong"), Ui.Row(6, _budgetText, Ui.Text("·", "muted"), change), _stepper);
     }
 
     void Step(int direction)

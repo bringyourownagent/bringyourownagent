@@ -74,7 +74,7 @@ sealed class ToastWindow : CornerWindow
         var t = new ToastWindow("Agent wallet notice");
         var lines = Ui.Column(2,
             Ui.Runs((model.Host, true), (" wants to use your AI", false)),
-            Ui.Text("Agent wallet", "muted", "small"));
+            Ui.Plain("Agent wallet", "muted", "small"));
         AutomationProperties.SetName(lines, model.Host + " wants to use your AI");
         t._body.Children.Add(t.Header(Ui.Tile(Ui.Globe, 24), lines));
         var (declineText, blockText) = Choices(model);

@@ -18,7 +18,16 @@ static class Ui
     public static WindowIcon AppIcon => new(Avalonia.Platform.AssetLoader.Open(new Uri(
         OperatingSystem.IsLinux() ? "avares://Byoa.Wallet/Assets/icon-256.png" : "avares://Byoa.Wallet/Assets/app.ico")));
 
+    /// <summary>A text the visitor can select and copy (see <see cref="WalletText"/>).</summary>
     public static TextBlock Text(string text, params string[] classes)
+    {
+        var t = new WalletText { Text = text, VerticalAlignment = VerticalAlignment.Center };
+        foreach (var c in classes) t.Classes.Add(c);
+        return t;
+    }
+
+    /// <summary>A text that is not selected: the label of a window's title bar, which drags the window.</summary>
+    public static TextBlock Plain(string text, params string[] classes)
     {
         var t = new TextBlock { Text = text, VerticalAlignment = VerticalAlignment.Center };
         foreach (var c in classes) t.Classes.Add(c);
@@ -35,7 +44,7 @@ static class Ui
     /// <summary>A text with bold and plain runs: ("**host**", " wants to use your AI").</summary>
     public static TextBlock Runs(params (string Text, bool Bold)[] parts)
     {
-        var t = new TextBlock { TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center };
+        var t = new WalletText { TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center };
         foreach (var (text, bold) in parts)
         {
             t.Inlines!.Add(new Avalonia.Controls.Documents.Run(text) { FontWeight = bold ? FontWeight.Bold : FontWeight.Normal });
@@ -112,6 +121,7 @@ static class Ui
     public const string Gauge = "M3,17 A9,9 0 0 1 21,17 M12,17 L16,10";
     public const string List = "M5,6 L19,6 M5,12 L19,12 M5,18 L14,18";
     public const string Plus = "M6,12 L18,12 M12,6 L12,18";
+    public const string Refresh = "M23,4 L23,10 L17,10 M1,20 L1,14 L7,14 M3.51,9 A9,9 0 0 1 18.36,5.64 L23,10 M1,14 L5.64,18.36 A9,9 0 0 0 20.49,15";
 
     /// <summary>A stroke drawing on a 24-unit canvas, scaled to <paramref name="size"/> (straight lines keep their place).</summary>
     public static Control Glyph(string data, IBrush stroke, double size = 16, double thickness = 2.2)

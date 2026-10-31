@@ -1,3 +1,4 @@
+using Avalonia.Animation;
 using Avalonia.Automation;
 using Avalonia.Controls;
 using Avalonia.Threading;
@@ -23,17 +24,37 @@ sealed partial class SettingsWindow
         RenderUpdates();
     }
 
+    // The notice «This is the newest version.» comes with the answer of a check (not with a redraw) and fades away over NoticeFade.
+    static readonly TimeSpan NoticeFade = TimeSpan.FromSeconds(7);
+    DateTime? _newestSince;
+    UpdateState? _lastState;
+
     void RenderUpdates()
     {
         _updateBox.Children.Clear();
         var updater = _w.Updater;
-        _updateBox.Children.Add(Ui.Text("Version " + WalletPaths.Version, "muted", "small"));
+        if (updater.State == UpdateState.UpToDate && _lastState != UpdateState.UpToDate) _newestSince = DateTime.UtcNow;
+        else if (updater.State != UpdateState.UpToDate) _newestSince = null;
+        _lastState = updater.State;
+
+        var version = Ui.Text("Version " + WalletPaths.Version, "muted", "small");
         if (!updater.CanUpdateItself)
         {
             // a build from the source, or the zip of an earlier release: it has no installer to replace it with a newer one
+            _updateBox.Children.Add(version);
             _updateBox.Children.Add(Ui.Button("Get the latest version", "deny", "UpdateDownloadPage", OpenDownloadPage, "small"));
             return;
         }
+
+        // the version, and a small refresh sign behind it that checks for an update (no big button: the foot of the list keeps its room)
+        var busy = updater.State is UpdateState.Checking or UpdateState.Downloading;
+        var refresh = new Button { Content = Ui.Glyph(Ui.Refresh, Ui.Brush("Ink2"), 14, 2.2), IsEnabled = !busy };
+        refresh.Classes.Add("iconbtn");
+        ToolTip.SetTip(refresh, "Check for updates");
+        AutomationProperties.SetAutomationId(refresh, "UpdateCheck");
+        AutomationProperties.SetName(refresh, "Check for updates");
+        refresh.Click += (_, _) => Check();
+        _updateBox.Children.Add(Ui.Row(4, version, refresh));
 
         switch (updater.State)
         {
@@ -41,8 +62,7 @@ sealed partial class SettingsWindow
                 _updateBox.Children.Add(Ui.Text("Looking for a new version…", "muted", "small"));
                 break;
             case UpdateState.UpToDate:
-                _updateBox.Children.Add(Ui.Wrap("This is the newest version.", "muted", "small"));
-                _updateBox.Children.Add(Ui.Button("Check again", "deny", "UpdateCheck", Check, "small"));
+                AddNewestNotice();
                 break;
             case UpdateState.Available:
                 _updateBox.Children.Add(Ui.Wrap($"Version {updater.NewVersion} is ready.", "small"));
@@ -55,10 +75,6 @@ sealed partial class SettingsWindow
                 break;
             case UpdateState.Failed:
                 _updateBox.Children.Add(Ui.Wrap(updater.Error ?? "The update did not work.", "muted", "small"));
-                _updateBox.Children.Add(Ui.Button("Try again", "deny", "UpdateCheck", Check, "small"));
-                break;
-            default:
-                _updateBox.Children.Add(Ui.Button("Check for updates", "deny", "UpdateCheck", Check, "small"));
                 break;
         }
 
@@ -78,6 +94,20 @@ sealed partial class SettingsWindow
             startup.IsCheckedChanged += (_, _) => linux.SetStartAtLogin(folder, startup.IsChecked == true);
             _updateBox.Children.Add(startup);
         }
+    }
+
+    /// <summary>"This is the newest version." in full strength at first, then fading to nothing over seven seconds, and gone.</summary>
+    void AddNewestNotice()
+    {
+        if (_newestSince is not { } since) return;
+        var left = NoticeFade - (DateTime.UtcNow - since);
+        if (left <= TimeSpan.Zero) return;
+        var note = Ui.Wrap("This is the newest version.", "muted", "small");
+        note.Opacity = Math.Clamp(left / NoticeFade, 0, 1);
+        note.Transitions = new Transitions { new DoubleTransition { Property = Avalonia.Visual.OpacityProperty, Duration = left } };
+        _updateBox.Children.Add(note);
+        Dispatcher.UIThread.Post(() => note.Opacity = 0, DispatcherPriority.Background);       // the fade starts once the notice is on the screen
+        DispatcherTimer.RunOnce(RenderUpdates, left + TimeSpan.FromMilliseconds(150));         // and then the notice is taken away
     }
 
     void Check() => _ = _w.Updater.CheckAsync();
