@@ -20,12 +20,43 @@ export type Timestamp = string;
 export interface Limits {
   maxClipSeconds?: number;
   maxCallsPerMinute?: number;
+  /** Bytes of one frame from the wallet (the direct link only). */
+  maxFrameBytes?: number;
   maxTextChars?: number;
+}
+
+/** A condition on one property of the sources a site asks for, inside `models.needs`. */
+export type NeedsCondition =
+  | ('audio' | 'image' | 'text')[]
+  | { includes: ('audio' | 'image' | 'text')[] }
+  | number
+  | { min: number }
+  | ('local' | 'home-server' | 'api-key')[]
+  | { oneOf: ('local' | 'home-server' | 'api-key')[] };
+
+/** The `models` block of a skill (CONTRACT.md section 3.3). Only these fields are typed; a block without `count` is valid. */
+export interface ModelsRequest {
+  count?: number | { min?: number; max?: number };
+  distinct?: 'vendor' | 'model';
+  require?: unknown[];
+  recommend?: unknown[];
+  /** Conditions on the properties of the sources (wallet 0.36). */
+  needs?: { input?: NeedsCondition; output?: NeedsCondition; context?: NeedsCondition; runs?: NeedsCondition; [property: string]: unknown };
+  /** Which sources may fill the skill: a model, the visitor's agent, or either (wallet 0.36). */
+  kind?: 'model' | 'agent' | 'any';
+  /** What happens to a source that fails a known condition (wallet 0.36). */
+  onMismatch?: 'drop' | 'show';
+  /** The agent abilities the site hopes for (wallet 0.36). */
+  abilities?: string[];
+  why?: string;
+  whyLong?: string;
+  names?: boolean;
 }
 
 /** One skill the requester asks for. Other parameters are skill-specific. */
 export interface SkillRequest {
   required: boolean;
+  models?: ModelsRequest;
   [parameter: string]: unknown;
 }
 
@@ -138,6 +169,13 @@ export const SUPPORTED_VERSIONS: readonly string[];
 export const KNOWN_SKILLS: readonly string[];
 export const PRIVACY_CLASSES: readonly PrivacyClass[];
 export const KNOWN_LIMITS: readonly (keyof Limits)[];
+export const COUNT_LIMITS: readonly (keyof Limits)[];
+export const SOURCE_KINDS: readonly ('model' | 'agent' | 'any')[];
+export const ON_MISMATCH: readonly ('drop' | 'show')[];
+export const NEEDS_PROPERTIES: readonly ('input' | 'output' | 'context' | 'runs')[];
+export const MODALITIES: readonly ('audio' | 'image' | 'text')[];
+export const RUNS: readonly ('local' | 'home-server' | 'api-key')[];
+export const ABILITIES: readonly string[];
 export const COST_PERIODS: readonly ('perCall' | 'perSession' | 'perHour')[];
 export const PROVIDER_KINDS: readonly ProviderKind[];
 export const LOCAL_PROVIDERS: readonly ProviderKind[];

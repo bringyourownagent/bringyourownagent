@@ -1,4 +1,4 @@
-// Manifest rules M1-M21 of spec/rules-0.1-draft.md (a draft for discussion).
+// Manifest rules M1-M28 of spec/rules-0.1-draft.md (a draft for discussion).
 
 import {
   codePointLength,
@@ -14,11 +14,17 @@ import {
 } from './common.js';
 import { parseMoney } from './money.js';
 import {
+  ABILITIES,
   COST_PERIODS,
   COUNT_LIMITS,
   KNOWN_LIMITS,
   KNOWN_SKILLS,
+  MODALITIES,
+  NEEDS_PROPERTIES,
+  ON_MISMATCH,
   PRIVACY_CLASSES,
+  RUNS,
+  SOURCE_KINDS,
   SUMMARY_MAX_LENGTH,
   SUPPORTED_VERSIONS,
 } from './rules.js';
@@ -216,6 +222,10 @@ function checkSkills(skills, error, warn) {
     } else if (required) {
       anyRequired = true;
     }
+    const models = get(entry, 'models');
+    if (models !== undefined) {
+      checkModels(skillId, models, error, warn);
+    }
   }
   if (!anyRequired) {
     warn(
@@ -224,4 +234,116 @@ function checkSkills(skills, error, warn) {
       'no skill is marked "required": true; the site claims to work without any of them',
     );
   }
+}
+
+// M22-M28: the `models` block of a skill. Only `kind`, `onMismatch`, `needs` and `abilities` are
+// checked here; `count`, `distinct`, `require`, `recommend`, `why`, `whyLong` and `names` stay the
+// wallet's to read, and a block without `count` is valid (CONTRACT.md section 3.3).
+function checkModels(skillId, models, error, warn) {
+  const path = pointer('skills', skillId, 'models');
+  if (!isObject(models)) {
+    error('models-invalid', path, `"models" of skill ${quote(skillId)} must be an object`);
+    return;
+  }
+
+  const kind = get(models, 'kind');
+  if (kind !== undefined && !SOURCE_KINDS.includes(kind)) {
+    error(
+      'models-kind-invalid',
+      path + '/kind',
+      `"models.kind" must be one of: ${SOURCE_KINDS.map(quote).join(', ')}; got ${quote(kind)}`,
+    );
+  }
+
+  const onMismatch = get(models, 'onMismatch');
+  if (onMismatch !== undefined && !ON_MISMATCH.includes(onMismatch)) {
+    error(
+      'models-onmismatch-invalid',
+      path + '/onMismatch',
+      `"models.onMismatch" must be "drop" or "show"; got ${quote(onMismatch)}`,
+    );
+  }
+
+  const needs = get(models, 'needs');
+  if (needs !== undefined) {
+    checkNeeds(skillId, needs, error, warn);
+  }
+
+  const abilities = get(models, 'abilities');
+  if (abilities !== undefined) {
+    checkAbilities(skillId, abilities, error, warn);
+  }
+}
+
+function checkNeeds(skillId, needs, error, warn) {
+  const path = pointer('skills', skillId, 'models', 'needs');
+  if (!isObject(needs)) {
+    error('needs-invalid', path, `"models.needs" of skill ${quote(skillId)} must be an object of conditions by property`);
+    return;
+  }
+  for (const key of presentKeys(needs)) {
+    const keyPath = path + pointer(key);
+    const value = needs[key];
+    if (!NEEDS_PROPERTIES.includes(key)) {
+      if (!key.startsWith('x-')) {
+        warn('needs-unknown', keyPath, `unknown property ${quote(key)} in "models.needs"; wallets that do not know it will ignore it`);
+      }
+      continue;
+    }
+    const problem = needsProblem(key, value);
+    if (problem !== null) error('needs-invalid', keyPath, problem);
+  }
+}
+
+// Why a condition of `needs` is invalid, or null if it is fine. An array is the short form of the
+// one long form each property takes: {"includes": [...]} for a modality, {"oneOf": [...]} for `runs`,
+// {"min": n} for `context` (CONTRACT.md sections 3.3 and 3.5).
+function needsProblem(key, value) {
+  if (key === 'input' || key === 'output') {
+    const list = listOf(value, 'includes');
+    if (list !== null && isModalityList(list)) return null;
+    return `"models.needs.${key}" must be an array of ${MODALITIES.map(quote).join(', ')} with at least one value, or {"includes": [...]} of those; got ${quote(value)}`;
+  }
+  if (key === 'runs') {
+    const list = listOf(value, 'oneOf');
+    if (list !== null && isList(RUNS, list)) return null;
+    return `"models.needs.${key}" must be an array of ${RUNS.map(quote).join(', ')} with at least one value, or {"oneOf": [...]} of those; got ${quote(value)}`;
+  }
+  // context: a minimum, in thousands of tokens
+  if (isNonNegative(value)) return null;
+  if (isObject(value) && presentKeys(value).length === 1 && get(value, 'min') !== undefined && isNonNegative(value.min)) return null;
+  return `"models.needs.${key}" must be a number of thousands of tokens (the minimum) or {"min": n}; got ${quote(value)}`;
+}
+
+// The array of a short form, or of the one long form `key`, or null when the value is neither.
+function listOf(value, key) {
+  if (Array.isArray(value)) return value;
+  if (isObject(value) && presentKeys(value).length === 1 && Array.isArray(value[key])) return value[key];
+  return null;
+}
+
+function isModalityList(list) {
+  return isList(MODALITIES, list);
+}
+
+// A non-empty array of strings, all of them in `allowed`.
+function isList(allowed, list) {
+  return Array.isArray(list) && list.length > 0 && list.every((item) => typeof item === 'string' && allowed.includes(item));
+}
+
+function checkAbilities(skillId, abilities, error, warn) {
+  const path = pointer('skills', skillId, 'models', 'abilities');
+  if (!Array.isArray(abilities) || abilities.length === 0 || !abilities.every((item) => typeof item === 'string')) {
+    error('abilities-invalid', path, `"models.abilities" of skill ${quote(skillId)} must be an array of ability names, e.g. ["web.search"]`);
+    return;
+  }
+  abilities.forEach((item, at) => {
+    if (!ABILITIES.includes(item) && !item.startsWith('x-')) {
+      warn(
+        'abilities-unknown',
+        path + pointer(String(at)),
+        `ability ${quote(item)} is not in the 0.1 vocabulary; wallets that do not know it will ignore it`,
+      );
+    }
+  });
 }

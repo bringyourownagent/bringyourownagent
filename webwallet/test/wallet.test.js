@@ -54,6 +54,7 @@ test('hello: the session, no pairing, the wallet\'s name, the grant, and the mod
   assert.equal(hello.pairing, null);
   assert.deepEqual(hello.wallet, { name: 'Agent wallet (web)', version: '0.1', kind: 'web' });
   assert.deepEqual(hello.grant.skills, ['text.generate']);
+  assert.deepEqual(hello.grant.capabilities, []);   // none of the closed list: no needs, no can, no cancel, no pictures
   assert.match(hello.grant.expiresAt, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/);
   assert.deepEqual(hello.grant.models['text.generate'].map((m) => [m.ref, m.name, m.id, m.runs]), [['m1', 'One', 'a/one', 'api-key'], ['m2', 'Two', 'c/two', 'api-key']]);
   env.connection.close();

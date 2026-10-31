@@ -39,7 +39,25 @@ public static class Rules
 
     /// <summary>Hard limits a manifest (<c>purpose.limits</c>) or a grant (<c>limits</c>) may set.</summary>
     public static IReadOnlyList<string> KnownLimits { get; } =
-        Array.AsReadOnly(new[] { "maxCallsPerMinute", "maxClipSeconds", "maxTextChars" });
+        Array.AsReadOnly(new[] { "maxCallsPerMinute", "maxClipSeconds", "maxFrameBytes", "maxTextChars" });
+
+    /// <summary>Source kinds a skill's <c>models.kind</c> may name (which sources may fill the skill).</summary>
+    public static IReadOnlyList<string> SourceKinds { get; } = Array.AsReadOnly(new[] { "model", "agent", "any" });
+
+    /// <summary>What a wallet does with a source that fails a known condition (<c>models.onMismatch</c>).</summary>
+    public static IReadOnlyList<string> OnMismatch { get; } = Array.AsReadOnly(new[] { "drop", "show" });
+
+    /// <summary>The four properties a <c>models.needs</c> condition may name.</summary>
+    public static IReadOnlyList<string> NeedsProperties { get; } = Array.AsReadOnly(new[] { "context", "input", "output", "runs" });
+
+    /// <summary>Modalities of the <c>input</c> and <c>output</c> properties.</summary>
+    public static IReadOnlyList<string> Modalities { get; } = Array.AsReadOnly(new[] { "audio", "image", "text" });
+
+    /// <summary>Values of the <c>runs</c> property: the grant's own vocabulary, never a second one.</summary>
+    public static IReadOnlyList<string> Runs { get; } = Array.AsReadOnly(new[] { "api-key", "home-server", "local" });
+
+    /// <summary>Abilities a <c>models.abilities</c> entry may name; <c>image.read</c> is reserved and not enforced.</summary>
+    public static IReadOnlyList<string> Abilities { get; } = Array.AsReadOnly(new[] { "web.read", "web.search" });
 
     /// <summary>Periods allowed in the manifest <c>expectedCost</c> object.</summary>
     public static IReadOnlyList<string> CostPeriods { get; } = Array.AsReadOnly(new[] { "perCall", "perSession", "perHour" });
@@ -64,7 +82,7 @@ public static class Rules
     public static IReadOnlyList<string> Decisions { get; } = Array.AsReadOnly(new[] { "allowed", "warn", "ask", "blocked" });
 
     /// <summary>Limits that count things and therefore must be whole numbers.</summary>
-    internal static readonly string[] CountLimits = { "maxCallsPerMinute", "maxTextChars" };
+    internal static readonly string[] CountLimits = { "maxCallsPerMinute", "maxFrameBytes", "maxTextChars" };
 
     /// <summary>Longest allowed <c>purpose.summary</c>, in Unicode code points.</summary>
     internal const int SummaryMaxLength = 200;

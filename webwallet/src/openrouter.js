@@ -79,7 +79,9 @@ export async function exchangeCode({ code, verifier, fetch = globalThis.fetch })
 
 const priceOf = (value) => { const n = Number(value); return Number.isFinite(n) && n >= 0 ? n : null; };
 
-/** Reads OpenRouter's list into ModelInfo: only models that take text and answer in text. A model is free when both prices are zero. */
+/** Reads OpenRouter's list into ModelInfo: only models that take text and answer in text, and never one that
+ * also answers in pictures — the primary-role rule (CONTRACT.md section 3.5): a source whose output includes
+ * `image` is not offered for `text.generate`. A model is free when both prices are zero. */
 export function readModels(body) {
   const list = Array.isArray(body?.data) ? body.data : [];
   const models = [];
@@ -87,6 +89,7 @@ export function readModels(body) {
     if (typeof m?.id !== 'string' || m.id.length === 0 || m.id.length > 200) continue;
     const out = m.architecture?.output_modalities;
     if (Array.isArray(out) && !out.includes('text')) continue;
+    if (Array.isArray(out) && out.includes('image')) continue;
     const input = m.architecture?.input_modalities;
     if (Array.isArray(input) && !input.includes('text')) continue;
     const prompt = priceOf(m.pricing?.prompt);
