@@ -83,7 +83,7 @@ CATALOG = {"data": [
 ]}
 local_bodies = []
 router_bodies = []          # (headers, body) of every request the stand-in for OpenRouter got
-FAKE_KEY = "sk-or-FAKE-ui-test-only"
+FAKE_KEY = "sk-or-fake"                     # short, so no scanner takes it for a real key
 
 
 def run_servers():
