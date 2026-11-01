@@ -43,13 +43,13 @@ SOURCE_KINDS: Tuple[str, ...] = ("model", "agent", "any")
 #: What a wallet does with a source that fails a known condition (``models.onMismatch``).
 ON_MISMATCH: Tuple[str, ...] = ("drop", "show")
 
-#: The four properties a ``models.needs`` condition may name.
-NEEDS_PROPERTIES: Tuple[str, ...] = ("context", "input", "output", "runs")
+#: The properties a ``models.needs`` condition may name (``context`` and ``runs``, of the 0.0.4 libraries, are unknown keys now).
+NEEDS_PROPERTIES: Tuple[str, ...] = ("input", "output")
 
 #: Modalities of the ``input`` and ``output`` properties.
 MODALITIES: Tuple[str, ...] = ("audio", "image", "text")
 
-#: Values of the ``runs`` property: the grant's own vocabulary, never a second one.
+#: Where a model of a grant runs (the ``runs`` of a grant entry).
 RUNS: Tuple[str, ...] = ("api-key", "home-server", "local")
 
 #: Abilities a ``models.abilities`` entry may name; ``image.read`` is reserved and not enforced.

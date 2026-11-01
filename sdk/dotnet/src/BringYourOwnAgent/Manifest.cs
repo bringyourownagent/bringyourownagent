@@ -315,6 +315,11 @@ public static class Manifest
                 "\"models.kind\" must be one of: " + string.Join(", ", Rules.SourceKinds.Select(JsText.Quote))
                 + "; got " + JsText.Quote(view.Get("kind")));
         }
+        else if (!IsAbsent(view.Get("kind")) && skillId == "image.generate" && AsString(view.Get("kind")) != "model")
+        {
+            // an agent writes text; pictures come from models only (CONTRACT.md section 3.6)
+            error("models-kind-invalid", path + "/kind", "\"models.kind\" of \"image.generate\" may only be \"model\"; got " + JsText.Quote(view.Get("kind")));
+        }
 
         if (!IsAbsent(view.Get("onMismatch")) && !Rules.Has(Rules.OnMismatch, AsString(view.Get("onMismatch"))))
         {
@@ -370,50 +375,18 @@ public static class Manifest
     }
 
     /// <summary>
-    /// Why a condition of <c>needs</c> is invalid, or null if it is fine. An array is the short form of the
-    /// one long form each property takes: <c>{"includes": [...]}</c> for a modality, <c>{"oneOf": [...]}</c> for
-    /// <c>runs</c>, <c>{"min": n}</c> for <c>context</c> (CONTRACT.md sections 3.3 and 3.5).
+    /// Why a condition of <c>needs</c> (<c>input</c> or <c>output</c>) is invalid, or null if it is fine. An array is
+    /// the short form of <c>{"includes": [...]}</c> (CONTRACT.md sections 3.3 and 3.5).
     /// </summary>
     private static string? NeedsProblem(string key, JsonElement value)
     {
-        if (key is "input" or "output")
-        {
-            if (ListOf(value, "includes") is { } items && IsListOf(Rules.Modalities, items))
-            {
-                return null;
-            }
-
-            return "\"models.needs." + key + "\" must be an array of " + string.Join(", ", Rules.Modalities.Select(JsText.Quote))
-                + " with at least one value, or {\"includes\": [...]} of those; got " + JsText.Quote(value);
-        }
-
-        if (key == "runs")
-        {
-            if (ListOf(value, "oneOf") is { } items && IsListOf(Rules.Runs, items))
-            {
-                return null;
-            }
-
-            return "\"models.needs." + key + "\" must be an array of " + string.Join(", ", Rules.Runs.Select(JsText.Quote))
-                + " with at least one value, or {\"oneOf\": [...]} of those; got " + JsText.Quote(value);
-        }
-
-        // context: a minimum, in thousands of tokens
-        if (IsNonNegative(value))
+        if (ListOf(value, "includes") is { } items && IsListOf(Rules.Modalities, items))
         {
             return null;
         }
 
-        if (IsObject(value))
-        {
-            var view = new JsonObjectView(value);
-            if (view.PresentKeys().Count == 1 && IsNonNegative(view.Get("min")))
-            {
-                return null;
-            }
-        }
-
-        return "\"models.needs." + key + "\" must be a number of thousands of tokens (the minimum) or {\"min\": n}; got " + JsText.Quote(value);
+        return "\"models.needs." + key + "\" must be an array of " + string.Join(", ", Rules.Modalities.Select(JsText.Quote))
+            + " with at least one value, or {\"includes\": [...]} of those; got " + JsText.Quote(value);
     }
 
     /// <summary>The array of a short form, or of the one long form <paramref name="key"/>, or null when the value is neither.</summary>

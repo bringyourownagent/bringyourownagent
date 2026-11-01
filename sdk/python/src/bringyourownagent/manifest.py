@@ -26,7 +26,6 @@ from .rules import (
     NEEDS_PROPERTIES,
     ON_MISMATCH,
     PRIVACY_CLASSES,
-    RUNS,
     SOURCE_KINDS,
     SUMMARY_MAX_LENGTH,
     SUPPORTED_VERSIONS,
@@ -266,6 +265,9 @@ def _check_models(skill_id: str, models: Any, error: Any, warn: Any) -> None:
             path + "/kind",
             '"models.kind" must be one of: %s; got %s' % (", ".join(quote(k) for k in SOURCE_KINDS), quote(kind)),
         )
+    elif kind is not None and skill_id == "image.generate" and kind != "model":
+        # an agent writes text; pictures come from models only (CONTRACT.md section 3.6)
+        error("models-kind-invalid", path + "/kind", '"models.kind" of "image.generate" may only be "model"; got %s' % quote(kind))
 
     on_mismatch = models.get("onMismatch")
     if on_mismatch is not None and on_mismatch not in ON_MISMATCH:
@@ -302,33 +304,16 @@ def _check_needs(skill_id: str, needs: Any, error: Any, warn: Any) -> None:
 
 
 def _needs_problem(key: str, value: Any) -> Optional[str]:
-    """Why a condition of ``needs`` is invalid, or None if it is fine. An array is the short form of the
-    one long form each property takes: ``{"includes": [...]}`` for a modality, ``{"oneOf": [...]}`` for
-    ``runs``, ``{"min": n}`` for ``context`` (CONTRACT.md sections 3.3 and 3.5)."""
-    if key in ("input", "output"):
-        items = _list_of(value, "includes")
-        if items is not None and _is_list(MODALITIES, items):
-            return None
-        return '"models.needs.%s" must be an array of %s with at least one value, or {"includes": [...]} of those; got %s' % (
-            key,
-            ", ".join(quote(m) for m in MODALITIES),
-            quote(value),
-        )
-    if key == "runs":
-        items = _list_of(value, "oneOf")
-        if items is not None and _is_list(RUNS, items):
-            return None
-        return '"models.needs.%s" must be an array of %s with at least one value, or {"oneOf": [...]} of those; got %s' % (
-            key,
-            ", ".join(quote(r) for r in RUNS),
-            quote(value),
-        )
-    # context: a minimum, in thousands of tokens
-    if is_non_negative(value):
+    """Why a condition of ``needs`` (``input`` or ``output``) is invalid, or None if it is fine. An array is
+    the short form of ``{"includes": [...]}`` (CONTRACT.md sections 3.3 and 3.5)."""
+    items = _list_of(value, "includes")
+    if items is not None and _is_list(MODALITIES, items):
         return None
-    if is_object(value) and len(present_keys(value)) == 1 and is_non_negative(value.get("min")):
-        return None
-    return '"models.needs.%s" must be a number of thousands of tokens (the minimum) or {"min": n}; got %s' % (key, quote(value))
+    return '"models.needs.%s" must be an array of %s with at least one value, or {"includes": [...]} of those; got %s' % (
+        key,
+        ", ".join(quote(m) for m in MODALITIES),
+        quote(value),
+    )
 
 
 def _list_of(value: Any, key: str) -> Optional[Any]:

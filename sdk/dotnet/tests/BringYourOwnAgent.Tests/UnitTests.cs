@@ -47,7 +47,7 @@ internal static class UnitTests
             Check.Equal("maxCallsPerMinute,maxClipSeconds,maxFrameBytes,maxTextChars", string.Join(",", Rules.KnownLimits), "limits");
             Check.Equal("model,agent,any", string.Join(",", Rules.SourceKinds), "source kinds");
             Check.Equal("drop,show", string.Join(",", Rules.OnMismatch), "onMismatch");
-            Check.Equal("context,input,output,runs", string.Join(",", Rules.NeedsProperties), "needs properties");
+            Check.Equal("input,output", string.Join(",", Rules.NeedsProperties), "needs properties");
             Check.Equal("audio,image,text", string.Join(",", Rules.Modalities), "modalities");
             Check.Equal("api-key,home-server,local", string.Join(",", Rules.Runs), "runs");
             Check.Equal("web.read,web.search", string.Join(",", Rules.Abilities), "abilities");

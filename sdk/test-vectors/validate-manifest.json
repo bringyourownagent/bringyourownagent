@@ -447,7 +447,7 @@
               "count": 1,
               "kind": "any",
               "onMismatch": "show",
-              "needs": { "input": ["text", "image"], "output": ["text"], "context": 64, "runs": ["api-key"] },
+              "needs": { "input": ["text", "image"], "output": ["text"] },
               "abilities": ["web.search", "web.read", "image.read", "x-mine"],
               "recommend": ["anthropic/claude-sonnet-5.5", "agent/*"],
               "why": "Looks at a candidate and writes clean SVG code for it."
@@ -469,11 +469,29 @@
           "text.understand": null,
           "text.generate": {
             "required": true,
-            "models": { "needs": { "input": { "includes": ["text"] }, "output": { "includes": ["text", "image"] }, "context": { "min": 32 }, "runs": { "oneOf": ["local", "home-server"] } } }
+            "models": { "needs": { "input": { "includes": ["text"] }, "output": { "includes": ["text", "image"] } } }
           }
         }
       },
       "expect": { "ok": true, "errors": [], "warnings": [] }
+    },
+    {
+      "name": "context and runs are no longer conditions: whatever their value, they are unknown keys",
+      "manifestPatch": {
+        "skills": {
+          "audio.transcribe": null,
+          "text.understand": null,
+          "text.generate": { "required": true, "models": { "needs": { "context": -1, "output": ["text"], "runs": { "oneOf": "local" } } } }
+        }
+      },
+      "expect": {
+        "ok": true,
+        "errors": [],
+        "warnings": [
+          { "code": "needs-unknown", "path": "/skills/text.generate/models/needs/context" },
+          { "code": "needs-unknown", "path": "/skills/text.generate/models/needs/runs" }
+        ]
+      }
     },
     {
       "name": "a models block without count is accepted and its other keys are read",
@@ -538,36 +556,31 @@
           "text.understand": null,
           "text.generate": {
             "required": true,
-            "models": { "needs": { "input": "text", "runs": { "oneOf": "local" }, "context": -1, "output": { "includes": "text" } } }
+            "models": { "needs": { "output": { "includes": "text" }, "input": "text" } }
           }
         }
       },
       "expect": {
         "ok": false,
         "errors": [
-          { "code": "needs-invalid", "path": "/skills/text.generate/models/needs/context" },
           { "code": "needs-invalid", "path": "/skills/text.generate/models/needs/input" },
-          { "code": "needs-invalid", "path": "/skills/text.generate/models/needs/output" },
-          { "code": "needs-invalid", "path": "/skills/text.generate/models/needs/runs" }
+          { "code": "needs-invalid", "path": "/skills/text.generate/models/needs/output" }
         ],
         "warnings": []
       }
     },
     {
-      "name": "an unknown modality or runs value is not a condition",
+      "name": "an unknown modality is not a condition",
       "manifestPatch": {
         "skills": {
           "audio.transcribe": null,
           "text.understand": null,
-          "text.generate": { "required": true, "models": { "needs": { "output": ["video"], "runs": ["cloud", "api-key"] } } }
+          "text.generate": { "required": true, "models": { "needs": { "output": ["video"] } } }
         }
       },
       "expect": {
         "ok": false,
-        "errors": [
-          { "code": "needs-invalid", "path": "/skills/text.generate/models/needs/output" },
-          { "code": "needs-invalid", "path": "/skills/text.generate/models/needs/runs" }
-        ],
+        "errors": [{ "code": "needs-invalid", "path": "/skills/text.generate/models/needs/output" }],
         "warnings": []
       }
     },
@@ -588,10 +601,10 @@
         "skills": {
           "audio.transcribe": null,
           "text.understand": null,
-          "text.generate": { "required": true, "models": { "needs": { "context": { "min": 32, "max": 200 } } } }
+          "text.generate": { "required": true, "models": { "needs": { "output": { "includes": ["text"], "oneOf": ["text"] } } } }
         }
       },
-      "expect": { "ok": false, "errors": [{ "code": "needs-invalid", "path": "/skills/text.generate/models/needs/context" }], "warnings": [] }
+      "expect": { "ok": false, "errors": [{ "code": "needs-invalid", "path": "/skills/text.generate/models/needs/output" }], "warnings": [] }
     },
     {
       "name": "an unknown needs key is a warning, an x- key is not",
@@ -671,6 +684,34 @@
       }
     },
     {
+      "name": "pictures come from models only: kind agent on image.generate is refused",
+      "manifestPatch": {
+        "skills": {
+          "image.generate": { "required": false, "models": { "kind": "agent" } }
+        }
+      },
+      "expect": {
+        "ok": false,
+        "errors": [{ "code": "models-kind-invalid", "path": "/skills/image.generate/models/kind" }],
+        "warnings": []
+      }
+    },
+    {
+      "name": "pictures come from models only: kind any on image.generate is refused, kind model is fine",
+      "manifestPatch": {
+        "skills": {
+          "image.generate": { "required": false, "models": { "kind": "any" } },
+          "text.generate": { "required": false, "models": { "kind": "any" } },
+          "video.generate": { "required": false, "models": { "kind": "model" } }
+        }
+      },
+      "expect": {
+        "ok": false,
+        "errors": [{ "code": "models-kind-invalid", "path": "/skills/image.generate/models/kind" }],
+        "warnings": []
+      }
+    },
+    {
       "name": "the icon site's manifest after the pictures release",
       "manifest": {
         "byoa": "0.1-draft",
@@ -679,10 +720,10 @@
           "limits": { "maxTextChars": 60000, "maxAnswerTokens": 12000, "maxCallSeconds": 180, "maxParallelCalls": 3, "maxCallsPerMinute": 60 }
         },
         "skills": {
-          "image.generate": { "required": true, "models": { "count": { "min": 1, "max": 4 }, "needs": { "output": ["image"] }, "recommend": ["google/gemini-3.1-flash-image*", "openai/gpt-image-*"], "why": "Draws the picture candidates for your icon." } },
-          "text.generate": { "required": true, "models": { "count": 1, "kind": "any", "needs": { "input": ["text", "image"], "output": ["text"], "context": 64 }, "recommend": ["anthropic/claude-sonnet-5.5", "agent/*"], "why": "Looks at a candidate and writes clean SVG code for it." } }
+          "text.generate": { "required": true, "models": { "count": { "min": 1, "max": 16 }, "recommend": ["agent/*", "anthropic/claude-sonnet-5.5", "google/gemini-3.8-flash"], "why": "Draws each icon as SVG code." } },
+          "image.generate": { "required": false, "models": { "count": { "min": 1, "max": 4 }, "recommend": ["google/gemini-3.1-flash-image*"], "why": "Draws picture candidates for your icon." } }
         },
-        "privacy": "personal",
+        "privacy": "public",
         "expectedCost": { "perSession": "0.50 USD" }
       },
       "expect": {

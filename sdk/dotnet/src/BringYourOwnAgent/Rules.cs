@@ -47,13 +47,13 @@ public static class Rules
     /// <summary>What a wallet does with a source that fails a known condition (<c>models.onMismatch</c>).</summary>
     public static IReadOnlyList<string> OnMismatch { get; } = Array.AsReadOnly(new[] { "drop", "show" });
 
-    /// <summary>The four properties a <c>models.needs</c> condition may name.</summary>
-    public static IReadOnlyList<string> NeedsProperties { get; } = Array.AsReadOnly(new[] { "context", "input", "output", "runs" });
+    /// <summary>The properties a <c>models.needs</c> condition may name (<c>context</c> and <c>runs</c>, of the 0.0.4 libraries, are unknown keys now).</summary>
+    public static IReadOnlyList<string> NeedsProperties { get; } = Array.AsReadOnly(new[] { "input", "output" });
 
     /// <summary>Modalities of the <c>input</c> and <c>output</c> properties.</summary>
     public static IReadOnlyList<string> Modalities { get; } = Array.AsReadOnly(new[] { "audio", "image", "text" });
 
-    /// <summary>Values of the <c>runs</c> property: the grant's own vocabulary, never a second one.</summary>
+    /// <summary>Where a model of a grant runs (the <c>runs</c> of a grant entry).</summary>
     public static IReadOnlyList<string> Runs { get; } = Array.AsReadOnly(new[] { "api-key", "home-server", "local" });
 
     /// <summary>Abilities a <c>models.abilities</c> entry may name; <c>image.read</c> is reserved and not enforced.</summary>
