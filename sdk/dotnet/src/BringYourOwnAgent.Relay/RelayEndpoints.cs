@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -139,7 +140,8 @@ public static class RelayEndpoints
         {
             if (Bad(room) is { } bad) return bad;
             var result = await jobs.PollAsync(room, r.Id, TimeSpan.Zero, ct);
-            return Results.Ok(new { state = result.State, ok = result.Ok, text = result.Text, partial = result.Partial, reason = result.Reason, lacks = result.Lacks });
+            var images = result.Images?.Select(p => new { mime = p.Mime, size = p.Size, sha256 = p.Sha256, data = p.Data, reduced = p.Reduced }).ToArray();
+            return Results.Ok(new { state = result.State, ok = result.Ok, text = result.Text, partial = result.Partial, reason = result.Reason, lacks = result.Lacks, images });
         });
 
         // the page stops waiting for a job (the protocol has no cancel frame: the job is forgotten and a late answer is dropped)

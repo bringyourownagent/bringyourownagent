@@ -86,8 +86,9 @@ public sealed class RelayOptions
     /// <summary>The most participants read out of one skill's list of a grant (CONTRACT.md §3.3: a site asks for a handful).</summary>
     public int MaxModels { get; set; } = 64;
 
-    /// <summary>A job request bigger than this is refused before it is read (the page sends a chat call, never more).</summary>
-    public int MaxJobRequestBytes { get; set; } = 1_500_000;
+    /// <summary>A job request bigger than this is refused before it is read: a chat call, or a picture call with at most 3,000,000 bytes of
+    /// reference pictures (as base64, about four million characters).</summary>
+    public int MaxJobRequestBytes { get; set; } = 4_200_000;
 
     /// <summary>How long a one-time code lives (CONTRACT-DIRECT.md §4: ten minutes).</summary>
     public int CodeLifeSeconds { get; set; } = 600;

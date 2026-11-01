@@ -414,8 +414,8 @@ public class ChannelTests
         var text = grant.ModelsOf("text.generate");
         Assert.Equal(["m1", "m2"], text.Select(m => m.Ref));
         var can = text[0].Can!;
-        Assert.Equal(["context", "input", "output"], can.Keys.Order(StringComparer.Ordinal));   // booleans only, the four properties only
-        Assert.False(can["context"]);
+        Assert.Equal(["input", "output"], can.Keys.Order(StringComparer.Ordinal));   // booleans only, input and output only (context and runs are gone in 0.0.6)
+        Assert.True(can["input"]);
         Assert.Null(text[0].Abilities);                                                                 // abilities are an agent's
         var abilities = text[1].Abilities!;
         Assert.Equal(["image.read", "web.read", "web.search", "x-mine"], abilities.Keys.Order(StringComparer.Ordinal));   // at most four, values are booleans

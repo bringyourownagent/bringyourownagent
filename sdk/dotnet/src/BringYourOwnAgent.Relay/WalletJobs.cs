@@ -2,6 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -10,13 +11,25 @@ namespace BringYourOwnAgent.Relay;
 /// <summary>One message of a call as the page sends it: <c>role</c> is system, user or assistant (CONTRACT.md §3.2).</summary>
 public sealed record JobMessage(string? Role, string? Content);
 
-/// <summary>What the page asks the server to forward to its own wallet: one participant answers one question.</summary>
+/// <summary>A picture the page sends along with a picture call, for the model to look at: its type and its bytes as base64.</summary>
+public sealed record JobPicture(string? Mime, string? Data);
+
+/// <summary>What the page asks the server to forward to its own wallet: one participant answers one question, or draws.</summary>
 /// <param name="Pairing">The pairing token of this room's wallet connection.</param>
-/// <param name="Model">The <c>ref</c> of one participant of the current grant; a call may name nothing else.</param>
-/// <param name="Messages">The transcript: at least one message, the last one the question.</param>
-/// <param name="MaxTokens">The most tokens the answer may take; clamped to the site's cap and the grant's.</param>
-/// <param name="Temperature">0 to 1; clamped.</param>
-public sealed record JobRequest(string? Pairing, string? Model, List<JobMessage>? Messages, int? MaxTokens, double? Temperature);
+/// <param name="Model">The <c>ref</c> of one participant of the current grant for the skill; a call may name nothing else.</param>
+/// <param name="Messages">The transcript (text): at least one message, the last one the question.</param>
+/// <param name="MaxTokens">The most tokens the answer may take (text); clamped to the site's cap and the grant's.</param>
+/// <param name="Temperature">0 to 1 (text); clamped.</param>
+/// <param name="Skill"><c>text.generate</c> (the default) or <c>image.generate</c> (wallet 0.37, CONTRACT.md §3.7).</param>
+/// <param name="Prompt">What to draw (pictures).</param>
+/// <param name="References">Pictures for the model to look at (pictures; at most four, each at most 1,000,000 bytes, together at most 3,000,000).</param>
+/// <param name="Count">How many pictures, 1 to 4 (pictures; 1 when not given).</param>
+/// <param name="Aspect"><c>1:1</c>, <c>4:3</c>, <c>3:4</c>, <c>16:9</c> or <c>9:16</c> (pictures; the model's own when not given).</param>
+/// <param name="MaxSide">The longest side in pixels the page needs (pictures; 64 to 4096; a bigger picture is made smaller by the wallet).</param>
+/// <param name="MaxBytes">The most bytes one picture may have (pictures; 100,000 to 3,000,000; the wallet's default is 1,000,000).</param>
+public sealed record JobRequest(string? Pairing, string? Model, List<JobMessage>? Messages, int? MaxTokens, double? Temperature,
+                                string? Skill = null, string? Prompt = null, List<JobPicture>? References = null, int? Count = null, string? Aspect = null,
+                                int? MaxSide = null, int? MaxBytes = null);
 
 /// <summary>A job that was started: its id, or why it was not (<see cref="WalletJobs.Start"/> lists the words).</summary>
 public sealed record JobStarted(string? Id, string? Error);
@@ -27,7 +40,9 @@ public sealed record JobStarted(string? Id, string? Error);
 /// <param name="Partial">While pending: the pieces the wallet has streamed so far (a preview; the final answer replaces them).</param>
 /// <param name="Lacks">done and ok, from the visitor's agent: the abilities the site hoped for that the agent does not have (<c>web.read</c>, ...), so the answer is to be read as partial; null when nothing is lacking.</param>
 /// <param name="Reason">done and not ok: what the wallet said ("timeout", "cancelled", "limit" or "failed"; CONTRACT-DIRECT.md section 4), or "timeout" (nothing came back in the relay's time) or "gone" (the wallet went away).</param>
-public sealed record JobResult(string State, bool Ok = false, string? Text = null, string? Partial = null, string? Reason = null, string[]? Lacks = null);
+/// <param name="Images">done and ok, for a picture job: the pictures, joined from their parts and checked (<see cref="PictureParts"/>); <c>Text</c> is then null.</param>
+public sealed record JobResult(string State, bool Ok = false, string? Text = null, string? Partial = null, string? Reason = null, string[]? Lacks = null,
+                               IReadOnlyList<WalletPicture>? Images = null);
 
 /// <summary>
 /// The page's road to the visitor's wallet when it is connected without the extension: the page cannot call that wallet itself, so it asks the
@@ -35,17 +50,23 @@ public sealed record JobResult(string State, bool Ok = false, string? Text = nul
 /// one request open behind a proxy, so the page asks again every second and reads <see cref="JobResult.Partial"/> while the model writes.
 /// </summary>
 /// <remarks>
-/// The page can ask for exactly one thing — <c>text.generate</c>, for one participant of the current grant, with a bounded transcript — and
-/// nothing else reaches the wallet: the ref is checked against the live grant, the roles, the message count, the total characters, <c>maxTokens</c>
-/// and <c>temperature</c> are clamped here, and no other parameter (no <c>choices</c>, no <c>language</c>, no <c>thinking</c>) is passed on.
-/// <c>stream</c> is always asked for: the direct link only carries it.
+/// The page can ask for two things — <c>text.generate</c>, for one participant of the current grant, with a bounded transcript, and
+/// <c>image.generate</c>, for one picture participant, with a prompt and at most four reference pictures — and nothing else reaches the wallet:
+/// the ref is checked against the live grant of that skill, the roles, the message count, the total characters, <c>maxTokens</c>,
+/// <c>temperature</c>, the count, the aspect and the pictures' sizes are checked or clamped here, and no other parameter (no <c>choices</c>,
+/// no <c>language</c>, no <c>thinking</c>) is passed on. A text call always asks for <c>stream</c>: the direct link only carries it.
 /// Everything is in memory; a job is forgotten when it is fetched, when the page stops it, or ten minutes after it began, and no message or answer
 /// text is ever logged or written down.
 /// </remarks>
 public sealed class WalletJobs
 {
-    /// <summary>The only skill a page may ask for through these jobs (CONTRACT.md §3.2).</summary>
+    /// <summary>The skill of a job that names none (CONTRACT.md §3.2).</summary>
     public const string Skill = "text.generate";
+
+    /// <summary>The skill of a picture job (CONTRACT.md §3.7, wallet 0.37).</summary>
+    public const string PictureSkill = WalletChannel.PictureSkill;
+
+    static readonly HashSet<string> Aspects = new(StringComparer.Ordinal) { "1:1", "4:3", "3:4", "16:9", "9:16" };
 
     static readonly TimeSpan Kept = TimeSpan.FromMinutes(10);
     static readonly HashSet<string> Roles = new(StringComparer.Ordinal) { "system", "user", "assistant" };
@@ -89,37 +110,56 @@ public sealed class WalletJobs
     public int Count => _jobs.Count;
 
     /// <summary>Starts a job; <c>Error</c> says why not: "bad-request" (a shape that is not ours), "offline" (no live wallet behind the pairing),
-    /// "no-text" (that wallet was not allowed text), "bad-model" (a ref the grant does not have), "busy" (too many calls at once or in a minute).</summary>
+    /// "no-text" or "no-pictures" (that wallet was not allowed the skill), "bad-model" (a ref the grant does not have for the skill),
+    /// "busy" (too many calls at once or in a minute).</summary>
     public JobStarted Start(string room, JobRequest r)
     {
         var now = _clock.GetUtcNow();
         Sweep(now);
-        if (!DirectHub.IsRoomId(room) || !ValidMessages(r.Messages)) return new JobStarted(null, "bad-request");
+        var pictures = r.Skill == PictureSkill;
+        if (!DirectHub.IsRoomId(room) || (r.Skill is not null && r.Skill != Skill && !pictures)
+            || (pictures ? !ValidPictureJob(r) : !ValidMessages(r.Messages))) return new JobStarted(null, "bad-request");
+        var skill = pictures ? PictureSkill : Skill;
         var channel = _hub.Channel(room, r.Pairing);
         if (channel is null) return new JobStarted(null, "offline");
-        if (!channel.Has(Skill)) return new JobStarted(null, "no-text");
-        if (!channel.Knows(Skill, r.Model)) return new JobStarted(null, "bad-model");
+        if (!channel.Has(skill)) return new JobStarted(null, pictures ? "no-pictures" : "no-text");
+        if (!channel.Knows(skill, r.Model)) return new JobStarted(null, "bad-model");
 
         var limits = channel.Limits;
-        var text = r.Messages!.Sum(m => m.Content!.Length);
+        var text = pictures ? r.Prompt!.Length : r.Messages!.Sum(m => m.Content!.Length);
         if (text > Math.Min(limits.MaxTextChars, Math.Max(1, _options.MaxCallChars))) return new JobStarted(null, "bad-request");
         if (channel.Pending >= limits.MaxParallelCalls) return new JobStarted(null, "busy");
         if (_jobs.Count >= Math.Max(1, _options.MaxJobs) || _jobs.Count(j => j.Value.Room == room) >= Math.Max(1, _options.MaxJobsPerRoom)
             || !Allowed(room, now)) return new JobStarted(null, "busy");
 
-        var ownTokens = Math.Max(1, _options.MaxCallTokens);
-        var maxTokens = Math.Clamp(Math.Min(r.MaxTokens ?? Math.Max(1, _options.DefaultCallTokens), ownTokens), 1, Math.Max(1, limits.MaxAnswerTokens));
-        var temperature = Math.Clamp(r.Temperature ?? _options.DefaultTemperature, 0, 1);
-        var input = new { messages = r.Messages!.Select(m => new { role = m.Role, content = m.Content }).ToArray() };
-        var parameters = new { model = r.Model, maxTokens, temperature, stream = true };
+        object input, parameters;
+        if (pictures)
+        {
+            var asked = new JsonObject { ["prompt"] = r.Prompt, ["count"] = r.Count ?? 1 };
+            if (r.Aspect is not null) asked["aspect"] = r.Aspect;
+            if (r.MaxSide is { } side) asked["maxSide"] = Math.Clamp(side, 64, 4096);
+            if (r.MaxBytes is { } most) asked["maxBytes"] = Math.Clamp(most, 100_000, 3_000_000);
+            if (r.References is { Count: > 0 } references)
+                asked["references"] = new JsonArray([.. references.Select(p => (JsonNode)new JsonObject { ["mime"] = p.Mime, ["data"] = p.Data })]);
+            input = asked;
+            parameters = new { model = r.Model };
+        }
+        else
+        {
+            var ownTokens = Math.Max(1, _options.MaxCallTokens);
+            var maxTokens = Math.Clamp(Math.Min(r.MaxTokens ?? Math.Max(1, _options.DefaultCallTokens), ownTokens), 1, Math.Max(1, limits.MaxAnswerTokens));
+            var temperature = Math.Clamp(r.Temperature ?? _options.DefaultTemperature, 0, 1);
+            input = new { messages = r.Messages!.Select(m => new { role = m.Role, content = m.Content }).ToArray() };
+            parameters = new { model = r.Model, maxTokens, temperature, stream = true };
+        }
         var id = DirectHub.NewSecret();
         var stop = new CancellationTokenSource();
         var job = new Job(room, now, stop, channel);
         // the wait is the site's own (300 s by default) but never longer than the grant allows for one call
         var wait = TimeSpan.FromSeconds(Math.Min(_timeout.TotalSeconds, limits.MaxCallSeconds));
         var maxChars = Math.Max(1, _options.MaxAnswerChars);
-        job.Answer = channel.CallAsync(Skill, input, parameters, maxChars, wait, stop.Token, piece =>
-            job.Partial = piece.Length <= maxChars ? piece : piece[..maxChars], callId =>
+        Action<string>? onChunk = pictures ? null : piece => job.Partial = piece.Length <= maxChars ? piece : piece[..maxChars];
+        job.Answer = channel.CallAsync(skill, input, parameters, maxChars, wait, stop.Token, onChunk, callId =>
             {
                 job.CallId = callId;
                 if (job.Stopped) job.Channel.CancelCall(callId);        // the page stopped it before the id was known
@@ -143,6 +183,7 @@ public sealed class WalletJobs
         return a.Outcome switch
         {
             WalletOutcome.Text when a.Text.Length > 0 => new JobResult("done", true, a.Text, Lacks: a.Lacks is { Length: > 0 } ? a.Lacks : null),
+            WalletOutcome.Pictures when a.Pictures is { Count: > 0 } => new JobResult("done", true, Images: a.Pictures),
             WalletOutcome.TimedOut => new JobResult("done", false, null, null, "timeout"),
             WalletOutcome.Cancelled => new JobResult("done", false, null, null, "gone"),
             _ => new JobResult("done", false, null, null, a.Reason ?? "failed"),
@@ -176,6 +217,24 @@ public sealed class WalletJobs
             if (total > Math.Max(1, _options.MaxCallChars)) return false;
         }
         return messages[^1].Role == "user";
+    }
+
+    /// <summary>A picture job (CONTRACT.md §3.7): a prompt, a count of 1 to 4, a known aspect or none, and at most four reference pictures of a
+    /// known type, each at most 1,000,000 bytes and together at most 3,000,000. The characters of the prompt are checked against the grant separately.</summary>
+    static bool ValidPictureJob(JobRequest r)
+    {
+        if (string.IsNullOrWhiteSpace(r.Prompt) || r.Count is not (null or (>= 1 and <= PictureParts.MaxPictures))
+            || (r.Aspect is not null && !Aspects.Contains(r.Aspect))) return false;
+        if (r.References is null) return true;
+        if (r.References.Count > 4) return false;
+        long total = 0;
+        foreach (var p in r.References)
+        {
+            if (p is null || !PictureParts.Types.Contains(p.Mime) || string.IsNullOrEmpty(p.Data) || p.Data.Length > 1_333_336) return false;
+            var bytes = new byte[p.Data.Length / 4 * 3 + 3];
+            if (!Convert.TryFromBase64String(p.Data, bytes, out var size) || size > 1_000_000 || (total += size) > 3_000_000) return false;
+        }
+        return true;
     }
 
     bool Allowed(string room, DateTimeOffset now)

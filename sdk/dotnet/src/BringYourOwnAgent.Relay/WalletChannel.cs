@@ -38,6 +38,8 @@ public enum WalletOutcome
 {
     /// <summary>The wallet answered; <see cref="WalletAnswer.Text"/> carries it (it can be empty: the model said nothing readable).</summary>
     Text,
+    /// <summary>The wallet drew (<c>image.generate</c>); <see cref="WalletAnswer.Pictures"/> carries the pictures, joined and checked.</summary>
+    Pictures,
     /// <summary>The wallet refused (<c>ok:false</c>), or the model failed.</summary>
     Failed,
     /// <summary>Nothing came back in time.</summary>
@@ -46,8 +48,18 @@ public enum WalletOutcome
     Cancelled,
 }
 
-/// <summary>One call's answer: <paramref name="Text"/> is the wallet's text, cleaned and cut (<see cref="WalletText"/>).</summary>
-public sealed record WalletAnswer(WalletOutcome Outcome, string Text = "", string? Reason = null, string[]? Lacks = null);
+/// <summary>One call's answer: <paramref name="Text"/> is the wallet's text, cleaned and cut (<see cref="WalletText"/>);
+/// <paramref name="Pictures"/> are the pictures of an <c>image.generate</c> call.</summary>
+public sealed record WalletAnswer(WalletOutcome Outcome, string Text = "", string? Reason = null, string[]? Lacks = null,
+                                  IReadOnlyList<WalletPicture>? Pictures = null);
+
+/// <summary>One picture the wallet drew: its type as detected from the bytes, its size in bytes, the SHA-256 of the bytes (64 hex
+/// characters), the bytes as base64, and whether the wallet made it smaller than the model drew it. The relay joined its parts and
+/// checked the first four; it is still the visitor's input, like text.</summary>
+public sealed record WalletPicture(string Mime, int Size, string Sha256, string Data, bool Reduced = false);
+
+/// <summary>What a <c>result</c> says about one of its pictures (<c>output.images[i]</c>); the parts came before it.</summary>
+public sealed record PictureInfo(string? Mime, int? Size, string? Sha256, bool Reduced = false);
 
 /// <summary>
 /// One visitor's agent wallet connected straight to the server (<c>wss://host/byoa/ws</c>, BYOA «direct» transport, CONTRACT-DIRECT.md §4–5, §7),
@@ -60,6 +72,8 @@ public sealed record WalletAnswer(WalletOutcome Outcome, string Text = "", strin
 /// <item>server → wallet: <c>{"type":"cancel","id":N}</c> when the site stops a call it still waits for (wallet 0.36);</item>
 /// <item>wallet → server: <c>{"type":"chunk","id":N,"text":"..."}</c> while the model writes, then
 /// <c>{"type":"result","id":N,"ok":true,"output":{"text":"..."}}</c> or <c>{"type":"result","id":N,"ok":false}</c>;</item>
+/// <item>wallet → server, for <c>image.generate</c> (wallet 0.37): each picture in <c>{"type":"image","id":N,"index":0,"seq":0,"of":3,"mime":"image/png","data":"&lt;base64&gt;"}</c>
+/// parts, then <c>{"type":"result","id":N,"ok":true,"output":{"images":[{"mime":"image/png","size":734000,"sha256":"..."}]}}</c>;</item>
 /// <item>wallet → server: <c>{"type":"grant","models":{...},"limits":{...}}</c> when the visitor changes what the site was given;</item>
 /// <item>either side: <c>{"type":"bye"}</c>.</item>
 /// </list>
@@ -80,8 +94,9 @@ public sealed class WalletChannel
     readonly WalletChannelLimits _limits;
     readonly SemaphoreSlim _send = new(1, 1);
     /// <summary>A call waiting for its result. <paramref name="MaxChars"/> is how much of the answer is kept;
-    /// <paramref name="Partial"/> gathers the <c>chunk</c> frames as they arrive (the result replaces them).</summary>
-    sealed record Waiting(TaskCompletionSource<WalletAnswer> Answer, int MaxChars, Action<string>? OnChunk, StringBuilder Partial);
+    /// <paramref name="Partial"/> gathers the <c>chunk</c> frames as they arrive (the result replaces them);
+    /// <paramref name="Pictures"/> gathers the <c>image</c> parts of a picture call (null for any other call).</summary>
+    sealed record Waiting(TaskCompletionSource<WalletAnswer> Answer, int MaxChars, Action<string>? OnChunk, StringBuilder Partial, PictureParts? Pictures);
 
     readonly ConcurrentDictionary<int, Waiting> _pending = new();
     readonly TaskCompletionSource _welcomed = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -139,7 +154,8 @@ public sealed class WalletChannel
     /// <summary>One incoming JSON message, read without copying it: only what the server uses.</summary>
     sealed record Frame(string? Type, string? Session, string? Pairing, int? Id, bool Ok, string? Text, string? Chunk,
                         string[]? Skills = null, JsonElement? Models = null, JsonElement? Limits = null, bool HasLimits = false,
-                        string[]? Capabilities = null, string? Reason = null, string[]? Lacks = null);
+                        string[]? Capabilities = null, string? Reason = null, string[]? Lacks = null,
+                        int? Index = null, int? Seq = null, int? Of = null, string? Mime = null, string? Data = null, PictureInfo[]? Images = null);
 
     /// <summary>Serves one wallet connection until it closes.</summary>
     public static async Task RunAsync(WebSocket ws, DirectHub hub, ILogger log, CancellationToken ct, WalletChannelLimits? limits = null)
@@ -181,7 +197,10 @@ public sealed class WalletChannel
                 switch (frame?.Type)
                 {
                     case "result" when frame.Id is { } id:
-                        channel.Result(id, frame.Ok && frame.Text is not null, frame.Text, frame.Reason, frame.Lacks);       // ok without a text is no answer
+                        channel.Result(id, frame.Ok, frame.Text, frame.Reason, frame.Lacks, frame.Images);
+                        break;
+                    case "image" when frame.Id is { } id:
+                        channel.Part(id, frame.Index, frame.Seq, frame.Of, frame.Mime, frame.Data);
                         break;
                     case "chunk" when frame.Id is { } id:
                         channel.Chunk(id, frame.Chunk);
@@ -229,7 +248,7 @@ public sealed class WalletChannel
         if (_ws.State != WebSocketState.Open) return new WalletAnswer(WalletOutcome.Cancelled);
         var id = Interlocked.Increment(ref _nextId);
         var answer = new TaskCompletionSource<WalletAnswer>(TaskCreationOptions.RunContinuationsAsynchronously);
-        _pending[id] = new Waiting(answer, maxChars, onChunk ?? NoChunks, new StringBuilder());
+        _pending[id] = new Waiting(answer, maxChars, onChunk ?? NoChunks, new StringBuilder(), skill == PictureSkill ? new PictureParts() : null);
         try
         {
             try { await _welcomed.Task.WaitAsync(timeout, ct); }
@@ -277,13 +296,34 @@ public sealed class WalletChannel
     /// <summary>The reasons a wallet may give for an <c>ok:false</c> (CONTRACT-DIRECT.md section 4); any other word is "failed".</summary>
     static readonly HashSet<string?> Reasons = new(StringComparer.Ordinal) { "timeout", "cancelled", "limit", "failed" };
 
-    /// <summary>The wallet's result for a call; false when no such call is waiting (late, repeated, made up, or let go by the page).</summary>
-    public bool Result(int id, bool ok, string? text, string? reason = null, string[]? lacks = null)
+    /// <summary>The wallet's result for a call; false when no such call is waiting (late, repeated, made up, or let go by the page).
+    /// A text call's <c>ok</c> without a text is no answer. A picture call's <c>ok</c> needs <paramref name="pictures"/>, and the parts
+    /// that came before must make exactly those pictures (<see cref="PictureParts.Join"/>); anything else is <c>failed</c>.</summary>
+    public bool Result(int id, bool ok, string? text, string? reason = null, string[]? lacks = null, IReadOnlyList<PictureInfo>? pictures = null)
     {
         if (!_pending.TryRemove(id, out var waiting)) return false;
-        if (!ok) return waiting.Answer.TrySetResult(new WalletAnswer(WalletOutcome.Failed, "", Reasons.Contains(reason) ? reason : "failed"));
+        if (waiting.Pictures is { } parts && ok)
+        {
+            var joined = pictures is { Count: > 0 } ? parts.Join(pictures) : null;
+            return waiting.Answer.TrySetResult(joined is null
+                ? new WalletAnswer(WalletOutcome.Failed, "", "failed")
+                : new WalletAnswer(WalletOutcome.Pictures, Pictures: joined));
+        }
+        if (!ok || waiting.Pictures is null && text is null)
+            return waiting.Answer.TrySetResult(new WalletAnswer(WalletOutcome.Failed, "", !ok && Reasons.Contains(reason) ? reason : "failed"));
         var clean = WalletText.CleanBlock(text, waiting.MaxChars);
         return waiting.Answer.TrySetResult(new WalletAnswer(WalletOutcome.Text, clean, Lacks: lacks));
+    }
+
+    /// <summary>The skill whose answers come as pictures (CONTRACT.md §3.7).</summary>
+    public const string PictureSkill = "image.generate";
+
+    /// <summary>One part of a picture (<c>image</c>, CONTRACT-DIRECT.md §4); false when no picture call with that id is waiting (the part is ignored).</summary>
+    public bool Part(int id, int? index, int? seq, int? of, string? mime, string? data)
+    {
+        if (!_pending.TryGetValue(id, out var waiting) || waiting.Pictures is not { } parts) return false;
+        parts.Add(index, seq, of, mime, data);
+        return true;
     }
 
     /// <summary>The site stops a call it still waits for: the wallet is told with <c>{"type":"cancel","id":N}</c>
@@ -419,7 +459,7 @@ public sealed class WalletChannel
     const int MaxSkills = 8;
 
     /// <summary>The properties a site may ask about in <c>needs</c>; a verdict for any other name is dropped.</summary>
-    static readonly string[] CanNames = { "context", "input", "output", "runs" };
+    static readonly string[] CanNames = { "input", "output" };
 
     static readonly Regex SkillIdPattern = new(@"\A[a-z][a-z0-9-]*\.[a-z][a-z0-9-]*\z", RegexOptions.CultureInvariant);
 
@@ -547,9 +587,17 @@ public sealed class WalletChannel
             if (Array(root, "lacks") is { } lacksNode)
                 lacks = lacksNode.EnumerateArray().Where(x => x.ValueKind == JsonValueKind.String).Select(x => x.GetString()!)
                     .Where(x => AbilityName.IsMatch(x)).Distinct(StringComparer.Ordinal).Take(8).ToArray();
+            // a picture result describes its pictures; one entry that is not an object leaves them all undescribed (the call then fails)
+            PictureInfo[]? images = null;
+            if (Array(o.ValueKind == JsonValueKind.Object ? o : null, "images") is { } imagesNode)
+                images = imagesNode.GetArrayLength() <= PictureParts.MaxPictures && imagesNode.EnumerateArray().All(x => x.ValueKind == JsonValueKind.Object)
+                    ? imagesNode.EnumerateArray().Select(x => new PictureInfo(Str(x, "mime"), Int(x, "size"), Str(x, "sha256"),
+                                                                             x.TryGetProperty("reduced", out var r) && r.ValueKind == JsonValueKind.True)).ToArray()
+                    : [];
             frame = new Frame(Str(root, "type"), Str(root, "session"), Str(root, "pairing"), id, ok, text,
                               root.TryGetProperty("text", out var c) && c.ValueKind == JsonValueKind.String ? c.GetString() : null,
-                              skills, modelsNode?.Clone(), limitsNode?.Clone(), limitsNode is not null, capabilities, Str(root, "reason"), lacks);
+                              skills, modelsNode?.Clone(), limitsNode?.Clone(), limitsNode is not null, capabilities, Str(root, "reason"), lacks,
+                              Int(root, "index"), Int(root, "seq"), Int(root, "of"), Str(root, "mime"), Str(root, "data"), images);
             return true;
         }
         catch (JsonException) { return false; }
@@ -557,6 +605,9 @@ public sealed class WalletChannel
 
     static string? Str(JsonElement e, string name) =>
         e.ValueKind == JsonValueKind.Object && e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+
+    static int? Int(JsonElement e, string name) =>
+        e.ValueKind == JsonValueKind.Object && e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var n) ? n : null;
 
     /// <summary>The property as an object, or null when it is missing or of another kind (never an exception).</summary>
     static JsonElement? Object(JsonElement? e, string name) =>

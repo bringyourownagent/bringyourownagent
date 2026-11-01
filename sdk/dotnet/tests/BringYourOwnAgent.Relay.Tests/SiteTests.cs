@@ -207,6 +207,7 @@ public sealed class SiteTests : IAsyncLifetime
                         continue;
                     }
                     Assert.True(polled.GetProperty("ok").GetBoolean(), $"{reference}: {polled.GetProperty("reason").GetString()}");
+                    Assert.Equal(JsonValueKind.Null, polled.GetProperty("images").ValueKind);          // always there; a text job has no pictures
                     done[reference] = polled.GetProperty("text").GetString()!;
                     order.Add(reference);
                 }
@@ -373,8 +374,8 @@ public sealed class SiteTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.BadRequest, await Ask(new { pairing, model = "m1", messages = new object[] { new { role = "user", content = new string('x', 60_001) } } }));
         Assert.Equal(HttpStatusCode.BadRequest, await Ask(new { pairing = "made-up", model = "m1", messages = new object[] { new { role = "user", content = "hi" } } }));
         Assert.Equal(HttpStatusCode.BadRequest, await Ask(new { pairing, messages = new object[] { new { role = "user", content = "hi" } } }));
-        // a body far bigger than any chat call is refused before it is read
-        var huge = await _http.PostAsJsonAsync($"/api/r/{room}/byoa/job", new { pairing, model = "m1", messages = new object[] { new { role = "user", content = new string('x', 1_600_000) } } });
+        // a body far bigger than any call (a picture call's references included) is refused before it is read
+        var huge = await _http.PostAsJsonAsync($"/api/r/{room}/byoa/job", new { pairing, model = "m1", messages = new object[] { new { role = "user", content = new string('x', 4_300_000) } } });
         Assert.Equal(HttpStatusCode.RequestEntityTooLarge, huge.StatusCode);
 
         // and a body that is not a call at all (no JSON, no type) never reaches the wallet either
