@@ -23,7 +23,6 @@ import {
   NEEDS_PROPERTIES,
   ON_MISMATCH,
   PRIVACY_CLASSES,
-  RUNS,
   SOURCE_KINDS,
   SUMMARY_MAX_LENGTH,
   SUPPORTED_VERSIONS,
@@ -253,6 +252,9 @@ function checkModels(skillId, models, error, warn) {
       path + '/kind',
       `"models.kind" must be one of: ${SOURCE_KINDS.map(quote).join(', ')}; got ${quote(kind)}`,
     );
+  } else if (kind !== undefined && skillId === 'image.generate' && kind !== 'model') {
+    // an agent writes text; pictures come from models only (CONTRACT.md section 3.6)
+    error('models-kind-invalid', path + '/kind', `"models.kind" of "image.generate" may only be "model"; got ${quote(kind)}`);
   }
 
   const onMismatch = get(models, 'onMismatch');
@@ -295,24 +297,12 @@ function checkNeeds(skillId, needs, error, warn) {
   }
 }
 
-// Why a condition of `needs` is invalid, or null if it is fine. An array is the short form of the
-// one long form each property takes: {"includes": [...]} for a modality, {"oneOf": [...]} for `runs`,
-// {"min": n} for `context` (CONTRACT.md sections 3.3 and 3.5).
+// Why a condition of `needs` (`input` or `output`) is invalid, or null if it is fine. An array is the
+// short form of {"includes": [...]} (CONTRACT.md sections 3.3 and 3.5).
 function needsProblem(key, value) {
-  if (key === 'input' || key === 'output') {
-    const list = listOf(value, 'includes');
-    if (list !== null && isModalityList(list)) return null;
-    return `"models.needs.${key}" must be an array of ${MODALITIES.map(quote).join(', ')} with at least one value, or {"includes": [...]} of those; got ${quote(value)}`;
-  }
-  if (key === 'runs') {
-    const list = listOf(value, 'oneOf');
-    if (list !== null && isList(RUNS, list)) return null;
-    return `"models.needs.${key}" must be an array of ${RUNS.map(quote).join(', ')} with at least one value, or {"oneOf": [...]} of those; got ${quote(value)}`;
-  }
-  // context: a minimum, in thousands of tokens
-  if (isNonNegative(value)) return null;
-  if (isObject(value) && presentKeys(value).length === 1 && get(value, 'min') !== undefined && isNonNegative(value.min)) return null;
-  return `"models.needs.${key}" must be a number of thousands of tokens (the minimum) or {"min": n}; got ${quote(value)}`;
+  const list = listOf(value, 'includes');
+  if (list !== null && isModalityList(list)) return null;
+  return `"models.needs.${key}" must be an array of ${MODALITIES.map(quote).join(', ')} with at least one value, or {"includes": [...]} of those; got ${quote(value)}`;
 }
 
 // The array of a short form, or of the one long form `key`, or null when the value is neither.

@@ -58,11 +58,11 @@ test('the model list keeps text models with a readable price; free means both pr
     ],
   };
   const models = readModels(body);
-  assert.deepEqual(models.map((m) => [m.id, m.free]), [['b/paid', false], ['e/half-free', false], ['a/free-one:free', true]].sort((x, y) => models.findIndex((m) => m.id === x[0]) - models.findIndex((m) => m.id === y[0])));
-  assert.equal(models.length, 3);
-  assert.equal(models.some((m) => m.id === 'f/also-image'), false);   // the primary-role rule: it answers in pictures too, so it is not a text model here
+  assert.deepEqual(models.map((m) => [m.id, m.free]), [['b/paid', false], ['e/half-free', false], ['a/free-one:free', true], ['f/also-image', true]].sort((x, y) => models.findIndex((m) => m.id === x[0]) - models.findIndex((m) => m.id === y[0])));
+  assert.equal(models.length, 4);
+  assert.equal(models.some((m) => m.id === 'f/also-image'), true);    // it draws and writes text: a text model as well (0.37, no primary-role rule)
   assert.equal(models.find((m) => m.id === 'b/paid').pricePerMillion.prompt, 1);
-  assert.equal((await listModels({ fetch: async () => json(body) })).length, 3);
+  assert.equal((await listModels({ fetch: async () => json(body) })).length, 4);
   await assert.rejects(listModels({ fetch: async () => json({}, 500) }), (e) => e.kind === 'provider');
 });
 

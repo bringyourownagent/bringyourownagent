@@ -39,13 +39,13 @@ export const SOURCE_KINDS = Object.freeze(['model', 'agent', 'any']);
 /** What a wallet does with a source that fails a known condition (`models.onMismatch`). */
 export const ON_MISMATCH = Object.freeze(['drop', 'show']);
 
-/** The four properties a `models.needs` condition may name. */
-export const NEEDS_PROPERTIES = Object.freeze(['context', 'input', 'output', 'runs']);
+/** The properties a `models.needs` condition may name (`context` and `runs`, of the 0.0.4 libraries, are unknown keys now). */
+export const NEEDS_PROPERTIES = Object.freeze(['input', 'output']);
 
 /** Modalities of the `input` and `output` properties. */
 export const MODALITIES = Object.freeze(['audio', 'image', 'text']);
 
-/** Values of the `runs` property: the grant's own vocabulary, never a second one. */
+/** Where a model of a grant runs (the `runs` of a grant entry). */
 export const RUNS = Object.freeze(['api-key', 'home-server', 'local']);
 
 /** Abilities a `models.abilities` entry may name; `image.read` is reserved and not enforced. */
