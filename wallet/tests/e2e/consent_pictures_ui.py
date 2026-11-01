@@ -302,6 +302,8 @@ try:
           name_of(consent, "ConsentNumber-image.generate") == "1" and name_of(consent, "ConsentNumber-text.generate") == "2",
           name_of(consent, "ConsentNumber-image.generate") + " " + name_of(consent, "ConsentNumber-text.generate"))
     check("the optional block has \"Allow\" with its box", ui.control(consent, "ConsentInclude-image.generate").Name == "Allow Image generation")
+    check("the required block allowed before says \"already allowed\" at the same place, with no box to untick",
+          name_of(consent, "ConsentAllowed-text.generate") == "already allowed" and not present(consent, "ConsentInclude-text.generate", 0.5))
     check("the text, allowed before, says \"already allowed\"", present(consent, "ConsentAllowed-text.generate"))
     check("the pictures, asked for now, do not", not present(consent, "ConsentAllowed-image.generate", 0.5))
     check("no \"Only what is new\" and no \"updated\" chip", not has_text(consent, "Only what is new") and not has_text(consent, "updated"))

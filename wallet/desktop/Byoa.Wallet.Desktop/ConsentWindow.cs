@@ -381,9 +381,9 @@ sealed partial class ConsentWindow : CornerWindow
 
     static Color KindColor(string skill) => KindClass(skill) switch
     {
-        "kind-text" => Color.Parse("#2f5bbf"),
-        "kind-picture" => Color.Parse("#c2303c"),
-        "kind-speech" => Color.Parse("#2a8550"),
+        "kind-text" => Color.Parse("#4a74d1"),
+        "kind-picture" => Color.Parse("#d4504c"),
+        "kind-speech" => Color.Parse("#3d9a62"),
         _ => Color.Parse("#c8401c"),
     };
 
@@ -425,7 +425,7 @@ sealed partial class ConsentWindow : CornerWindow
         }
     }
 
-    /// <summary>The block's number in an orange circle, at the start of its title.</summary>
+    /// <summary>The block's number in a white circle, at the start of its title.</summary>
     static Control NumberBadge(int number)
     {
         var text = new TextBlock { Text = number.ToString(CultureInfo.InvariantCulture), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
@@ -446,33 +446,52 @@ sealed partial class ConsentWindow : CornerWindow
         skillName.VerticalAlignment = VerticalAlignment.Center;
         title.Children.Add(skillName);
         if (!row.Required) title.Children.Add(Ui.Chip("Optional"));
-        if (row.AlreadyAllowed)
-        {
-            var allowed = Ui.Chip("already allowed", "allowed");
-            AutomationProperties.SetAutomationId(allowed.Child!, "ConsentAllowed-" + row.Skill);
-            title.Children.Add(allowed);
-        }
 
-        // an optional block is allowed or left off with the box at the right end of its header
+        // The right end of every header says, the same way, what Allow does to the block: a box that allows an optional block or leaves it
+        // off, or a tick that cannot be taken away from a required one; "already allowed" when the site has it now.
         Control? allow = null;
-        if (!row.Required && row.CanServe)
+        if (row.CanServe)
         {
-            var include = new CheckBox { IsChecked = true, MinWidth = 0, Content = "Allow", VerticalAlignment = VerticalAlignment.Center };
-            AutomationProperties.SetName(include, "Allow " + row.SkillName);
-            AutomationProperties.SetAutomationId(include, "ConsentInclude-" + row.Skill);
-            include.IsCheckedChanged += (_, _) =>
+            var include = new CheckBox { IsChecked = true, MinWidth = 0, MinHeight = 0, Padding = new Thickness(0), VerticalAlignment = VerticalAlignment.Center };
+            var said = Ui.Text(row.AlreadyAllowed ? "already allowed" : row.Required ? "Required" : "Allow", "small");
+            said.Classes.Add(row.AlreadyAllowed ? "allowedword" : "allowword");
+            said.VerticalAlignment = VerticalAlignment.Center;
+            if (row.AlreadyAllowed) AutomationProperties.SetAutomationId(said, "ConsentAllowed-" + row.Skill);
+            if (row.Required)
             {
-                if (include.IsChecked == true) _leftOff.Remove(row.Skill);
-                else _leftOff.Add(row.Skill);
-                panel.Opacity = include.IsChecked == true ? 1 : 0.6;
-                UpdateAllow();
-            };
-            var pill = new Border { Child = include, VerticalAlignment = VerticalAlignment.Center };
+                // the site cannot work without it: the tick shows it is given, and cannot be taken away
+                include.IsHitTestVisible = false;
+                include.Focusable = false;
+                AutomationProperties.SetHelpText(include, "The site cannot work without it");
+            }
+            else
+            {
+                AutomationProperties.SetName(include, "Allow " + row.SkillName);
+                AutomationProperties.SetAutomationId(include, "ConsentInclude-" + row.Skill);
+                include.IsCheckedChanged += (_, _) =>
+                {
+                    if (include.IsChecked == true) _leftOff.Remove(row.Skill);
+                    else _leftOff.Add(row.Skill);
+                    panel.Opacity = include.IsChecked == true ? 1 : 0.6;
+                    UpdateAllow();
+                };
+                said.Cursor = new Cursor(StandardCursorType.Hand);
+                said.PointerPressed += (_, e) =>
+                {
+                    include.IsChecked = include.IsChecked != true;
+                    e.Handled = true;
+                };
+            }
+
+            var pill = new Border { Child = Ui.Row(6, include, said), VerticalAlignment = VerticalAlignment.Center };
             pill.Classes.Add("allowpill");
             allow = pill;
         }
 
-        var header = Kind(new Border { Child = allow is null ? title : Ui.Columns("*,Auto", title, allow) }, row.Skill);
+        title.VerticalAlignment = VerticalAlignment.Center;
+        Control head = allow is null ? title : Ui.Columns("*,Auto", title, allow);
+        head.VerticalAlignment = VerticalAlignment.Center;
+        var header = Kind(new Border { Child = head }, row.Skill);
         header.Classes.Add("blockhead");
         if (row.Models is not null) return ModelRow(row, panel, header);
 
