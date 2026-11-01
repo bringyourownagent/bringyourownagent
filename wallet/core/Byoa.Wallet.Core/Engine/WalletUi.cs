@@ -81,12 +81,13 @@ public sealed record RouteGroup(RouteLine Route, IReadOnlyList<string> Languages
 }
 
 /// <summary>One row of the consent window: a skill, the sources that will answer it, and the reason.</summary>
+/// <param name="AlreadyAllowed">The site's grant already covers the skill (and its models): the row says so, and is otherwise as the first time.</param>
 /// <param name="Models">For a skill whose site asked for several models: the models to tick, instead of the route lines.</param>
 public sealed record ConsentRow(
     string Skill,
     string SkillName,
     bool Required,
-    bool IsNew,
+    bool AlreadyAllowed,
     bool CanServe,
     IReadOnlyList<RouteLine> Routes,
     IReadOnlyList<string> Languages,
@@ -98,7 +99,7 @@ public sealed record ConsentRow(
 public sealed record LimitsAsk(RequestedLimits Wanted, TextLimitSet Current);
 
 /// <summary>Everything the short consent window shows.</summary>
-/// <param name="IsDifference">The site already has a grant and asks for more: only the new parts are shown.</param>
+/// <param name="IsDifference">The site already has a grant and asks for more: the window is the same, with "already allowed" on what the grant covers.</param>
 /// <param name="BudgetBefore">With <paramref name="IsDifference"/>, the budget the visitor allowed before.</param>
 /// <param name="PausedNote">The site was allowed before and is paused ("Paused after a day without use"): Allow resumes it.</param>
 /// <param name="FromLink">The request came from a direct link, so the browser has not vouched for the origin yet.</param>

@@ -129,7 +129,7 @@ public class ReviewFixTests
         var consent = _ui.Consents[^1];
         Assert.True(consent.IsDifference);
         Assert.True(consent.MissingRequired);
-        Assert.Equal(["text.generate"], consent.Rows.Select(r => r.Skill));
+        Assert.Equal([("audio.transcribe", true), ("text.generate", false)], consent.Rows.Select(r => (r.Skill, r.AlreadyAllowed)));
 
         // The site's old grant is unchanged: the same manifest as before is still granted on its own.
         Assert.NotNull(await _engine.HandleAsync(Clips.Request(Site, click: false)));
@@ -244,7 +244,7 @@ public class ReviewFixTests
         Assert.NotNull(await _engine.HandleAsync(Clips.Request(Site, click: true, Manifest(cost: "0.60 USD"))));
         var diff = _ui.Consents[^1];
         Assert.True(diff.IsDifference);
-        Assert.Empty(diff.Rows);
+        Assert.All(diff.Rows, r => Assert.True(r.AlreadyAllowed));
         Assert.Equal(0.50m, diff.BudgetBefore);
         Assert.Equal(0.60m, diff.Budget);
     }

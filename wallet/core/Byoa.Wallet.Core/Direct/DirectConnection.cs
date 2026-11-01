@@ -325,7 +325,7 @@ public sealed class DirectConnection
             if (resumed && echoed != Manifest)
             {
                 // After a reconnect the welcome carries the site's current manifest: within the grant it is taken
-                // silently; asking for more needs a new link and the visitor's consent (showing only the difference).
+                // silently; asking for more needs a new link and the visitor's consent (the whole request, "already allowed" on what it has).
                 var current = !_owner.Engine.PauseSiteIfDue(Origin)
                     && DirectLink.TryManifest(echoed, out var json, out _) && _owner.Engine.CoveredByGrant(Origin, json!)
                     ? await _owner.GrantSilentlyAsync(Origin, json!, ct).ConfigureAwait(false)

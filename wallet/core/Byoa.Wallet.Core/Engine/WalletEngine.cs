@@ -706,7 +706,7 @@ public sealed partial class WalletEngine
             void Decide(SiteRecord r)
             {
                 var keep = r.Status == SiteStatus.Allowed ? r.Skills : [];
-                r.Skills = keep.Union(offered).Except(model.IsDifference ? [] : leftOff).Distinct().OrderBy(x => x, StringComparer.Ordinal).ToList();
+                r.Skills = keep.Union(offered).Except(leftOff).Distinct().OrderBy(x => x, StringComparer.Ordinal).ToList();
                 r.Status = SiteStatus.Allowed;
                 r.Budget = Money.ToSpec(answer.Budget);
                 r.AutoDecide = answer.AutoDecide;
@@ -781,7 +781,7 @@ public sealed partial class WalletEngine
                 var waited = await WarmBeforeResolveAsync(session, host, showPreparing: true, ct).ConfigureAwait(false);
                 // The visitor may have decided about the site while the models loaded: then the link gets no grant.
                 if (via == ViaLink && !_linkDecisions.ContainsKey(session.Id)) return Done(entry, "declined", "the visitor decided about the site while the models loaded");
-                entry.Note = "after a click" + (handed ? "; pasted by hand" : "") + (model.PausedNote is not null ? "; resumed" : "") + (model.IsDifference ? "; only the difference was shown" : "")
+                entry.Note = "after a click" + (handed ? "; pasted by hand" : "") + (model.PausedNote is not null ? "; resumed" : "") + (model.IsDifference ? "; the site asked for more" : "")
                     + (answer.AutoDecide ? "; decide on my own from now on" : "") + (via == ViaLink ? "; kept once the site confirms the link" : "") + Ready(waited);
                 return Done(entry, "allowed", null, session.ToResult());
             }
@@ -827,10 +827,11 @@ public sealed partial class WalletEngine
         var isDifference = site.Status == SiteStatus.Allowed && (newSkills.Count > 0 || missingRequired.Count > 0 || costRaised || modelsAsked || limitsAsk is not null);
         var rows = new List<ConsentRow>();
         // (the skills come in the order of their names; the pictures, which come after the text they are drawn for, are shown last)
+        // A site that asks for more sees the same window as the first time: every skill, with "already allowed" on what its grant covers.
         foreach (var skill in manifest.Skills.OrderBy(k => k.Id == Vocabulary.ImageGenerate ? 1 : 0))
         {
-            if (isDifference && !newSkills.Contains(skill.Id) && !missingRequired.Contains(skill.Id) && !ModelsNeedAsking(site, skill, settings)) continue;
-            rows.Add(Row(skill, settings, site, isNew: isDifference && (newSkills.Contains(skill.Id) || missingRequired.Contains(skill.Id))));
+            var allowed = site.Status == SiteStatus.Allowed && site.Skills.Contains(skill.Id) && !ModelsNeedAsking(site, skill, settings);
+            rows.Add(Row(skill, settings, site, allowed));
         }
 
         var defaultBudget = Money.Parse(settings.Limits.DefaultSessionBudget, 0.20m);
@@ -855,17 +856,17 @@ public sealed partial class WalletEngine
             via == ViaLink && handed, site.ShowModelNames);
     }
 
-    ConsentRow Row(RequestedSkill skill, WalletSettings settings, SiteRecord site, bool isNew)
+    ConsentRow Row(RequestedSkill skill, WalletSettings settings, SiteRecord site, bool alreadyAllowed)
     {
         var name = Vocabulary.SkillName(skill.Id);
         if (!Vocabulary.Served.Contains(skill.Id))
         {
-            return new ConsentRow(skill.Id, name, skill.Required, isNew, false, [], skill.Languages,
+            return new ConsentRow(skill.Id, name, skill.Required, alreadyAllowed, false, [], skill.Languages,
                 "None of your sources can do this yet: this wallet serves speech to text, text generation and picture generation.");
         }
 
-        if (skill.Id == Vocabulary.Generate) return TextRow(skill, name, settings, site, isNew);
-        if (skill.Id == Vocabulary.ImageGenerate) return ImageRow(skill, name, settings, site, isNew);
+        if (skill.Id == Vocabulary.Generate) return TextRow(skill, name, settings, site, alreadyAllowed);
+        if (skill.Id == Vocabulary.ImageGenerate) return ImageRow(skill, name, settings, site, alreadyAllowed);
 
         var languages = skill.Languages.Count > 0 ? skill.Languages.Cast<string?>().ToList() : [null];
         var routes = new List<RouteLine>();
@@ -887,14 +888,14 @@ public sealed partial class WalletEngine
         }
 
         var canServe = routes.Count > 0 && routes.All(r => r.Fits);
-        return new ConsentRow(skill.Id, name, skill.Required, isNew, canServe, routes, skill.Languages, string.Join(" ", whys.Distinct()));
+        return new ConsentRow(skill.Id, name, skill.Required, alreadyAllowed, canServe, routes, skill.Languages, string.Join(" ", whys.Distinct()));
     }
 
-    ConsentRow TextRow(RequestedSkill skill, string name, WalletSettings settings, SiteRecord site, bool isNew)
+    ConsentRow TextRow(RequestedSkill skill, string name, WalletSettings settings, SiteRecord site, bool alreadyAllowed)
     {
         // A site that asks for several models gets the models to tick instead of one route line per language.
         if (PlanModels(skill, settings, site) is { } section)
-            return new ConsentRow(skill.Id, name, skill.Required, isNew, section.CanServe, [], skill.Languages, ModelsWhy(section), section);
+            return new ConsentRow(skill.Id, name, skill.Required, alreadyAllowed, section.CanServe, [], skill.Languages, ModelsWhy(section), section);
 
         var textLanguages = skill.Languages.Count > 0 ? skill.Languages.Cast<string?>().ToList() : [null];
         var routes = new List<RouteLine>();
@@ -915,17 +916,17 @@ public sealed partial class WalletEngine
         }
 
         var canServe = routes.Count > 0 && routes.All(r => r.Fits);
-        return new ConsentRow(skill.Id, name, skill.Required, isNew, canServe, routes, skill.Languages, string.Join(" ", whys.Distinct()));
+        return new ConsentRow(skill.Id, name, skill.Required, alreadyAllowed, canServe, routes, skill.Languages, string.Join(" ", whys.Distinct()));
     }
 
     /// <summary>
     /// The row of a picture skill: always the models to tick (the wallet has no route of its own to draw with; a site that wrote no
     /// <c>models</c> block is read as asking for one to four), in the same section as the text models'.
     /// </summary>
-    ConsentRow ImageRow(RequestedSkill skill, string name, WalletSettings settings, SiteRecord site, bool isNew)
+    ConsentRow ImageRow(RequestedSkill skill, string name, WalletSettings settings, SiteRecord site, bool alreadyAllowed)
     {
         var section = PlanModels(skill, settings, site)!;
-        return new ConsentRow(skill.Id, name, skill.Required, isNew, section.CanServe, [], skill.Languages, ModelsWhy(section), section);
+        return new ConsentRow(skill.Id, name, skill.Required, alreadyAllowed, section.CanServe, [], skill.Languages, ModelsWhy(section), section);
     }
 
     static string ModelsWhy(ModelSection section) =>

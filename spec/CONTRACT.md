@@ -41,7 +41,7 @@ window.byoa = {
 
 - **No click, no notice.** A `request` made without transient user activation shows no notice. The wallet only gets a quiet badge on its tray icon, and the promise resolves `null`. The one exception: when this origin already has a grant with "decide on my own" ticked that covers the manifest, the promise resolves with that grant at once and silently.
 - **Origin.** The origin comes from the extension (the sender's URL), never from the page. Grants are bound to the origin.
-- **Asking for more.** If an origin asks for more than its existing grant covers (a new skill, a language it was not allowed, a higher expected cost), the consent shows only the difference.
+- **Asking for more.** If an origin asks for more than its existing grant covers (a new skill, a language it was not allowed, a higher expected cost), the consent shows the whole request, the same as the first time, and marks what the existing grant already covers as already allowed.
 - **Call checks.** Each `call` is checked by the wallet against the manifest's limits and the grant, with the rules of [rules-0.1-draft.md](rules-0.1-draft.md) (manifest rules, grant, call, gate), before any provider runs.
 - **Trust.** Answers are user input. A page must treat `output` like anything a visitor types.
 - **Same answer for every refusal.** "Declined", "blocked" and "no wallet" look the same to the page.

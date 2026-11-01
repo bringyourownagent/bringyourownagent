@@ -185,7 +185,7 @@ public class EngineTests
     }
 
     [Fact]
-    public async Task AskingForMoreShowsOnlyTheDifference()
+    public async Task AskingForMoreShowsTheWholeRequestWithWhatIsAlreadyAllowedMarked()
     {
         _ui.Consent = new ConsentAnswer(true, 0.05m, AutoDecide: true, []);
         await GrantAsync();
@@ -195,7 +195,7 @@ public class EngineTests
         Assert.NotNull(grant);
         var diff = _ui.Consents[^1];
         Assert.True(diff.IsDifference);
-        Assert.Empty(diff.Rows);
+        Assert.True(Assert.Single(diff.Rows, r => r.Skill == "audio.transcribe").AlreadyAllowed);     // the same window as the first time
         Assert.Equal(0.05m, diff.BudgetBefore);
         Assert.Equal(0.10m, diff.Budget);
         Assert.Equal("0.1 USD", _store.Read(s => s.Site(Site)!.Budget));

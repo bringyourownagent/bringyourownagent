@@ -319,9 +319,8 @@ sealed partial class ConsentWindow : CornerWindow
         if (verified is not null && _model.Secure) ((TextBlock)verified.Children[1]).Foreground = Ui.Brush("Sign");
         var hostInfo = verified is null ? Ui.Column(3, host) : Ui.Column(3, host, verified);
         hostInfo.Margin = new Thickness(9, 0, 6, 0);
-        // the chips ("updated", "paused") sit at the right end of the row; the host takes the room that is left
+        // the chip ("paused") sits at the right end of the row; the host takes the room that is left
         var chipRow = Ui.Row(4);
-        if (_model.IsDifference) chipRow.Children.Add(Ui.Chip("updated", "outline"));
         if (_model.PausedNote is not null) chipRow.Children.Add(Ui.Chip("paused", "outline"));
         var hostRow = Ui.Columns("Auto,*,Auto", Ui.Tile(Ui.Globe, 28), hostInfo, chipRow);
         AutomationProperties.SetName(hostRow, _model.Host);
@@ -338,17 +337,9 @@ sealed partial class ConsentWindow : CornerWindow
             body.Children.Add(note);
         }
 
-        if (_model.IsDifference)
-        {
-            body.Children.Add(Ui.Wrap("The site was updated and asks for more than you allowed. Only the difference is shown.", "muted"));
-        }
-
-        body.Children.Add(Ui.Text(_model.IsDifference ? "Only what is new" : "Asks for", "label"));
+        // A site that asks for more gets the same window as the first time; what its grant covers says "already allowed".
+        body.Children.Add(Ui.Text("Asks for", "label"));
         foreach (var row in _model.Rows) body.Children.Add(SkillRow(row));
-        if (_model.IsDifference && _model.Rows.Count == 0 && _model.Limits is null)
-        {
-            body.Children.Add(Ui.Wrap("No new skill. The site now expects to spend more per session:", "muted"));
-        }
 
         if (_model.Limits is { } ask) body.Children.Add(LimitsBlock(ask));
         body.Children.Add(BudgetLine());
@@ -374,9 +365,14 @@ sealed partial class ConsentWindow : CornerWindow
             title.Children.Add(include);
         }
 
-        if (row.IsNew) title.Children.Add(Ui.Text("New:", "strong"));
         title.Children.Add(Ui.Text(row.SkillName, "strong"));
         if (!row.Required) title.Children.Add(Ui.Chip("Optional"));
+        if (row.AlreadyAllowed)
+        {
+            var allowed = Ui.Chip("already allowed", "allowed");
+            AutomationProperties.SetAutomationId(allowed.Child!, "ConsentAllowed-" + row.Skill);
+            title.Children.Add(allowed);
+        }
         if (row.Models is not null) return ModelRow(row, panel, title);
 
         var why = Ui.Link("why?", "ConsentWhy-" + row.Skill, () => { });

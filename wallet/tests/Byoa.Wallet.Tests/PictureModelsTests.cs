@@ -236,20 +236,36 @@ public class PictureModelsTests
         await RequestAsync(manifest);
         Assert.Equal(2, _ui.Consents.Count);
         Assert.DoesNotContain("openrouter:someone/imagine", Keys(Section("image.generate").Choices));
-        Assert.Equal(["image.generate"], _ui.Consents.Last().Rows.Select(r => r.Skill));      // only the section that is amiss comes back (the difference)
+        // the whole request comes back, as the first time: the text is already allowed, the pictures are asked about again
+        Assert.Equal([("text.generate", true), ("image.generate", false)], _ui.Consents.Last().Rows.Select(r => (r.Skill, r.AlreadyAllowed)));
     }
 
     [Fact]
-    public async Task APictureSkillThatTheSiteAddsLaterIsAskedAboutAsADifference()
+    public async Task APictureSkillThatTheSiteAddsLaterIsAskedAboutWithTheTextMarkedAlreadyAllowed()
     {
         _ui.Consent = new ConsentAnswer(true, 0.05m, AutoDecide: true, [], new Dictionary<string, IReadOnlyList<string>> { ["text.generate"] = ["lm:gemma"] });
         await RequestAsync(Manifest(TextBlock));
         Assert.Single(_ui.Consents);
         await RequestAsync(Manifest(TextBlock + "," + PictureBlock));
         Assert.Equal(2, _ui.Consents.Count);
-        var row = Assert.Single(_ui.Consents.Last().Rows);
-        Assert.Equal("image.generate", row.Skill);
-        Assert.True(row.IsNew);
+        Assert.True(_ui.Consents.Last().IsDifference);
+        Assert.Equal([("text.generate", true), ("image.generate", false)], _ui.Consents.Last().Rows.Select(r => (r.Skill, r.AlreadyAllowed)));
+    }
+
+    [Fact]
+    public async Task AnAllowedOptionalSkillTheVisitorUnticksWhenTheSiteAsksForMoreIsNoLongerAllowed()
+    {
+        var models = new Dictionary<string, IReadOnlyList<string>> { ["text.generate"] = ["lm:gemma"], ["image.generate"] = ["openrouter:someone/imagine"] };
+        _ui.Consent = new ConsentAnswer(true, 0.05m, AutoDecide: true, [], models);
+        await RequestAsync(Manifest(TextBlock + "," + PictureBlock));
+        Assert.Equal(["image.generate", "text.generate"], _store.Read(s => s.Site(Site)!.Skills));
+
+        // The site now also wants speech: the window shows all three, and the visitor leaves the pictures off.
+        _ui.Consent = new ConsentAnswer(true, 0.05m, AutoDecide: true, ["image.generate"], models);
+        await RequestAsync(Manifest(TextBlock + "," + PictureBlock + ",\"audio.transcribe\":{\"required\":false}"));
+        Assert.True(_ui.Consents.Last().Rows.Single(r => r.Skill == "image.generate").AlreadyAllowed);
+        Assert.DoesNotContain("image.generate", _store.Read(s => s.Site(Site)!.Skills));
+        Assert.Contains("text.generate", _store.Read(s => s.Site(Site)!.Skills));
     }
 
     [Fact]

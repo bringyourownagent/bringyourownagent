@@ -10,7 +10,8 @@ another (BYOA_OPENROUTER_ENDPOINT: the key is a made-up one, nothing leaves this
   agent     the visitor's own agent (its program is cmd.exe; it is never run here)
 Site A asks for text (required) and pictures (optional). The window shows two sections with the same controls; Nano is in both, Imagine only in the
 pictures, Texty and Alpha only in the text, the agent only in the text; "1 of your models does not fit" counts the local model that draws, in the
-picture section. With the optional picture section unticked, the grant has no image.generate. Site B takes both sections: the wallet asks before the
+picture section. With the optional picture section unticked, the grant has no image.generate; a new link of site A then shows the same window,
+with "already allowed" on the text, and Allow adds the pictures. Site B takes both sections: the wallet asks before the
 first picture (the price is not known), the pictures arrive as image frames that join to the stand-in's bytes with the same sha256, one of them over a
 megabyte in several parts, one made smaller by the wallet when the site's limit asks for it, and the refs of the grant do not repeat.
 Buttons are pressed through UI Automation only.
@@ -288,6 +289,24 @@ try:
     check("... but the wallet says it can serve pictures", "image.generate" in (grant.get("capabilities") or []) and "parts" in grant["capabilities"], str(grant.get("capabilities")))
     refused = site_a.call_image("m1")
     check("a picture call on that grant is answered ok:false", refused.get("ok") is False, str(refused)[:200])
+
+    # ------------------------------------------------------------------ site A asks again for its pictures: the same window, the text "already allowed"
+    again = desk.start([a.exe, "--url", site_a.new_link()], env=env)
+    ui.ONLY_PIDS = {wallet.pid, again.pid}
+    consent = ui.to_consent(40)
+    check("site A's second window shows", consent is not None)
+    time.sleep(1.5)
+    check("it is the same window as the first time: both sections, under \"Asks for\"",
+          has_text(consent, "Asks for") and has_text(consent, "Text generation") and has_text(consent, "Image generation"))
+    check("the text, allowed before, says \"already allowed\"", present(consent, "ConsentAllowed-text.generate"))
+    check("the pictures, asked for now, do not", not present(consent, "ConsentAllowed-image.generate", 0.5))
+    check("no \"Only what is new\" and no \"updated\" chip", not has_text(consent, "Only what is new") and not has_text(consent, "updated"))
+    check("the text models are ticked as before", ticked(consent, NANO))
+    shot(consent, "2b-asks-for-more")
+    ui.invoke(consent, "ConsentAllow")
+    check("site A is connected again, now with the pictures",
+          wait_for(lambda: len(site_a.hellos) >= 2 and sorted(site_a.hellos[-1]["grant"].get("skills") or []) == ["image.generate", "text.generate"], 30),
+          str(site_a.hellos[-1]["grant"].get("skills") if site_a.hellos else None))
 
     # ------------------------------------------------------------------ site B: both sections taken, a picture comes
     second = desk.start([a.exe, "--url", site_b.new_link()], env=env)

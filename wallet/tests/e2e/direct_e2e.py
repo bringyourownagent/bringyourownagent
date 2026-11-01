@@ -14,7 +14,7 @@ Checks: the scheme is registered; a link (with its manifest inside, CONTRACT-DIR
 request of any kind reaches the site before Allow; the notice and consent (real clicks); hello after Allow, with the
 models loaded first, and the site's welcome echoing the manifest; calls with real Russian and Slovak speech over the
 connection (answered by the program's speech model); activity marked "via link"; a restart of the wallet reconnects with the stored pairing and no notice; a
-site that asks for more on a reconnect gets bye, and a new link shows only the difference; a site whose welcome does
+site that asks for more on a reconnect gets bye, and a new link shows the same window with "already allowed"; a site whose welcome does
 not echo its link's manifest gets bye and nothing of the link is stored or revoked; decline and "Block in Sites…" from a
 link: the site never hears from the wallet, and nothing is stored (activity: declined), so a later link asks again; a
 link to a paired site that decides on its own still asks first (notice, consent), and a bad session then gets an error
@@ -230,10 +230,10 @@ check("after a restart the site's welcome asks for more: the wallet says bye and
 open_link(main.new_link())
 c = ui.to_consent(20)
 time.sleep(0.8)
-only_new = c.TextControl(Name="Only what is new", searchDepth=30).Exists(2, 0.2)
+only_new = c.TextControl(Name="already allowed", searchDepth=30).Exists(2, 0.2)
 ui.shot(c, os.path.join(a.shots, "26-link-difference.png"))
 ui.invoke(c, "ConsentAllow")                       # the site still decides on its own: the window does not ask for it again
-check("a new link then shows only the difference, and Allow connects again", only_new and main.wait_hello(45) and main.live is not None)
+check("a new link then shows the same window with \"already allowed\", and Allow connects again", only_new and main.wait_hello(45) and main.live is not None)
 
 # ---------------------------------------------------------------------------------------------- a site whose welcome does not echo its link's manifest
 open_link(liar.new_link())

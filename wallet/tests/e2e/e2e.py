@@ -16,7 +16,7 @@ transcripts in Russian and Slovak with latency per source; the first call after 
 the paid fallback asks first (Allow once / No), with real money kept to a few hundredths of a cent; a no-click
 request gives null and a quiet badge; decline (and Esc) gives null; block gives null and no notice next time;
 "decide on my own" gives a silent grant without a click; the rate limit, an over-long clip and a tiny budget give
-ok:false; release ends the grant; a grant is bound to its origin; asking for more shows only the difference.
+ok:false; release ends the grant; a grant is bound to its origin; asking for more shows the same window, with "already allowed" on what the grant covers.
 Needs: patchright (Chromium), uiautomation, pillow. Windows only.
 """
 import argparse
@@ -505,16 +505,16 @@ with sync_playwright() as p:
     r = ev(dec, "([f, l, g]) => window.transcribe(f, l, g)", [words["ru"][0]["file"], "ru", grant["grantId"]])
     check("another site cannot use this site's grant", r["result"] == {"ok": False})
 
-    # ------------------------------------------------------------------ asking for more shows only the difference
+    # ------------------------------------------------------------------ asking for more shows the same window, with "already allowed"
     ev(main, "window.MANIFEST.expectedCost = { perSession: '0.10 USD' }")
     press_connect(main)
     w = ui.find_window("Agent wallet notice", 20)
     ui.invoke(w, "NoticeShow")
     c = ui.find_window("Agent wallet consent", 10)
     time.sleep(0.8)
-    diff = c.TextControl(Name="Only what is new", searchDepth=30).Exists(2, 0.2)
+    diff = c.TextControl(Name="already allowed", searchDepth=30).Exists(2, 0.2) and c.TextControl(Name="Asks for", searchDepth=30).Exists(1, 0.2)
     ui.shot(c, os.path.join(a.shots, "13-consent-difference.png"))
-    check("asking for more shows only the difference", diff)
+    check("asking for more shows the same window, with \"already allowed\" on what was allowed", diff)
     ui.invoke(c, "ConsentAllow")
     g3 = wait_grant(main)
     check("... and Allow grants it", isinstance(g3, dict))

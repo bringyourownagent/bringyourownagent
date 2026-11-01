@@ -237,9 +237,17 @@ public class NeedsInTheEngineTests
         _ui.Consent = null;
         var again = await RequestAsync(Manifest(Models));
         Assert.Equal(2, _ui.Consents.Count);                                    // asked again, not decided on its own
+        Assert.False(_ui.Consents[^1].Rows.Single().AlreadyAllowed);
         var section = LastSection();
         Assert.DoesNotContain("openrouter:openai/gpt-5-mini", Keys(section.Choices));
-        Assert.NotNull(again);
+        Assert.Null(again);                                                    // the visitor's answer ticks no model that fits: as the first time, nothing to grant
+        Assert.DoesNotContain("text.generate", _store.Read(s => s.Site(Site)!.Skills));
+
+        // He ticks the model that fits: the site gets it.
+        _ui.Consent = new ConsentAnswer(true, 0.05m, AutoDecide: true, [], new Dictionary<string, IReadOnlyList<string>> { ["text.generate"] = ["lm:gemma"] });
+        var picked = await RequestAsync(Manifest(Models));
+        Assert.Equal("text.generate", Assert.Single(_store.Read(s => s.Site(Site)!.Skills)));
+        Assert.NotNull(picked);
     }
 
     [Fact]

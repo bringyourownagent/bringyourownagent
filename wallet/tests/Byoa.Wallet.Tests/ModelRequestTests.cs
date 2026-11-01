@@ -495,6 +495,7 @@ public class ModelRequestTests
         Assert.Equal(2, _ui.Consents.Count);
         Assert.True(_ui.Consents[1].IsDifference);
         Assert.NotNull(_ui.Consents[1].Rows.Single().Models);
+        Assert.False(_ui.Consents[1].Rows.Single().AlreadyAllowed);                // its models are asked about again
         Assert.Equal(3, _store.Read(s => s.Site(Site)!.ModelsFor("text.generate")!.SourceIds.Count));
     }
 
