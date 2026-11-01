@@ -65,7 +65,8 @@ export function openWalletLink(link) {
  * @param {string} [options.newCodeUrl='/byoa/code']   POST: answers `{ code, link }`.
  * @param {string} [options.stateUrl='/byoa/state']    GET `?code=...`: answers `{ state, pairing? }`.
  * @param {string} [options.cancelUrl='/byoa/cancel']  POST `{ code }`: the page stopped waiting.
- * @param {number} [options.waitMs=90000]   After this long: `{ state: 'timeout' }`, with no other detail.
+ * @param {number} [options.waitMs]   After this long: `{ state: 'timeout' }`, with no other detail. Default: as long as the code lives
+ *   (`expiresIn` of the server's answer), else 10 minutes.
  * @param {number} [options.pollMs=1000]
  * @param {AbortSignal} [options.signal]    Abort to cancel: `{ state: 'cancelled' }`.
  * @param {(issued: { code: string, link: string, check?: string }) => void} [options.onIssued]  Called once the
@@ -87,7 +88,7 @@ let connecting = null;
 async function connect(options) {
   const {
     newCodeUrl = '/byoa/code', stateUrl = '/byoa/state', cancelUrl = '/byoa/cancel',
-    waitMs = 90_000, signal, open = openWalletLink, onIssued,
+    waitMs, signal, open = openWalletLink, onIssued,
   } = options;
   const pollMs = Math.max(options.pollMs ?? 1000, 5); // never a busy loop
   const fetchJson = async (url, init) => {
@@ -105,7 +106,8 @@ async function connect(options) {
   try { onIssued?.({ code, link: issued.link, ...(check ? { check } : {}) }); } catch { /* the page's own trouble */ }
   try { open(issued.link); } catch { return { state: 'error' }; }
 
-  const until = Date.now() + waitMs;
+  const lifeMs = Number(issued.expiresIn) > 0 ? Number(issued.expiresIn) * 1000 : 600_000;
+  const until = Date.now() + (waitMs ?? lifeMs);
   while (Date.now() < until) {
     if (signal?.aborted) break;
     await sleep(pollMs, signal);

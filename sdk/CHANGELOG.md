@@ -2,7 +2,9 @@
 
 The libraries share one version number and one rule set. Dates are UTC.
 
-## Unreleased (the next shared version)
+## 0.0.5 (2026-11-01)
+
+- A one-time code now lives 10 minutes, not 120 seconds (CONTRACT-DIRECT.md §1 and §4; wallet 0.36.1 waits as long for the visitor). Node.js `CODE_LIFE_MS` and .NET `RelayOptions.CodeLifeSeconds` default to 600; the answer's `expiresIn` says it. `connectWithoutExtension` waits as long as `expiresIn` (else 10 minutes) unless `waitMs` is given, where it waited 90 seconds. A site that wants its codes shorter sets the option.
 
 - Node.js and .NET relays: when a wallet sends no `capabilities` (wallet 0.35 and older) the page gets `null`, not an empty list, so an older wallet is told apart from one that understands none (`grant.capabilities` / `capabilities` in `wait` and `status`).
 

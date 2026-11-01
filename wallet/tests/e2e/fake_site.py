@@ -5,7 +5,7 @@ contacted nothing before Allow. It runs on http://localhost:<port> (the wallet a
 BYOA_WALLET_DEV_LOCAL=1).
 
     site = FakeSite("a"); site.start()
-    link = site.new_link()            # a fresh session code, valid 120 s, single use
+    link = site.new_link()            # a fresh session code, valid 10 minutes, single use
     site.wait_hello(30)               # the wallet's hello (after the visitor's Allow)
     site.call(wav_bytes, "ru")        # -> {"type": "result", "id": n, "ok": ..., ...}
 

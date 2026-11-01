@@ -66,7 +66,7 @@ request open behind a proxy. `state` never tells a «no» from a «no wallet».
 | `MaxAnswerChars` | `128 000` | The longest answer the site keeps |
 | `MaxModels` | `64` | Participants read out of one skill's list of a grant (at most eight skills are read) |
 | `MaxJobRequestBytes` | `1 500 000` | A bigger request body is refused (413) before it is read |
-| `CodeLifeSeconds` | `120` | How long a one-time code lives |
+| `CodeLifeSeconds` | `600` | How long a one-time code lives |
 | `CodesPerMinute`, `MaxCodes` | `10`, `2000` | Per visitor address, and the whole table |
 | `MaxPairings`, `PairingIdleHours` | `1000`, `24` | A full table makes room instead of refusing; idle pairings are forgotten |
 | `JobSeconds`, `JobsPerMinute`, `MaxJobsPerRoom`, `MaxJobs` | `300`, `30`, `24`, `2000` | How long a call may take and how many a page may start |

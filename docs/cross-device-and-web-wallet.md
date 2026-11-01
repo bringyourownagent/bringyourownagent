@@ -28,7 +28,7 @@ The wallet side of A is the only change to the existing wallet. D is a separate 
 
 ## 1. What exists today, in the facts that matter here
 
-- **The link** carries `endpoint` (a `wss://` URL), `manifest` (base64url, at most 4096 bytes), `session` (a 192-bit one-time code, 120 s, single use) (CONTRACT-DIRECT §1, §7). The wallet retries its connection with the code for 60 seconds after the link.
+- **The link** carries `endpoint` (a `wss://` URL), `manifest` (base64url, at most 4096 bytes), `session` (a 192-bit one-time code, 10 minutes, single use) (CONTRACT-DIRECT §1, §7). The wallet retries its connection with the code for 60 seconds after the link.
 - **No contact before Allow.** The wallet reads the manifest from the link and asks the visitor; it does nothing on the network until Allow. A site cannot tell "declined" from "no wallet".
 - **The check code** (§3a): four characters computed from `session`, shown by the site's page while it waits and by the wallet's consent window. The visitor Allows only if they match. It exists so that a link made for somebody else's page cannot pair his wallet with that stranger's session.
 - **Pairing**: with "decide on my own", the site's `welcome` token lets the wallet reconnect later without a link. The token is a bearer secret of the site's server, tied to the visitor's browser session.
@@ -52,9 +52,9 @@ Names: **S** is the device with the site open (a phone). **W** is the device wit
 4. The wallet shows the consent window. It says plainly that this link did **not** come through the browser on this computer ("from another device or pasted by hand: check the code"), shows the check code, and keeps Allow disabled until the visitor ticks that the code is the same as on S's page. If the site's manifest has no `connect.check`, the window says the site gives no way to check, and tells him to Allow only if he started this a moment ago.
 5. Allow: the wallet dials `wss://site/byoa/ws` and says `hello` with the session. The site binds the connection to S's room. S's page polls, sees `connected`, and the site works on S with W's models.
 
-Who sends what to whom: S to the site (code request, polls); S to W through the visitor's chosen channel (the link, once); W to the site only after Allow. The channel the link travels through (a messenger, a mail server, a clipboard history) sees the link, and so can read a 120-second code. Section 4 says what that gives.
+Who sends what to whom: S to the site (code request, polls); S to W through the visitor's chosen channel (the link, once); W to the site only after Allow. The channel the link travels through (a messenger, a mail server, a clipboard history) sees the link, and so can read a 10-minute code. Section 4 says what that gives.
 
-*Limit:* the visitor must be at W's screen when step 4 happens, within about a minute (the wallet stops retrying 60 s after the link, and the code dies at 120 s).
+*Limit:* the visitor must be at W's screen when step 4 happens, within about a minute (the wallet stops retrying 60 s after the link, and the code dies after 10 minutes).
 
 ### A+. A hand-off URL on the site itself
 
@@ -174,7 +174,7 @@ What no flow gives anybody: the visitor's keys, his models directly, his files, 
 
 | Thing | Lives | What a thief gets | What he does not get |
 |---|---|---|---|
-| The link (A) | 120 s, once | If he uses it **before** the wallet: he becomes "the wallet" of S's room. The site's calls (the visitor's prompts, maybe his voice) go to him, and he can answer anything. The real wallet then hears `bad-session` and the visitor sees "did not connect" | Access to the real wallet, keys, models |
+| The link (A) | 10 min, once | If he uses it **before** the wallet: he becomes "the wallet" of S's room. The site's calls (the visitor's prompts, maybe his voice) go to him, and he can answer anything. The real wallet then hears `bad-session` and the visitor sees "did not connect" | Access to the real wallet, keys, models |
 | The hand-off URL (A+) | 120 s, once | The same as the link, one step earlier | The same |
 | The typed short code (A+) | 120 s, once | The same; 8 characters (about 40 bits) so lookups are rate-limited | The same |
 | The adopt token (F) | 120 s, once | A second room on the visitor's **live pairing**: he can use the visitor's AI at that site within the grant, until the visitor disconnects | Other sites; the wallet itself |
@@ -187,7 +187,8 @@ What no flow gives anybody: the visitor's keys, his models directly, his files, 
 
 | What | Limit |
 |---|---|
-| One-time code, hand-off token, adopt token | 120 seconds, single use (as the existing code) |
+| One-time code | 10 minutes, single use |
+| Hand-off token, adopt token | 120 seconds, single use |
 | Codes asked for | per visitor address, as in CONTRACT-DIRECT section 5 (the relay library: 10 a minute) |
 | Typed short code (A+): wrong tries | 5 per address per 10 minutes, then refused for 10 minutes; a global ceiling on lookups per minute |
 | Rooms per pairing (F) | at most 3 |
@@ -278,7 +279,7 @@ Not specified yet, only designed here: the rendezvous (B) and the relay (C). Bot
 | C. Relay with E2E | weeks to months, plus an outside review | A hosted service (cost, uptime, abuse, legal contact), key management on a phone, the phone as a remote consent channel, the metadata the relay sees |
 | B. Rendezvous | days | The operator sees every link and can race the code; abuse as a link-delivery service; guessable short codes. Not recommended |
 
-**Two risks that cross all pieces.** (1) *Consent at a screen the visitor cannot see* is the real obstacle to "my phone uses my home PC", and only F (after one setup) and C remove it. A and A+ must say plainly, in the page block, that the PC's window waits for him. (2) *Links that pass through other people's systems* (messengers, mail, clipboards) are readable for 120 seconds. That is enough to be raced, never enough to drive the wallet; the check code and the short life are the defence.
+**Two risks that cross all pieces.** (1) *Consent at a screen the visitor cannot see* is the real obstacle to "my phone uses my home PC", and only F (after one setup) and C remove it. A and A+ must say plainly, in the page block, that the PC's window waits for him. (2) *Links that pass through other people's systems* (messengers, mail, clipboards) are readable for 10 minutes. That is enough to be raced, never enough to drive the wallet; the check code is the defence.
 
 ## 8. Questions for the owner
 

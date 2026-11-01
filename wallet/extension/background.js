@@ -6,7 +6,7 @@
 
 const HOST = "org.bringyourownagent.wallet";
 // A call may wait in the wallet for its own limit (up to ten minutes: a model that is still starting, a long answer), so the extension waits a little longer.
-const TIMEOUT_MS = { request: 125000, call: 610000, release: 10000, status: 4000, open: 30000 };
+const TIMEOUT_MS = { request: 605000, call: 610000, release: 10000, status: 4000, open: 30000 };
 const IDLE_MS = 120000;
 
 let port = null;

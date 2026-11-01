@@ -131,11 +131,11 @@ public class HubTests
     }
 
     [Fact]
-    public void ACodeExpiresAfter120SecondsAndAnIdlePairingAfterADay()
+    public void ACodeExpiresAfterTenMinutesAndAnIdlePairingAfterADay()
     {
         var (hub, clock) = Make();
         var code = hub.NewCode(Rooms.A, "203.0.113.5");
-        clock.Advance(TimeSpan.FromSeconds(119));
+        clock.Advance(TimeSpan.FromSeconds(599));
         Assert.Equal("waiting", hub.CodeState(Rooms.A, code).State);
         clock.Advance(TimeSpan.FromSeconds(2));
         Assert.Equal("expired", hub.CodeState(Rooms.A, code).State);

@@ -21,8 +21,8 @@ namespace Byoa.Wallet.Engine;
 /// </summary>
 public sealed partial class WalletEngine
 {
-    /// <summary>How long a request may wait for the visitor (the page's promise resolves null after that).</summary>
-    public static TimeSpan RequestTimeout { get; set; } = TimeSpan.FromSeconds(120);
+    /// <summary>How long a request may wait for the visitor (the page's promise resolves null after that). As long as a link's one-time code lives (CONTRACT-DIRECT.md).</summary>
+    public static TimeSpan RequestTimeout { get; set; } = TimeSpan.FromMinutes(10);
 
     /// <summary>How long a paid-fallback question waits for an answer.</summary>
     public static TimeSpan PaidQuestionTimeout { get; set; } = TimeSpan.FromSeconds(60);
@@ -49,9 +49,9 @@ public sealed partial class WalletEngine
     public static TimeSpan PreparationTimeout { get; set; } = TimeSpan.FromSeconds(180);
 
     /// <summary>
-    /// A link's one-time code lives 120 seconds (CONTRACT-DIRECT.md): the wait for the models after the link's Allow ends this long
-    /// after the link came, so that the wallet still connects with a valid code. The wait is never shorter than
-    /// <see cref="MinPreparationWait"/>.
+    /// A link's one-time code lives ten minutes (CONTRACT-DIRECT.md), and the visitor may have used most of them before the link came: the wait for
+    /// the models after the link's Allow ends this long after the link came, so that the wallet still connects with a valid code. The wait is never
+    /// shorter than <see cref="MinPreparationWait"/>.
     /// </summary>
     public static TimeSpan LinkPreparationBudget { get; set; } = TimeSpan.FromSeconds(100);
 

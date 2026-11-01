@@ -24,7 +24,7 @@ export interface ConnectOptions {
   stateUrl?: string;
   /** POST `{ code }`. Default `/byoa/cancel`. */
   cancelUrl?: string;
-  /** Default 90000. */
+  /** Default: as long as the code lives (`expiresIn`), else 600000. */
   waitMs?: number;
   /** Default 1000; never less than 5. */
   pollMs?: number;

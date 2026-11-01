@@ -31,6 +31,15 @@ public class ModelNamesTests
     [InlineData("x-ai/grok-4.1-fast", "x-ai/grok-4-1-fast:free", true)]
     [InlineData("xai/grok-4.1-fast", "x-ai/grok-4.1-fast", true)]
     [InlineData("google/gemma-3-1b-it", "google/gemma-3-12b-it", false)]
+    [InlineData("agent/*", "agent/claude-code", true)]
+    [InlineData("agent/*", "gemma-3-1b-it", false)]                       // a mask of one vendor takes that vendor's models only, not every model whose maker is unknown
+    [InlineData("agent/*", "qwen3-5-4b", false)]
+    [InlineData("agent/*", "ggml/gemma-3-1b-it", false)]
+    [InlineData("agent/*", "anthropic/claude-sonnet-5-5", false)]
+    [InlineData("google/*", "gemma-3-1b-it", true)]                       // but a file of a family the wallet knows belongs to its maker
+    [InlineData("google/*", "ggml/gemma-3-1b-it", true)]
+    [InlineData("google/*", "qwen3-5-4b", false)]
+    [InlineData("google/*", "google/gemini-3-8-flash", true)]
     public void ASitesNameOrMaskFindsTheModel(string pattern, string canonical, bool expected) =>
         Assert.Equal(expected, ModelNames.Matches(pattern, canonical));
 

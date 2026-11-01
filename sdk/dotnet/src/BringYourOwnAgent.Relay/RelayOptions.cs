@@ -89,8 +89,8 @@ public sealed class RelayOptions
     /// <summary>A job request bigger than this is refused before it is read (the page sends a chat call, never more).</summary>
     public int MaxJobRequestBytes { get; set; } = 1_500_000;
 
-    /// <summary>How long a one-time code lives (CONTRACT-DIRECT.md §4: 120 seconds).</summary>
-    public int CodeLifeSeconds { get; set; } = 120;
+    /// <summary>How long a one-time code lives (CONTRACT-DIRECT.md §4: ten minutes).</summary>
+    public int CodeLifeSeconds { get; set; } = 600;
 
     /// <summary>How many codes one visitor address may ask for in a minute.</summary>
     public int CodesPerMinute { get; set; } = 10;

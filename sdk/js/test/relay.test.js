@@ -3,7 +3,7 @@
 
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
-import { CHECK_ALPHABET, connectCheck, createRelay, encodeManifest } from '../src/site/relay.js';
+import { CHECK_ALPHABET, CODE_LIFE_MS, connectCheck, createRelay, encodeManifest } from '../src/site/relay.js';
 import { MANIFEST, connect, hello, registerCleanup, sleep, start } from './relay-helpers.js';
 
 registerCleanup();
@@ -106,7 +106,7 @@ describe('the hello', () => {
   test('an old code and a wrong version are refused', async () => {
     const env = await start();
     const { code } = env.relay.newCode('p', { ip: 'a' });
-    env.clock.t += 121_000;
+    env.clock.t += CODE_LIFE_MS + 1_000;
     const late = env.wallet();
     await late.open;
     late.send(hello(code));

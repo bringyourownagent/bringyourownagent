@@ -32,7 +32,7 @@ public sealed class DirectOptions
     public int MaxFrameBytes { get; init; } = 4 * 1024 * 1024;
     public int MaxConnectionsPerOrigin { get; init; } = 4;
 
-    /// <summary>How long a first connection keeps trying with its session code (the site keeps a code 120 s).</summary>
+    /// <summary>How long a first connection keeps trying with its session code (the site keeps a code ten minutes).</summary>
     public TimeSpan SessionRetryWindow { get; init; } = TimeSpan.FromSeconds(60);
 
     /// <summary>Links acted on at once; more are ignored (a program flooding the wallet with links).</summary>

@@ -13,7 +13,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { isIPv6 } from 'node:net';
 import { validateManifest } from '../manifest.js';
 
-export const CODE_LIFE_MS = 120_000;
+export const CODE_LIFE_MS = 600_000;
 export const MAX_FRAME_BYTES = 4 * 1024 * 1024;
 export const MAX_MANIFEST_BYTES = 4096;
 const PAIRING_IDLE_MS = 24 * 60 * 60 * 1000;

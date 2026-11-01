@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import WebSocket from 'ws';
-import { addressKey, createRelay } from '../src/site/relay.js';
+import { CODE_LIFE_MS, addressKey, createRelay } from '../src/site/relay.js';
 import { MANIFEST, connect, hello, registerCleanup, sleep, start } from './relay-helpers.js';
 
 registerCleanup();
@@ -51,7 +51,7 @@ describe('who may ask for codes', () => {
   test('expired codes are swept even when nobody asks for new ones', async () => {
     const env = await start();
     const { code } = env.relay.newCode('p', { ip: 'a' });
-    env.clock.t += 125_000;
+    env.clock.t += CODE_LIFE_MS + 5_000;
     env.relay._sweep(env.clock.t);
     assert.equal(env.relay._codes.size, 0);
     assert.deepEqual(env.relay.codeState('p', code), { state: 'expired' });

@@ -61,7 +61,7 @@ async function signIn(pendingLink, remember = false) {
   const verifier = makeVerifier();
   const state = makeVerifier();
   sessionStorage.setItem(OAUTH, JSON.stringify({ state, verifier, remember }));
-  if (pendingLink) sessionStorage.setItem(PENDING, pendingLink);                  // the link lives 120 seconds: it is kept only as long as this tab
+  if (pendingLink) sessionStorage.setItem(PENDING, pendingLink);                  // the link lives 10 minutes: it is kept only as long as this tab
   const callbackUrl = `${location.origin}${location.pathname}`;
   location.assign(authUrl({ callbackUrl, challenge: await challengeOf(verifier), state }));
 }

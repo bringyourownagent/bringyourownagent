@@ -17,7 +17,7 @@
 (The `manifest` parameter is a value, not a URL: see §7.)
 
 - **`endpoint`.** A `wss://` URL. The site's identity, shown to the visitor and used for grants, is the origin `https://<that host>[:port]`. TLS proves it. Grants, limits, blocks and "decide on my own" are shared with the extension transport for the same origin.
-- **`session`.** A one-time pairing code, at least 128 bits of randomness, URL-safe, valid for 120 seconds, single use. The site's server creates it for one browser page.
+- **`session`.** A one-time pairing code, at least 128 bits of randomness, URL-safe, valid for 10 minutes (600 seconds), single use. The site's server creates it for one browser page. The time is long enough for a visitor who has to start the wallet first and then read the wallet's window; a site may keep a code shorter. What protects a link that someone else read is the check code (§7), not the short life.
 - **Allowed hosts.** The wallet refuses to act on a link whose endpoint is not `wss`, or whose host is an IP literal, `localhost`, a `.local` name, or resolves to a private, loopback or link-local address. The one exception is a developer switch for tests, the environment variable `BYOA_WALLET_DEV_LOCAL=1`, which allows `ws://localhost`.
 - **Bad links.** Malformed or unknown links are ignored, with an entry in the wallet's activity log and no network access.
 
@@ -95,8 +95,8 @@ Rules for calls and the connection:
 
 | Thing | It ends when |
 |---|---|
-| A one-time code | it is used once, or 120 seconds pass, or the page cancels it |
-| The wallet's retries with a code | 60 seconds after the link (the wallet gives up; the code itself lives 120 s) |
+| A one-time code | it is used once, or 10 minutes pass, or the page cancels it |
+| The wallet's retries with a code | 60 seconds after the link (the wallet gives up; the code itself lives 10 minutes) |
 | A `bad-session` error | the wallet forgets any pairing it was trying and stops; the visitor needs a new link |
 | A pairing | the visitor revokes, blocks or pauses the site, declines a page's window that was opened before a link's welcome (§3), a reconnect's welcome asks for more than the grant covers, the site forgets it (idle for 24 hours or more is a sensible limit), or the site restarts (a site that keeps pairings in memory forgets them all) |
 | A visitor's Allow for a link, held | the site's welcome echoes the link's manifest (then the answer is stored, §3), or the connection ends first, or the visitor decides about the site in the wallet meanwhile, or a newer Allow from a link replaces it (§3) |
@@ -107,7 +107,7 @@ Rules for calls and the connection:
 - **Offer both ways when it can.** "Connect through the extension", shown only when `window.byoa` exists, and "Connect without the extension", always shown.
 - **Connecting without the extension.**
   - The click asks the server for a pairing code bound to this browser page, then navigates to the `bringyourownagent://` link inside the same click handler.
-  - The page shows a waiting state with a cancel button, and after 90 seconds a plain "the wallet did not connect" (no other detail).
+  - The page shows a waiting state with a cancel button, and, once the code has lived its 10 minutes, a plain "the wallet did not connect" (no other detail). A button to start again (cancel the code, ask for a new one and a new check code) saves the visitor who closed the wallet's window from waiting for the timer.
   - When the wallet's `hello` arrives, the server binds that wallet connection to the page and tells the page it is connected.
 - **The indicator.** The page shows whether the wallet is connected in its header and lets the visitor disconnect it at any moment, with one click: the page tells its server, the server says `bye` to the wallet, closes the connection and forgets the pairing (the same as the wallet's own Revoke). See CONTRACT.md §5.
 - **Reload.** The page stores the pairing token that the server sends it on `welcome` (for example in `localStorage`). On reload it tells the server; if the wallet connection with that pairing is live, the server binds it again.
@@ -117,7 +117,7 @@ Rules for calls and the connection:
 - **The page's three HTTP calls** are the site's own business, but they must not tell a "no" from a "no wallet". The state query answers only `waiting`, `connected` (with the pairing) or `expired`. The reference JavaScript library uses `POST /byoa/code` returning `{ code, link }` (an older site used the name `session` for `code`), `GET /byoa/state?code=` returning `{ state, pairing? }`, and `POST /byoa/cancel` with `{ code }`. The code identifies the page that asked for it, not the visitor: the site ties it to its own page or session id.
 - **Rate limits** are per visitor address and per page. A site behind a reverse proxy takes the address from a header its own proxy sets, never from one the visitor can send.
 - **Server limits.**
-  - Codes are single use, expire after 120 seconds, and are rate-limited per IP.
+  - Codes are single use, expire after 10 minutes, and are rate-limited per IP.
   - A code the server did not issue, or one already used or expired, gets `error` with `bad-session`. This is a MUST: the wallet's proof that the server issued a link rests on it (§7).
   - At most one wallet connection per pairing.
   - Frames from the wallet: at least 1 MB each. The server MAY refuse more, and then closes the connection. A server that can take bigger frames says so with the manifest limit `maxFrameBytes` (§4); the pictures of one call still come as parts of at most 512 KB each (wallet 0.37).

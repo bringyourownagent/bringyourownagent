@@ -43,6 +43,7 @@ public static partial class ModelNames
     /// <summary>
     /// Whether a model name (the site's pattern: a name, or a mask ending in <c>*</c>) names this model. A pattern with a vendor
     /// needs the same vendor when the model's vendor is known; without a vendor on either side only the model part is compared.
+    /// A mask of a vendor alone ("agent/*") has no model part to compare: it takes the models of that vendor and no others.
     /// </summary>
     public static bool Matches(string? pattern, string? canonical)
     {
@@ -54,6 +55,13 @@ public static partial class ModelNames
         var patternTail = ModelPart(raw);
         var vendor = VendorPart(canonical);
         var tail = ModelPart(canonical);
+        if (star && patternVendor is not null && patternTail.Length == 0)
+        {
+            // Its own vendor, or for a vendor-less or unknown-maker file the family it belongs to ("gemma" is Google's); "agent/*" never takes a local model.
+            if (vendor == patternVendor) return true;
+            return (vendor is null || !KnownVendors.Contains(vendor)) && FamilyOwner(tail) == patternVendor;
+        }
+
         // A vendor the wallet knows that differs from the site's is a different model; an unknown maker of a file (ggml-org, unsloth) proves nothing.
         if (patternVendor is not null && vendor is not null && patternVendor != vendor && KnownVendors.Contains(vendor)) return false;
         return star ? tail.StartsWith(patternTail, StringComparison.Ordinal) : tail == patternTail;
@@ -64,12 +72,17 @@ public static partial class ModelNames
     {
         if (VendorPart(canonical) is { } vendor && KnownVendors.Contains(vendor)) return vendor;
         var tail = ModelPart(canonical);
+        return FamilyOwner(tail) ?? VendorPart(canonical) ?? "other:" + tail;
+    }
+
+    static string? FamilyOwner(string tail)
+    {
         foreach (var (prefix, owner) in Families)
         {
             if (tail.StartsWith(prefix, StringComparison.Ordinal)) return owner;
         }
 
-        return VendorPart(canonical) ?? "other:" + tail;
+        return null;
     }
 
     /// <summary>

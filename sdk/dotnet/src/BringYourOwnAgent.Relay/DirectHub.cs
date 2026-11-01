@@ -60,7 +60,7 @@ public sealed record GrantView(string[] Skills, TextLimits Limits, ModelView[] M
 /// with every request (<see cref="IsRoomId"/> accepts only that shape). A code and a pairing belong to the room that asked for the code,
 /// so one visitor's page can never reach another visitor's wallet — <see cref="Channel"/>, <see cref="Status"/> and <see cref="Release"/>
 /// all refuse a pairing that is not this room's.
-/// Codes: 192 random bits, URL-safe, single use, <see cref="RelayOptions.CodeLifeSeconds"/> (120 s), at most
+/// Codes: 192 random bits, URL-safe, single use, <see cref="RelayOptions.CodeLifeSeconds"/> (600 s), at most
 /// <see cref="RelayOptions.CodesPerMinute"/> (10) a minute per visitor address, at most <see cref="RelayOptions.MaxCodes"/> alive.
 /// Pairing tokens: 192 random bits. At most one live wallet connection per pairing: a new hello with the same token replaces the old one.
 /// At most <see cref="RelayOptions.MaxPairings"/> (1000) pairings: a new one pushes out the oldest that has no wallet connected instead of

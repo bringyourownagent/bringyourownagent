@@ -132,7 +132,7 @@ export class Relay extends EventEmitter {
   readonly socketCount: number;
 
   /**
-   * A new one-time code for one page (192 random bits, valid 120 s, single use) and the link that carries it.
+   * A new one-time code for one page (192 random bits, valid 10 minutes, single use) and the link that carries it.
    * `pageKey` is any string that names the page or game session on your side and does not change while the page waits:
    * only the same key can ask about the code. `ip` is the visitor's address and is required: take it from the
    * connection, or from a header that your own reverse proxy sets (never one the visitor can send).

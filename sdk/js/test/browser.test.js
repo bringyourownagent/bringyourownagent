@@ -115,6 +115,16 @@ describe('connect without the extension', () => {
     assert.equal(JSON.parse(cancel.body).code, 'c');
   });
 
+  test('without waitMs it waits as long as the code lives (expiresIn), and says timeout after that', async () => {
+    const seen = fakeFetch((url) => (url === '/byoa/code'
+      ? { json: { code: 'c', link: 'bringyourownagent://x', expiresIn: 0.05 } } : { json: { state: 'waiting' } }));
+    const began = Date.now();
+    assert.deepEqual(await connectWithoutExtension({ pollMs: 5, open() {} }), { state: 'timeout' });
+    const took = Date.now() - began;
+    assert.ok(took >= 40 && took < 2000, `waited ${took} ms`);
+    assert.equal(seen.at(-1).url, '/byoa/cancel');
+  });
+
   test('aborting stops the wait', async () => {
     fakeFetch((url) => (url === '/byoa/code' ? { json: { code: 'c', link: 'bringyourownagent://x' } } : { json: { state: 'waiting' } }));
     const controller = new AbortController();

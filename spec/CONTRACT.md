@@ -12,7 +12,7 @@ window.byoa = {
 
   // Ask for permission. Call it from a click handler on the page (transient user activation).
   // Resolves with a grant, or with null meaning "AI unavailable".
-  // null covers: declined, blocked, no fitting model, no answer within 120 s, wallet not running, and so on.
+  // null covers: declined, blocked, no fitting model, no answer within 10 minutes, wallet not running, and so on.
   // The page cannot tell these apart, and that is intended.
   // A site that works with text also gets its `limits` (section 3.4; the wallet's picture limits of
   // section 3.4a too from wallet 0.37); a site that asked for models

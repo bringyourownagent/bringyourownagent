@@ -103,7 +103,7 @@ public sealed class SiteTests : IAsyncLifetime
 
         Assert.Equal(ConnectCheck.Compute(session), code.GetProperty("check").GetString());        // §3a: what the page shows
         Assert.Matches("^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{4}$", code.GetProperty("check").GetString());
-        Assert.Equal(120, code.GetProperty("expiresIn").GetInt32());
+        Assert.Equal(600, code.GetProperty("expiresIn").GetInt32());
 
         var (_, _, carried) = WalletClient.ParseLink(link);
         var manifest = JsonDocument.Parse(Encoding.UTF8.GetString(Base64Url.DecodeFromChars(carried))).RootElement;
