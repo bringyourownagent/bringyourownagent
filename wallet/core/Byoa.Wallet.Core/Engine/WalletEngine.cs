@@ -48,15 +48,6 @@ public sealed partial class WalletEngine
     /// </summary>
     public static TimeSpan PreparationTimeout { get; set; } = TimeSpan.FromSeconds(180);
 
-    /// <summary>
-    /// A link's one-time code lives ten minutes (CONTRACT-DIRECT.md), and the visitor may have used most of them before the link came: the wait for
-    /// the models after the link's Allow ends this long after the link came, so that the wallet still connects with a valid code. The wait is never
-    /// shorter than <see cref="MinPreparationWait"/>.
-    /// </summary>
-    public static TimeSpan LinkPreparationBudget { get; set; } = TimeSpan.FromSeconds(100);
-
-    public static TimeSpan MinPreparationWait { get; set; } = TimeSpan.FromSeconds(5);
-
     /// <summary>How long a text call waits for a busy source before it tries the next one.</summary>
     public static TimeSpan BusyWait { get; set; } = TimeSpan.FromSeconds(10);
 
@@ -489,7 +480,7 @@ public sealed partial class WalletEngine
             var auto = Grant(origin, manifest, site.Skills, Money.Parse(site.Budget, 0.20m));
             if (auto is null) return Done(entry, "invalid", "nothing to grant");
             // Silent, but not cold: the routed models load before the page gets its grant.
-            var waited = await WarmBeforeResolveAsync(auto, host, showPreparing: false, connectBy: null, ct).ConfigureAwait(false);
+            var waited = await WarmBeforeResolveAsync(auto, host, showPreparing: false, ct).ConfigureAwait(false);
             entry.Note = (userActivation ? "after a click" : "without a click") + "; decided on its own" + Ready(waited);
             return Done(entry, "auto", null, auto.ToResult());
         }
@@ -598,7 +589,6 @@ public sealed partial class WalletEngine
     async Task<JsonNode?> AskVisitorAsync(string origin, string host, bool secure, RequestedManifest manifest, string? via, string? linkSession, bool handed, CancellationToken ct)
     {
         await Task.Yield();
-        var began = Now;
         var entry = new ActivityEntry { Origin = origin, Kind = Wire.Request, Via = via, Note = "after a click" + (handed ? "; pasted by hand" : "") };
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeout.CancelAfter(RequestTimeout);
@@ -785,7 +775,7 @@ public sealed partial class WalletEngine
             try
             {
                 // The page gets its grant once the routed models are loaded, with "Preparing your model…" meanwhile.
-                var waited = await WarmBeforeResolveAsync(session, host, showPreparing: true, via == ViaLink ? began + LinkPreparationBudget : null, ct).ConfigureAwait(false);
+                var waited = await WarmBeforeResolveAsync(session, host, showPreparing: true, ct).ConfigureAwait(false);
                 // The visitor may have decided about the site while the models loaded: then the link gets no grant.
                 if (via == ViaLink && !_linkDecisions.ContainsKey(session.Id)) return Done(entry, "declined", "the visitor decided about the site while the models loaded");
                 entry.Note = "after a click" + (handed ? "; pasted by hand" : "") + (model.PausedNote is not null ? "; resumed" : "") + (model.IsDifference ? "; only the difference was shown" : "")
@@ -1002,9 +992,9 @@ public sealed partial class WalletEngine
     /// <summary>
     /// Makes the first local source of each of the grant's skills do its simplest job once for real and waits for it, showing
     /// "Preparing your model…" when it takes more than a moment. Returns the seconds waited, or null when nothing had to be waited
-    /// for (or the option is off). <paramref name="connectBy"/> is the moment a link's code still allows the connection.
+    /// for (or the option is off).
     /// </summary>
-    async Task<double?> WarmBeforeResolveAsync(GrantSession session, string host, bool showPreparing, DateTimeOffset? connectBy, CancellationToken ct)
+    async Task<double?> WarmBeforeResolveAsync(GrantSession session, string host, bool showPreparing, CancellationToken ct)
     {
         if (!WarmUpEnabled) return null;
         var (warming, names) = WarmCore(SkillLanguagesOf(session));
@@ -1013,12 +1003,6 @@ public sealed partial class WalletEngine
         if (await Task.WhenAny(warming, Task.Delay(150, ct)).ConfigureAwait(false) != warming && !ct.IsCancellationRequested)
         {
             var limit = PreparationTimeout;
-            if (connectBy is { } by)
-            {
-                var left = by - Now;
-                limit = Min(limit, left < MinPreparationWait ? MinPreparationWait : left);
-            }
-
             using var preparing = showPreparing ? _ui.ShowPreparing(new PreparingModel(session.Origin, host, names)) : null;
             using var preparation = CancellationTokenSource.CreateLinkedTokenSource(ct);
             if (limit > TimeSpan.Zero) preparation.CancelAfter(limit);

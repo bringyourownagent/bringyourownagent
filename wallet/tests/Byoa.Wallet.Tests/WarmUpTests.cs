@@ -20,16 +20,12 @@ public class WarmUpTests : IDisposable
     readonly SettingsStore _store = new(null);
     readonly ActivityLog _log;
     readonly TimeSpan _savedPreparation = WalletEngine.PreparationTimeout;
-    readonly TimeSpan _savedBudget = WalletEngine.LinkPreparationBudget;
-    readonly TimeSpan _savedMinimum = WalletEngine.MinPreparationWait;
 
     public WarmUpTests() => _log = new ActivityLog(null, _time.Now);
 
     public void Dispose()
     {
         WalletEngine.PreparationTimeout = _savedPreparation;
-        WalletEngine.LinkPreparationBudget = _savedBudget;
-        WalletEngine.MinPreparationWait = _savedMinimum;
     }
 
     WalletEngine EngineWith(WarmingSource source) => SpeechRoutes.Engine(_store, [source], _log, _ui, _time);
@@ -109,17 +105,16 @@ public class WarmUpTests : IDisposable
     }
 
     [Fact]
-    public async Task ALinksWaitEndsInTimeForItsOneTimeCode()
+    public async Task ALinkWaitsForThePreparationLikeAnyOtherRequest()
     {
-        WalletEngine.LinkPreparationBudget = TimeSpan.FromMilliseconds(500);
-        WalletEngine.MinPreparationWait = TimeSpan.FromMilliseconds(300);
+        WalletEngine.PreparationTimeout = TimeSpan.FromMilliseconds(700);
         var model = new WarmingSource("local", ["ru", "sk"]) { WarmTime = TimeSpan.FromSeconds(30) };
         var engine = EngineWith(model);
 
         var watch = Stopwatch.StartNew();
         var answer = await engine.RequestViaLinkAsync(Site, JsonNode.Parse(Clips.GeoManifest)!.AsObject(), userActivation: true);
         Assert.NotNull(answer);                                    // the visitor allowed: the connection goes on, the model keeps loading
-        Assert.InRange(watch.Elapsed.TotalSeconds, 0.25, 5);       // the page's own timeout (PreparationTimeout, minutes) was not what ended it
+        Assert.InRange(watch.Elapsed.TotalSeconds, 0.6, 5);        // the wait was the preparation timeout counted from Allow, not a shorter one counted from the link
         Assert.Single(_ui.Infos);
     }
 }
