@@ -146,12 +146,13 @@ describe('calls and what comes back', () => {
     const calls = Array.from({ length: 6 }, () => wallet.call('text.generate', {})); // 4 in flight, 2 queued
     assert.equal(wallet.queued, 2);
     assert.deepEqual(await wallet.call('text.generate', {}), { ok: false }); // over the bound: at once
+    await sleep(100);
+    assert.equal(w.frames.length, 4); // only the four in flight were sent; later a slot may free up just before a queued call's own time is out
     const started = Date.now();
     const answers = await Promise.all(calls); // the wallet never answers
     assert.ok(Date.now() - started < 600, 'the queued calls did not wait for the in-flight ones to time out first');
     assert.ok(answers.every((a) => a.ok === false && a.timedOut === true));
     assert.equal(wallet.queued, 0);
-    assert.equal(w.frames.length, 4);
   });
 
   test('a receipt is cut down to two short strings, and a bad one is dropped', async () => {
