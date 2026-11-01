@@ -3,13 +3,13 @@
 The wallet has its own data folder with four local models served by a fake OpenAI-compatible runtime on a loopback port, and the visitor's agent:
   alpha    declared by the visitor to read and make text only
   vision   declared to read pictures
-  painter  declared to draw pictures (and not ticked "Also use as a text model")
+  painter  declared to write text and to draw pictures (what it reads is not said)
   mystery  nothing declared (nobody knows what it reads)
   agent    the visitor's own agent (its program is cmd.exe; it is never run here)
 A fake site asks for two skills; its text models must read pictures. The window shows two sections, the chips of what the site wants, only the
-models that fit (ticked) or whose abilities are not known (marked, not ticked), the agent as an "agent" row that "can: ... / may lack: ..." and is
-tickable, and a line "2 of your models do not fit" that opens to a reason for each. After Allow the hello carries the wallet's features and only
-verdicts (booleans). A second site that asks for what nothing here is gets no Allow and is told what would fix it. Buttons are pressed through
+models that fit (ticked) or whose abilities are not known (marked, not ticked; the painter writes text, so it is offered), the agent as an "agent" row
+that "can: ... / may lack: ..." and is tickable, and a line "1 of your models does not fit" that opens to its reason. After Allow the hello carries the wallet's features and only
+verdicts (booleans). A second site that asks for what nothing here is (a model that reads pictures, and only the agent) gets no Allow and is told what would fix it. Buttons are pressed through
 UI Automation only.
 
     <python with uiautomation, pillow, aiohttp> consent_needs_ui.py --exe <Byoa.Wallet.exe> --home <empty wallet data folder> [--shots <dir>]
@@ -178,8 +178,10 @@ try:
     time.sleep(1.0)
     shot(consent, "1-sections")
 
-    # the primary-role rule and the fit
-    check("a model declared to draw pictures is not in the text section", not present(consent, "ConsentModel-" + KEY["painter"]))
+    # the offering rule and the fit: a model that writes text is offered for text, also when it draws; its input is not known, so it is marked
+    check("a model declared to write text and draw pictures is in the text section", present(consent, "ConsentModel-" + KEY["painter"]))
+    painter_mark = name_of(consent, "ConsentModelMark-" + KEY["painter"])
+    check("... marked as not known, and not ticked for the site", painter_mark.startswith("not known") and "what it reads" in painter_mark and not ticked(consent, KEY["painter"]), painter_mark)
     check("a model declared text-only is not in a section that needs pictures", not present(consent, "ConsentModel-" + KEY["alpha"]))
     check("a model declared to read pictures is there and ticked", present(consent, "ConsentModel-" + KEY["vision"]) and ticked(consent, KEY["vision"]))
     check("a model nobody knows is there", present(consent, "ConsentModel-" + KEY["mystery"]))
@@ -202,13 +204,12 @@ try:
 
     # the line of the models that do not fit
     line = name_of(consent, "ConsentModelsMisses")
-    check("a line counts the models that do not fit", line.startswith("2 of your models do not fit"), line)
+    check("a line counts the models that do not fit", line.startswith("1 of your models does not fit"), line)
     ui.invoke(consent, "ConsentModelsMisses")
     time.sleep(0.8)
     print("   the line after it was pressed:", name_of(consent, "ConsentModelsMisses"), flush=True)
     reasons = [name_of(consent, f"ConsentModelsMiss-{i}") for i in range(2) if present(consent, f"ConsentModelsMiss-{i}")]
-    check("... and opens to a reason for each", len(reasons) == 2, str(reasons))
-    check("... the picture model: it draws pictures", any("painter" in r and "draws pictures" in r for r in reasons), str(reasons))
+    check("... and opens to its reason", len(reasons) == 1, str(reasons))
     check("... the text-only model: it cannot read pictures", any("alpha" in r and "cannot read pictures" in r for r in reasons), str(reasons))
     shot(consent, "2-do-not-fit")
 
@@ -271,7 +272,7 @@ try:
     mystery_id = KEY["mystery"]
     ui.open_row(settings, "AddedSourceExpand-" + mystery_id)
     check("a model's settings have a 'What it can do' with ticks", present(settings, "CanReads-" + safe(mystery_id)) and present(settings, "CanDraws-" + safe(mystery_id)))
-    check("... and no 'Also use as a text model' while the model is not known to draw pictures", not present(settings, "CanAlsoText-" + safe(mystery_id), 1.0))
+    check("... and no 'Also use as a text model': a model is offered in every section whose output it makes", not present(settings, "CanAlsoText-" + safe(mystery_id), 1.0))
     ui.toggle(settings, "CanReads-" + safe(mystery_id), True)
     check("'Reads pictures' reaches the settings file as the visitor's word",
           wait_for(lambda: stored("mystery").get("inputs") == ["text", "image"]), str(stored("mystery").get("inputs")))
@@ -284,12 +285,12 @@ try:
     settings = ui.find_window("Agent wallet", 10)
     ui.open_row(settings, "AddedSourceExpand-" + vision_id)
     ui.toggle(settings, "CanDraws-" + safe(vision_id), True)
-    check("'Draws pictures' brings the 'Also use as a text model' tick", wait_for(lambda: present(ui.find_window("Agent wallet", 10), "CanAlsoText-" + safe(vision_id), 1.0)))
-    check("... and reaches the settings file", wait_for(lambda: stored("vision").get("outputs") == ["text", "image"]), str(stored("vision").get("outputs")))
-    check("... and the tick for text is off", stored("vision").get("alsoText") is None)
+    check("'Draws pictures' reaches the settings file", wait_for(lambda: stored("vision").get("outputs") == ["text", "image"]), str(stored("vision").get("outputs")))
+    check("... and brings no 'Also use as a text model' tick, nothing of it is written", not present(ui.find_window("Agent wallet", 10), "CanAlsoText-" + safe(vision_id), 1.0)
+          and stored("vision").get("alsoText") is None)
     shot(ui.find_window("Agent wallet", 10), "4-can-do")
 
-    # the site was given this model; now it draws pictures and is not for text: the Sites page says so
+    # the site was given this model; it writes text as well as drawing pictures, so it still suits the site and the Sites page marks nothing
     settings = ui.find_window("Agent wallet", 10)
     ui.select(settings, "Tab-sites")
     time.sleep(1.5)
@@ -297,24 +298,8 @@ try:
     host = "localhost:" + str(site.port)
     ui.open_row(settings, "SiteExpand-" + host)
     note_id = f"SiteModelNote-{host}-{safe(vision_id)}"
-    note = name_of(settings, note_id) if present(settings, note_id, 4.0) else ""
-    check("the Sites page marks the model the site was given that no longer suits text", note.startswith("not given to the site: draws pictures"), note)
+    check("the Sites page does not mark the model the site was given", not present(settings, note_id, 2.0))
     shot(settings, "5-sites-mark")
-
-    # and he can say the model may answer text too: the mark goes
-    settings = ui.find_window("Agent wallet", 10)
-    ui.select(settings, "Tab-sources")
-    time.sleep(1.5)
-    settings = ui.find_window("Agent wallet", 10)
-    ui.open_row(settings, "AddedSourceExpand-" + vision_id)
-    ui.toggle(settings, "CanAlsoText-" + safe(vision_id), True)
-    check("'Also use as a text model' reaches the settings file", wait_for(lambda: stored("vision").get("alsoText") is True), str(stored("vision")))
-    settings = ui.find_window("Agent wallet", 10)
-    ui.select(settings, "Tab-sites")
-    time.sleep(1.5)
-    settings = ui.find_window("Agent wallet", 10)
-    ui.open_row(settings, "SiteExpand-" + host)
-    check("... and the Sites page no longer marks it", not present(settings, note_id, 2.0))
 
     # the agent's abilities are text, derived by the wallet; the guard page says what it cannot read
     settings = ui.find_window("Agent wallet", 10)
@@ -335,9 +320,9 @@ try:
     # ------------------------------------------------------------------ a second site asks for what nothing here is: models behind a key
     second_manifest = {
         "byoa": "0.1-draft",
-        "purpose": {"summary": "A reader of long documents: it needs a model that runs behind an API key", "limits": {"maxTextChars": 20000}},
+        "purpose": {"summary": "A reader of scanned pages: it needs your own agent, and the agent must read pictures", "limits": {"maxTextChars": 20000}},
         "skills": {"text.generate": {"required": True, "models": {
-            "count": 1, "needs": {"runs": ["api-key"]}, "why": "Reads a whole book at once."}}},
+            "count": 1, "kind": "agent", "onMismatch": "drop", "needs": {"input": ["image"]}, "why": "Reads each scanned page."}}},
         "privacy": "personal-voice",
         "expectedCost": {"perSession": "0.05 USD"},
     }
@@ -348,7 +333,7 @@ try:
     check("a second site's window shows", consent2 is not None)
     time.sleep(1.5)
     problem = name_of(consent2, "ConsentModelsProblem") if present(consent2, "ConsentModelsProblem") else ""
-    check("the site asks for what no model here is: the window says what would fix it", "Add a model that fits" in problem and "runs on an API key" in problem, problem)
+    check("the site asks for what no model here is: the window says what would fix it", "Add a model that fits" in problem and "reads pictures" in problem, problem)
     check("... and Allow stays off", not ui.control(consent2, "ConsentAllow").IsEnabled)
     shot(consent2, "3-nothing-fits")
     ui.invoke(consent2, "ConsentDecline")

@@ -510,11 +510,13 @@ sealed partial class SettingsWindow : Window
                     ?? settings.Chains.FirstOrDefault(c => c.Skill == skill)
                     ?? new SkillChain { Skill = skill, Language = primary };
                 var enabled = new Func<string, bool>(id => settings.Sources.FirstOrDefault(s => s.Id == id)?.Enabled ?? true);
+                // (pictures have no route of the wallet's own: the site can draw when one of the picture models it was given is ready)
                 var usable = skill == Vocabulary.Generate
                     ? Router.PlanText(chain, textSources, enabled, language).First is not null
                     : skill == Vocabulary.Transcribe
                         ? Router.Plan(chain, speechSources, enabled, language).First is not null
-                        : false;
+                        : skill == Vocabulary.ImageGenerate
+                            && (site.ModelsFor(skill)?.SourceIds ?? []).Any(id => enabled(id) && textSources.FirstOrDefault(s => s.Id == id) is IImageSource { State: SourceState.Ready });
                 if (!usable) return skill;
             }
         }

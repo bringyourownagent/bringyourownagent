@@ -75,7 +75,7 @@ public class PictureModelsTests
     {
         await RequestAsync(Manifest(TextBlock + "," + PictureBlock));
         var row = _ui.Consents.Last().Rows;
-        Assert.Equal(["image.generate", "text.generate"], row.Select(r => r.Skill).Order());       // the manifest's skills in the order of their names
+        Assert.Equal(["text.generate", "image.generate"], row.Select(r => r.Skill));               // the text first, the pictures that are drawn for it after
         Assert.All(row, r => Assert.NotNull(r.Models));
 
         var text = Section("text.generate");
@@ -306,5 +306,23 @@ public class PictureModelsTests
         Assert.False(_engine.ServesPictures("lm:draws"));                                // draws, but not behind the key
         Assert.False(_engine.ServesPictures("agent:mine"));
         Assert.False(_engine.ServesPictures("no:such"));
+    }
+
+    [Fact]
+    public void TheHelpPagesSayWhatTheWalletDoesAboutPicturesAndNotTheRuleThatWasLeftOut()
+    {
+        var sites = Byoa.Wallet.Help.HelpCatalog.Get("sites");
+        Assert.Contains("you tick it in each one where you want it", sites);              // a model that writes text and draws is in both sections
+        Assert.Contains("the wallet asks before the first one", sites);                   // the price of a picture is not known
+        Assert.Contains("made smaller before it is sent", sites);
+        Assert.Contains("one that only draws is never offered for text", sites);
+        Assert.Contains("only draws", Byoa.Wallet.Help.HelpCatalog.Get("add-model"));
+        Assert.Contains("Image generation", Byoa.Wallet.Help.HelpCatalog.Get("skills"));
+        foreach (var topic in Byoa.Wallet.Help.HelpCatalog.Topics)
+        {
+            var article = Byoa.Wallet.Help.HelpCatalog.Get(topic);
+            Assert.DoesNotContain("Also use as a text model", article);                  // the tick that was taken out again
+            Assert.DoesNotContain("primary", article, StringComparison.OrdinalIgnoreCase);
+        }
     }
 }

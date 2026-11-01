@@ -8,11 +8,13 @@ BYOA_WALLET_DEV_LOCAL=1).
     link = site.new_link()            # a fresh session code, valid 10 minutes, single use
     site.wait_hello(30)               # the wallet's hello (after the visitor's Allow)
     site.call(wav_bytes, "ru")        # -> {"type": "result", "id": n, "ok": ..., ...}
+    site.call_image("m2", "a fox")    # -> the result with "pictures": [{"mime", "data", "parts", "size_ok", "sha_ok"}], joined from the image frames
 
 Needs: aiohttp.
 """
 import asyncio
 import base64
+import hashlib
 import json
 import secrets
 import threading
@@ -50,6 +52,7 @@ class FakeSite:
         self._loop = None
         self._next_id = 0
         self._waiting = {}
+        self._images = {}            # call id -> the image frames that came for it
         self._hello_event = threading.Event()
         self._ready = threading.Event()
 
@@ -158,7 +161,9 @@ class FakeSite:
                 if msg.type != WSMsgType.TEXT:
                     break
                 frame = json.loads(msg.data)
-                if frame.get("type") == "result" and frame.get("id") in self._waiting:
+                if frame.get("type") == "image" and frame.get("id") in self._waiting:
+                    self._images.setdefault(frame["id"], []).append(frame)
+                elif frame.get("type") == "result" and frame.get("id") in self._waiting:
                     self._waiting.pop(frame["id"]).set_result(frame)
                 elif frame.get("type") == "bye":
                     self.byes += 1
@@ -195,6 +200,41 @@ class FakeSite:
         }))
         result = await asyncio.wait_for(future, 50)
         result["ms"] = int((time.time() - started) * 1000)
+        return result
+
+    def call_image(self, model, prompt="Draw a fox", count=None, aspect=None, references=None, max_side=None, max_bytes=None, seconds=120):
+        """One image.generate call (PROPOSAL-v3 3.1) for the picture model with this ref. The image frames of the answer are joined the way a
+        receiver would (parts in seq order, at most 524288 characters each) and checked against the result's size and sha256: the result gets
+        "pictures": [{"mime", "data" (bytes), "parts", "frames_in_order", "size_ok", "sha_ok"}]. A part that came after the result is not kept, so the checks fail for it."""
+        return asyncio.run_coroutine_threadsafe(self._call_image(model, prompt, count, aspect, references, max_side, max_bytes), self._loop).result(seconds)
+
+    async def _call_image(self, model, prompt, count, aspect, references, max_side, max_bytes):
+        self._next_id += 1
+        call_id = self._next_id
+        future = self._loop.create_future()
+        self._waiting[call_id] = future
+        self._images[call_id] = []
+        started = time.time()
+        given = {"prompt": prompt}
+        for key, value in (("count", count), ("aspect", aspect), ("maxSide", max_side), ("maxBytes", max_bytes)):
+            if value is not None:
+                given[key] = value
+        if references:
+            given["references"] = [{"mime": "image/png", "data": base64.b64encode(r).decode()} for r in references]
+        await self.live.send_str(json.dumps({"type": "call", "id": call_id, "skill": "image.generate", "input": given, "params": {"model": model}}))
+        result = await asyncio.wait_for(future, 100)
+        frames = self._images.pop(call_id, [])
+        result["ms"] = int((time.time() - started) * 1000)
+        result["pictures"] = []
+        for index, described in enumerate(((result.get("output") or {}).get("images")) or []):
+            parts = sorted((f for f in frames if f["index"] == index), key=lambda f: f["seq"])
+            data = b"".join(base64.b64decode(p["data"]) for p in parts)
+            result["pictures"].append({
+                "mime": described.get("mime"), "data": data, "parts": len(parts), "reduced": described.get("reduced"),
+                "frames_in_order": [p["seq"] for p in parts] == list(range(len(parts))) and all(p["of"] == len(parts) for p in parts)
+                and all(len(p["data"]) <= 524288 for p in parts),
+                "size_ok": described.get("size") == len(data), "sha_ok": described.get("sha256") == hashlib.sha256(data).hexdigest(),
+            })
         return result
 
     def call_text(self, choices=("yes", "no"), seconds=120, params=None, text=None):

@@ -124,6 +124,20 @@ public class OpenRouterImageSourceTests
         Assert.Equal(OpenRouterTextSource.FlatEstimate, Source(server).EstimateImageCost(Ask()));
     }
 
+    [Theory]
+    [InlineData("http://127.0.0.1:5899/", true, true)]
+    [InlineData("http://localhost:5899", true, true)]
+    [InlineData("http://127.0.0.1:5899/", false, false)]       // the person's own wallet never reads it
+    [InlineData("https://openrouter.ai/", true, false)]
+    [InlineData("http://example.com/", true, false)]            // nothing but an address on this computer
+    [InlineData("https://127.0.0.1:5899/", true, false)]
+    [InlineData("not an address", true, false)]
+    [InlineData(null, true, false)]
+    public void AStandInForOpenRouterIsTakenOnlyInATestRunAndOnlyOnThisComputer(string? given, bool testRun, bool taken)
+    {
+        Assert.Equal(taken, SourceSet.StandIn(given, testRun) is not null);
+    }
+
     sealed class OneModel(CatalogModel model) : IModelCatalog
     {
         public bool Loaded => true;

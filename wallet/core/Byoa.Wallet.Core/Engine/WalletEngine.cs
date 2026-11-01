@@ -826,7 +826,8 @@ public sealed partial class WalletEngine
         var limitsAsk = BuildLimitsAsk(site, manifest, settings.Limits);
         var isDifference = site.Status == SiteStatus.Allowed && (newSkills.Count > 0 || missingRequired.Count > 0 || costRaised || modelsAsked || limitsAsk is not null);
         var rows = new List<ConsentRow>();
-        foreach (var skill in manifest.Skills)
+        // (the skills come in the order of their names; the pictures, which come after the text they are drawn for, are shown last)
+        foreach (var skill in manifest.Skills.OrderBy(k => k.Id == Vocabulary.ImageGenerate ? 1 : 0))
         {
             if (isDifference && !newSkills.Contains(skill.Id) && !missingRequired.Contains(skill.Id) && !ModelsNeedAsking(site, skill, settings)) continue;
             rows.Add(Row(skill, settings, site, isNew: isDifference && (newSkills.Contains(skill.Id) || missingRequired.Contains(skill.Id))));

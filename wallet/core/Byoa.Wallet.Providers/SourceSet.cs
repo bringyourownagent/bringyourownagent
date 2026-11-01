@@ -59,7 +59,7 @@ public sealed class SourceSet : IDisposable
         };
 
         OpenRouter = new OpenRouterSource(http, () => secrets.Get(OpenRouterSource.SecretName), () => secrets.Has(OpenRouterSource.SecretName));
-        Catalog = new OpenRouterCatalog(TextHttp, catalogPath);
+        Catalog = new OpenRouterCatalog(TextHttp, catalogPath, StandInOpenRouter);
         _refreshCatalog = catalogPath is not null;                          // a wallet under test never reaches for the network
         Scanner = new RuntimeScanner(TextHttp, AddedEndpoints);
         // Older settings used an Ollama id without /v1, and carried the speech engines that were once built into the
@@ -76,6 +76,19 @@ public sealed class SourceSet : IDisposable
     }
 
     public OpenRouterSource OpenRouter { get; }
+
+    /// <summary>The environment variable of a test run's stand-in for OpenRouter (see <see cref="StandIn"/>).</summary>
+    public const string StandInVariable = "BYOA_OPENROUTER_ENDPOINT";
+
+    /// <summary>
+    /// A test run's stand-in for OpenRouter: an <c>http</c> address on this computer, taken from <see cref="StandInVariable"/>, that stands in for
+    /// openrouter.ai for the models behind the visitor's key and for the public list. Only a wallet with a data folder of its own (a test run) reads it,
+    /// and nothing but an address on this computer is taken, so that a key can go nowhere else.
+    /// </summary>
+    public static Uri? StandIn(string? given, bool testRun) =>
+        testRun && Uri.TryCreate(given?.Trim(), UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttp && uri.IsLoopback ? uri : null;
+
+    static Uri? StandInOpenRouter => StandIn(Environment.GetEnvironmentVariable(StandInVariable), WalletPaths.IsCustomHome);
 
     /// <summary>The public model list (names and prices): what the pickers search and what priced calls use. Refreshed once a day.</summary>
     public OpenRouterCatalog Catalog { get; }
@@ -333,7 +346,7 @@ public sealed class SourceSet : IDisposable
             SourceKinds.OpenRouter
                 => new OpenRouterTextSource(setting.Model.Trim(), setting.Label, setting.SecretRef, TextHttp,
                     () => testKey ?? _secrets.Get(SecretName(setting.SecretRef)),
-                    () => testKey is not null || _secrets.Has(SecretName(setting.SecretRef)), catalog: () => Catalog),
+                    () => testKey is not null || _secrets.Has(SecretName(setting.SecretRef)), StandInOpenRouter, () => Catalog),
             ApiServices.Kind
                 when !string.IsNullOrWhiteSpace(setting.Service)
                 => new CloudChatSource(setting.Service.Trim().ToLowerInvariant(), setting.Model.Trim(), setting.Label, endpoint, TextHttp,
