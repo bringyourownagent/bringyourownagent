@@ -49,8 +49,8 @@ This is the part that protects the visitor, and a conforming wallet MUST keep to
 A skill is a named kind of work with a fixed shape of input and output. The vocabulary of 0.1 is `text.generate`, `text.understand`, `text.embed`, `audio.transcribe`, `audio.speak`, `image.understand`, `image.generate`, `video.understand` and `video.generate`. A skill is always called a skill: the word **role** stays with the four Roles of section 1 and with a message's role (`system`, `user`, `assistant`). Three of them have a defined shape, in [CONTRACT.md](CONTRACT.md) section 3:
 
 - `audio.transcribe`: a WAV clip (up to 15 seconds) in, text out.
-- `text.generate`: chat messages in, a short text answer out; with `choices` the answer is exactly one of the given strings. From wallet 0.37 a message may also carry picture parts, for a source that reads pictures (CONTRACT.md section 3.7).
-- `image.generate`: a prompt in, pictures out as parts (CONTRACT.md section 3.7). Wallet 0.37: a wallet before it serves none of it, and a site that requires the skill gets no Allow — the safe failure of a skill a wallet cannot serve.
+- `text.generate`: chat messages in, a short text answer out; with `choices` the answer is exactly one of the given strings.
+- `image.generate`: a prompt (and at most four reference pictures) in, one to four pictures out as parts, made smaller to what the site asked for (CONTRACT.md section 3.7). Wallet 0.37: a wallet before it serves none of it, and a site that requires the skill gets no Allow — the safe failure of a skill a wallet cannot serve.
 
 The other names of the vocabulary have no shape yet; a wallet serves none of them.
 

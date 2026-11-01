@@ -40,12 +40,14 @@ keeps one visitor's wallet out of another visitor's page.
 | `POST /api/r/{room}/byoa/cancel` | `{ session }` | `{ cancelled }` — the page stopped waiting |
 | `POST /api/r/{room}/byoa/status` | `{ pairing }` | `{ state: "live" \| "offline" \| "unknown", models, limits, skills, capabilities }` — after a reload |
 | `POST /api/r/{room}/byoa/release` | `{ pairing }` | `{ released }` — «Disconnect»: `bye`, close, forget |
-| `POST /api/r/{room}/byoa/job` | `{ pairing, model, messages, maxTokens?, temperature? }` | `{ id }`, or `{ error }` (`bad-request`, `offline`, `no-text`, `bad-model`, `busy`) with 400/429 |
-| `POST /api/r/{room}/byoa/job/poll` | `{ id }` | `{ state: "pending" \| "done" \| "unknown", ok, text, partial, reason }` |
+| `POST /api/r/{room}/byoa/job` | `{ pairing, model, messages, maxTokens?, temperature? }`, or for pictures `{ pairing, model, skill: "image.generate", prompt, references?, count?, aspect?, maxSide?, maxBytes? }` | `{ id }`, or `{ error }` (`bad-request`, `offline`, `no-text`, `no-pictures`, `bad-model`, `busy`) with 400/429 |
+| `POST /api/r/{room}/byoa/job/poll` | `{ id }` | `{ state: "pending" \| "done" \| "unknown", ok, text, partial, reason, lacks, images }` |
 | `POST /api/r/{room}/byoa/job/cancel` | `{ id }` | `{ cancelled }` — «Stop»: the answer is dropped and the wallet is told to stop the call |
 | `GET /byoa/ws` (WebSocket) | the wallet's frames | the wallet's channel |
 
 `models` is the list of `text.generate` participants, `[{ref,name,id,runs,kind,can?}]`, exactly as in 0.0.3: a page written for it keeps working. `modelsBySkill` is the wallet's contract shape, one list per skill: `{"text.generate":[...],"image.generate":[...]}`; it carries every skill the visitor gave the site (CONTRACT.md §3.3). Each entry also carries `can`, the wallet's verdicts for the conditions the site asked about in `needs` (booleans only, at most four keys), and an agent entry carries `abilities` the same way. `capabilities` is the wallet's closed list of supported features (`needs`, `can`, `kind`, `cancel`, `image.generate`, `images-in`, `parts`, `frame-limit`); an older wallet sends no `capabilities` (the field is `null`, not an empty list: an empty list means a wallet that understands none), and the page then knows it cannot check `needs` or `can`. The jobs stay text-only for now: `job` asks `text.generate` for a `ref` of the `text.generate` list.
+
+A picture job (wallet 0.37, CONTRACT.md §3.7) names a ref of the `image.generate` list; `references` are `[{ mime, data }]` (base64; at most four, each at most 1,000,000 bytes, together 3,000,000), `count` is 1 to 4, `aspect` one of `1:1`, `4:3`, `3:4`, `16:9`, `9:16`, `maxSide` (64 to 4096) and `maxBytes` (100,000 to 3,000,000; the wallet's default is 1,000,000) say how big the page wants each picture. The relay joins the wallet's picture parts and checks them; a finished picture job has `ok: true`, `text: null` and `images: [{ mime, size, sha256, data, reduced }]` (`data` is base64; `reduced` says the wallet made the picture smaller). Every other answer has `images: null`.
 
 The page asks for an answer by asking again every second and shows `partial` while the model writes: a long call must not hold one
 request open behind a proxy. `state` never tells a «no» from a «no wallet».

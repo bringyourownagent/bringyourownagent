@@ -2,6 +2,12 @@
 
 The libraries share one version number and one rule set. Dates are UTC.
 
+## Unreleased (the next shared version)
+
+- Rule change: `needs` has two conditions, `input` and `output`; `context` and `runs` are unknown keys now (a `needs-unknown` warning, never an error, so every manifest the 0.0.5 libraries accepted is still accepted). `kind` on `image.generate` may only be `model` (M23). The shared vectors say so in all three libraries.
+- Pictures (wallet 0.37, `image.generate`, spec/CONTRACT.md section 3.7): the .NET relay's `job` takes `skill: "image.generate"` with `prompt`, `references`, `count`, `aspect`, `maxSide` and `maxBytes`, and `job/poll` always has `images` (null, or `[{ mime, size, sha256, data, reduced }]`); the Node.js relay's `wallet.call('image.generate', ...)` answers `output.images` the same way. Both join the wallet's picture parts and check them; anything that does not add up is a failed call.
+- The relays' `can` verdicts are `input` and `output` only. The .NET relay takes a job request of up to 4,200,000 bytes (`MaxJobRequestBytes`), so reference pictures fit.
+
 ## 0.0.5 (2026-11-01)
 
 - A one-time code now lives 10 minutes, not 120 seconds (CONTRACT-DIRECT.md §1 and §4; wallet 0.36.1 waits as long for the visitor). Node.js `CODE_LIFE_MS` and .NET `RelayOptions.CodeLifeSeconds` default to 600; the answer's `expiresIn` says it. `connectWithoutExtension` waits as long as `expiresIn` (else 10 minutes) unless `waitMs` is given, where it waited 90 seconds. A site that wants its codes shorter sets the option.

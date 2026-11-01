@@ -32,9 +32,8 @@ The softer check of the declared purpose by a small model is out of scope here; 
 | Limits | `maxClipSeconds` (number), `maxCallsPerMinute` (count), `maxFrameBytes` (count), `maxTextChars` (count) |
 | Source kinds (`models.kind`) | `model`, `agent`, `any` |
 | Mismatch (`models.onMismatch`) | `drop`, `show` |
-| Properties (`models.needs`) | `input`, `output`, `context`, `runs` |
+| Properties (`models.needs`) | `input`, `output` (`context` and `runs` of the 0.0.4 libraries are unknown keys from 0.0.6) |
 | Modalities (`input`, `output`) | `text`, `image`, `audio` |
-| Where a source runs (`needs.runs`) | `local`, `home-server`, `api-key` |
 | Abilities (`models.abilities`) | `web.search`, `web.read` (`image.read` is reserved) |
 | Expected cost periods | `perCall`, `perSession`, `perHour` |
 | Provider kinds | `subscription`, `api-key`, `connected-account`, `local-model`, `home-server` |
@@ -100,10 +99,10 @@ The manifest shown on the BYOA site is valid and produces no warnings:
 | M20 | `field-unknown` | warning | `expectedCost` has a field other than the known periods. | Forward compatibility. |
 | M21 | `field-unknown` | warning | The manifest has a top-level field other than `byoa`, `purpose`, `skills`, `privacy`, `expectedCost`. | Forward compatibility: older wallets ignore newer fields. |
 | M22 | `models-invalid` | error | Inside a skill, `models`, if present, must be an object. | The block says who may fill the skill; it cannot be read in another shape. |
-| M23 | `models-kind-invalid` | error | `models.kind`, if present, must be `model`, `agent` or `any`. | An unknown kind would silently mean the opposite of what the site wrote. |
+| M23 | `models-kind-invalid` | error | `models.kind`, if present, must be `model`, `agent` or `any`; on `image.generate` only `model`. | An unknown kind would silently mean the opposite of what the site wrote; an agent writes text and never draws. |
 | M24 | `models-onmismatch-invalid` | error | `models.onMismatch`, if present, must be `drop` or `show`. | A wallet must not guess what to do with a source that does not fit. |
-| M25 | `needs-invalid` | error | `models.needs`, if present, must be an object, and each of the four known keys must have its shape: `input` and `output` an array of at least one of `text`, `image`, `audio`, or an object holding only `{"includes": [...]}` of those; `context` a number from 0 to 2^53 - 1, or an object holding only `{"min": n}`; `runs` an array of at least one of `local`, `home-server`, `api-key`, or an object holding only `{"oneOf": [...]}` of those. | A condition of another shape cannot be checked, and an unchecked condition silently lets an unfit source through. |
-| M26 | `needs-unknown` | warning | A `needs` key that is not one of the four properties and does not begin with `x-`. | Forward compatibility; also catches typos such as `ouput`. |
+| M25 | `needs-invalid` | error | `models.needs`, if present, must be an object, and each of the two known keys must have its shape: `input` and `output` an array of at least one of `text`, `image`, `audio`, or an object holding only `{"includes": [...]}` of those. | A condition of another shape cannot be checked, and an unchecked condition silently lets an unfit source through. |
+| M26 | `needs-unknown` | warning | A `needs` key that is not one of the two properties and does not begin with `x-` (`context` and `runs` among them, whatever their value). | Forward compatibility; also catches typos such as `ouput`. |
 | M27 | `abilities-invalid` | error | `models.abilities`, if present, must be an array of at least one string. | An ability of another shape is a promise no wallet can read. |
 | M28 | `abilities-unknown` | warning | An ability name that is not in the vocabulary and does not begin with `x-`. | New abilities will appear; `files.read`, `code.run` and the like are not enforced in 0.1 and a wallet must not be made to pretend they are. |
 
