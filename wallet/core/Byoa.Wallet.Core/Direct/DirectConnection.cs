@@ -497,6 +497,7 @@ public sealed class DirectConnection
             ["params"] = frame["params"]?.DeepClone(),
         };
         var answerId = id.DeepClone();
+        var pictures = new List<byte[]>();
         // The call has a token of its own that the site's `cancel` frame cancels. (Two calls in flight under one id cannot be told apart: only
         // the first can be cancelled.)
         var running = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -508,8 +509,14 @@ public sealed class DirectConnection
         {
             try
             {
-                var result = await _owner.Engine.CallViaLinkAsync(Origin, payload, running.Token, pump is null ? null : pump.Add).ConfigureAwait(false) as JsonObject ?? Wire.Failure();
+                var result = await _owner.Engine.CallViaLinkAsync(Origin, payload, running.Token, pump is null ? null : pump.Add, pictures).ConfigureAwait(false) as JsonObject ?? Wire.Failure();
                 if (pump is not null) await pump.FlushAsync().ConfigureAwait(false);          // the last pieces go before the result
+                // The pictures of an answer go first, in `image` frames (PROPOSAL-v3 3.2), and the result that describes them after the last one.
+                if (PictureFrames.Carries(result, pictures))
+                {
+                    foreach (var part in PictureFrames.Of(answerId, result, pictures)) await SendQuietAsync(ws, part).ConfigureAwait(false);
+                }
+
                 await SendQuietAsync(ws, Result(answerId, result)).ConfigureAwait(false);
             }
             finally
@@ -582,7 +589,7 @@ public sealed class DirectConnection
     static JsonObject GrantFrame(GrantSession grant)
     {
         var frame = new JsonObject { ["type"] = "grant", ["capabilities"] = GrantSession.CapabilitiesJson() };
-        if (grant.Limits is not null && grant.Skills.Contains(Vocabulary.Generate)) frame["limits"] = grant.LimitsJson();
+        if (grant.Limits is not null && grant.UsesTextLimits) frame["limits"] = grant.LimitsJson();
         frame["models"] = grant.ModelsJson() ?? new JsonObject();
         return frame;
     }
@@ -614,7 +621,7 @@ public sealed class DirectConnection
     static JsonObject HelloGrant(GrantSession grant, JsonArray skills)
     {
         var node = new JsonObject { ["skills"] = skills, ["expiresAt"] = GrantSession.Time(grant.ExpiresAt), ["capabilities"] = GrantSession.CapabilitiesJson() };
-        if (grant.Limits is not null && grant.Skills.Contains(Vocabulary.Generate)) node["limits"] = grant.LimitsJson();
+        if (grant.Limits is not null && grant.UsesTextLimits) node["limits"] = grant.LimitsJson();
         if (grant.ModelsJson() is { } models) node["models"] = models;
         return node;
     }

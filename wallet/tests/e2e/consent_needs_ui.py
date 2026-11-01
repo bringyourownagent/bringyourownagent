@@ -225,7 +225,7 @@ try:
 
     # what the site is told
     hello = site.hellos[-1]["grant"] if site.hellos else {}
-    check("the hello names the features of the wallet", hello.get("capabilities") == ["needs", "can", "kind", "cancel"], str(hello.get("capabilities")))
+    check("the hello names the features of the wallet", hello.get("capabilities") == ["needs", "can", "kind", "cancel", "image.generate", "parts"], str(hello.get("capabilities")))
     models = (hello.get("models") or {}).get("text.generate", [])
     check("the site is given the one model that reads pictures", len(models) == 1, str(models))
     can = models[0].get("can") if models else None

@@ -353,7 +353,7 @@ public class NeedsInTheEngineTests
         });
         var granted = await RequestAsync(Manifest("{\"count\":{\"min\":1,\"max\":2},\"names\":true,\"kind\":\"any\",\"onMismatch\":\"show\","
             + "\"needs\":{\"input\":[\"text\",\"image\"],\"output\":[\"text\"],\"context\":64,\"runs\":[\"api-key\"]}}"));
-        Assert.Equal(["needs", "can", "kind", "cancel"], granted!["capabilities"]!.AsArray().Select(c => c!.GetValue<string>()));
+        Assert.Equal(["needs", "can", "kind", "cancel", "image.generate", "parts"], granted!["capabilities"]!.AsArray().Select(c => c!.GetValue<string>()));
         var list = granted["models"]!["text.generate"]!.AsArray();
         // (the manifest still writes `context` and `runs`, as a site for wallet 0.36 does: `can` has input and output only)
         Assert.Equal("{\"input\":true,\"output\":true}", list[0]!["can"]!.ToJsonString());
@@ -371,7 +371,7 @@ public class NeedsInTheEngineTests
     public async Task ASiteThatAskedNothingAboutPropertiesIsToldNothingButTheFeaturesOfTheWallet()
     {
         var granted = await RequestAsync(Manifest("{\"count\":1,\"names\":true}"));
-        Assert.Equal(["needs", "can", "kind", "cancel"], granted!["capabilities"]!.AsArray().Select(c => c!.GetValue<string>()));
+        Assert.Equal(["needs", "can", "kind", "cancel", "image.generate", "parts"], granted!["capabilities"]!.AsArray().Select(c => c!.GetValue<string>()));
         var entry = granted["models"]!["text.generate"]![0]!.AsObject();
         Assert.False(entry.ContainsKey("can"));
         Assert.False(entry.ContainsKey("abilities"));
@@ -381,7 +381,7 @@ public class NeedsInTheEngineTests
     public async Task ASiteWithNoModelsBlockStillLearnsTheFeaturesOfTheWallet()
     {
         var granted = await RequestAsync(Manifest(null));
-        Assert.Equal(["needs", "can", "kind", "cancel"], granted!["capabilities"]!.AsArray().Select(c => c!.GetValue<string>()));
+        Assert.Equal(["needs", "can", "kind", "cancel", "image.generate", "parts"], granted!["capabilities"]!.AsArray().Select(c => c!.GetValue<string>()));
         Assert.Null(granted["models"]);
     }
 

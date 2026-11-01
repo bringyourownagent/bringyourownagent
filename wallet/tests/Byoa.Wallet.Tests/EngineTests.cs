@@ -52,7 +52,7 @@ public class EngineTests
         var result = Assert.IsType<JsonObject>(await _engine.HandleAsync(Clips.Request(Site, click: true)));
         // (the grant also names the features of the wallet, PROPOSAL-v2 3.5: "capabilities" is the one key added to the shape of 0.35.0)
         Assert.Equal(["grantId", "skills", "expiresAt", "capabilities"], result.Select(p => p.Key));
-        Assert.Equal("[\"needs\",\"can\",\"kind\",\"cancel\"]", result["capabilities"]!.ToJsonString());
+        Assert.Equal("[\"needs\",\"can\",\"kind\",\"cancel\",\"image.generate\",\"parts\"]", result["capabilities"]!.ToJsonString());
         Assert.Equal("[\"audio.transcribe\"]", result["skills"]!.ToJsonString());
         Assert.Equal(1, _ui.Notices);
         var consent = Assert.Single(_ui.Consents);
