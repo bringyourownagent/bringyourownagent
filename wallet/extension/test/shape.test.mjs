@@ -53,7 +53,7 @@ test("capabilities: an empty list is passed on (the wallet understands none), a 
   assert.equal(shaped("request", grant({ capabilities: "needs" })).capabilities, undefined);
 });
 
-test("can: booleans only, the four properties only, at most four keys, on every skill", () => {
+test("can: booleans only, input and output only (context and runs are gone), on every skill", () => {
   const answer = shaped("request", grant({
     models: {
       "text.generate": [
@@ -65,11 +65,11 @@ test("can: booleans only, the four properties only, at most four keys, on every 
       ],
     },
   }));
-  assert.deepEqual(answer.models["text.generate"][0].can, { input: true, output: false, runs: true });
+  assert.deepEqual(answer.models["text.generate"][0].can, { input: true, output: false });
   assert.deepEqual(answer.models["image.generate"][0].can, { output: true });
 });
 
-test("can and abilities: earlier keys win when more than four are offered", () => {
+test("abilities: earlier keys win when more than four are offered; can keeps the properties a site may ask about", () => {
   const answer = shaped("request", grant({
     models: {
       "text.generate": [
@@ -80,7 +80,7 @@ test("can and abilities: earlier keys win when more than four are offered", () =
     },
   }));
   const entry = answer.models["text.generate"][0];
-  assert.deepEqual(entry.can, { input: true, output: true, context: true, runs: true });
+  assert.deepEqual(entry.can, { input: true, output: true });
   assert.deepEqual(entry.abilities, { "web.search": true, "web.read": false, "x-a": true, "x-b": true });
 });
 
