@@ -154,8 +154,9 @@ public class OpenAiCompatibleSourceTests
         using var server = new FakeHttp(Port);
         server.Respond(200, """{"choices":[{"message":{"content":"","reasoning_content":"thinking"},"finish_reason":"length"}]}""");
         server.Respond(200, """{"choices":[{"message":{"content":"","reasoning_content":"still thinking"},"finish_reason":"length"}]}""");
-        var e = await Assert.ThrowsAsync<InvalidOperationException>(() => Source(server).GenerateAsync(Plain(), default));
+        var e = await Assert.ThrowsAsync<TextSourceException>(() => Source(server).GenerateAsync(Plain(), default));
         Assert.Contains("hidden reasoning", e.Message);
+        Assert.True(e.OutOfTokens);                               // the site hears "limit": the model is not broken
         Assert.Equal(2, server.Requests.Count);                   // a local model may try twice, but no more
     }
 

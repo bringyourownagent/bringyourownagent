@@ -153,14 +153,15 @@ public sealed class OpenAiCompatibleSource : ITextSource, IStreamingTextSource, 
             // A thinking model can spend the whole budget on its hidden reasoning. A local model tries once more with
             // more room; a paid one would spend the visitor's money twice, so the route hears it straight away. A request that
             // carried a limit on reasoning has already had the room it was promised: trying again would only make the visitor wait.
-            if (Paid || ReasoningBudget(request) > 0) throw new InvalidOperationException(RuntimeName + " spent all its tokens on hidden reasoning; raise maxTokens");
+            if (Paid || ReasoningBudget(request) > 0)
+                throw new TextSourceException(RuntimeName + " " + TextRefusals.OutOfTokens, providerCalled: true, responseReceived: false, outOfTokens: true);
             var (retry, more, retryFinish) = await ChatAsync(request, useSchema: !_schemaBlocked, tokenFactor: 4, ct).ConfigureAwait(false);
             message = ChatCompletions.First(retry)?["message"];
             text = AnswerOf(request, message);
             tokens = (tokens.In + more.In, tokens.Out + more.Out);
             if (text.Length == 0 && retryFinish == "length" && !string.IsNullOrEmpty(ChatCompletions.Str(message?["reasoning_content"])))
             {
-                throw new InvalidOperationException(RuntimeName + " spent all its tokens on hidden reasoning; raise maxTokens");
+                throw new TextSourceException(RuntimeName + " " + TextRefusals.OutOfTokens, providerCalled: true, responseReceived: false, outOfTokens: true);
             }
         }
 

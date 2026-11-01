@@ -67,9 +67,10 @@ public class ThinkingBudgetAndZaiTests
         server.Respond(200, Answer);
         var source = new OpenAiCompatibleSource(SourceKinds.OpenAiCompatible, "m", null, server.Url + "v1", NoRedirects());
 
-        var e = await Assert.ThrowsAsync<InvalidOperationException>(() => source.GenerateAsync(Ask(budget: 2000), default));
+        var e = await Assert.ThrowsAsync<TextSourceException>(() => source.GenerateAsync(Ask(budget: 2000), default));
 
         Assert.Contains("hidden reasoning", e.Message);
+        Assert.True(e.OutOfTokens);                                                       // the site hears "limit": the model is not broken
         Assert.Single(server.Requests);                                                   // a second try with four times the room would only make the visitor wait
     }
 

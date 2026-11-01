@@ -117,6 +117,9 @@ public interface ITextRefusal
 public static class TextRefusals
 {
     public const string DrawsPictures = "draws a picture on every text request";
+
+    /// <summary>What a model that used all of <c>maxTokens</c> before its first word is said to have done.</summary>
+    public const string OutOfTokens = "spent all its tokens on hidden reasoning; raise maxTokens";
 }
 
 /// <summary>
@@ -127,17 +130,24 @@ public static class TextRefusals
 public sealed class TextSourceException : InvalidOperationException
 {
     public TextSourceException(string message, decimal? cost = null, bool providerCalled = true,
-        bool responseReceived = false, Exception? inner = null, bool drew = false)
+        bool responseReceived = false, Exception? inner = null, bool drew = false, bool outOfTokens = false)
         : base(message, inner)
     {
         Cost = cost;
         ProviderCalled = providerCalled;
         ResponseReceived = responseReceived;
         Drew = drew;
+        OutOfTokens = outOfTokens;
     }
 
     /// <summary>The model drew a picture instead of writing (paid as a picture).</summary>
     public bool Drew { get; }
+
+    /// <summary>
+    /// The model used all of the call's <c>maxTokens</c> before it wrote a word (on its hidden reasoning, as a rule): the site's limit was too
+    /// small for it, the model is not broken, and the site is told <c>limit</c>.
+    /// </summary>
+    public bool OutOfTokens { get; }
 
     public decimal? Cost { get; }
     public bool ProviderCalled { get; }

@@ -186,6 +186,86 @@ public class DrawsOnTextTests
     }
 }
 
+/// <summary>
+/// A model that used all of the call's maxTokens before its first word (DeepSeek V4.1 Flash on 600 tokens, all of them hidden reasoning): it is not
+/// broken, the site's limit was too small for it, so the site hears <c>limit</c>, not <c>failed</c>, and the same call with more room can succeed.
+/// </summary>
+public class OutOfTokensTests
+{
+    const int Port = 5398;
+
+    static OpenRouterTextSource Source(FakeHttp server) =>
+        new("deepseek/deepseek-v4.1-flash", null, null, new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false }), () => "sk-test", () => true, new Uri(server.Url));
+
+    static TextRequest Ask() => new([new ChatMessage("user", "Ten motifs for a fox icon.")], 600, 0.7, null, null);
+
+    static string Sse(params string[] events) => string.Concat(events.Select(e => "data: " + e + "\n\n")) + "data: [DONE]\n\n";
+
+    [Fact]
+    public async Task AStreamThatEndsOnLengthWithNoTextRanOutOfTokens()
+    {
+        using var server = new FakeHttp(Port);
+        server.Respond(200, Sse(
+            """{"choices":[{"delta":{"content":"","reasoning":"Let me think about foxes..."}}]}""",
+            """{"choices":[{"delta":{},"finish_reason":"length"}]}""",
+            """{"choices":[],"usage":{"prompt_tokens":130,"completion_tokens":600,"cost":0.000113}}"""));
+        var failure = await Assert.ThrowsAsync<TextSourceException>(() => Source(server).GenerateStreamAsync(Ask(), _ => { }, default));
+        Assert.True(failure.OutOfTokens);
+        Assert.False(failure.Drew);
+        Assert.Contains(TextRefusals.OutOfTokens, failure.Message);
+        Assert.Equal(0.000113m, failure.Cost);
+    }
+
+    [Fact]
+    public async Task AnAnswerThatEndsOnLengthWithNoTextRanOutOfTokens()
+    {
+        using var server = new FakeHttp(Port);
+        server.Respond(200, """{"choices":[{"finish_reason":"length","message":{"content":"","reasoning":"Let me think..."}}],"usage":{"cost":0.000113}}""");
+        Assert.True((await Assert.ThrowsAsync<TextSourceException>(() => Source(server).GenerateAsync(Ask(), default))).OutOfTokens);
+    }
+
+    [Fact]
+    public async Task AnEmptyAnswerThatStoppedIsStillJustNothing()
+    {
+        using var server = new FakeHttp(Port);
+        server.Respond(200, Sse("""{"choices":[{"delta":{},"finish_reason":"stop"}]}"""));
+        var failure = await Assert.ThrowsAsync<TextSourceException>(() => Source(server).GenerateStreamAsync(Ask(), _ => { }, default));
+        Assert.False(failure.OutOfTokens);
+        Assert.Contains("answered nothing", failure.Message);
+    }
+
+    [Fact]
+    public async Task TheSiteHearsLimitAndTheModelIsNotTakenForBroken()
+    {
+        var time = new ManualTime();
+        var ui = new ScriptedUi();
+        var log = new ActivityLog(null, time.Now);
+        var thinker = new FakeTextSource("t-thinker", Sources.Runs.ApiKey, costPerCall: 0.0001m);
+        thinker.Outcomes = new Queue<Func<TextRequest, TextAnswer>>([_ => throw new TextSourceException(
+            "deepseek/deepseek-v4.1-flash " + TextRefusals.OutOfTokens, 0.000113m, providerCalled: true, responseReceived: true, outOfTokens: true)]);
+        var store = new SettingsStore(null);
+        var engine = new WalletEngine(store, [], log, ui, time, [thinker]);
+        store.Update(s => s.Chain(Vocabulary.Generate).Stops = [new ChainStop { SourceId = thinker.Id, AskBeforePaid = false }]);
+        const string Manifest = """
+            {"byoa":"0.1-draft","purpose":{"summary":"Icon designer","limits":{"maxTextChars":8000,"maxCallsPerMinute":40}},
+            "skills":{"text.generate":{"required":true}},"privacy":"personal","expectedCost":{"perSession":"0.50 USD"}}
+            """;
+        var grant = Assert.IsType<JsonObject>(await engine.HandleAsync(Clips.Request("https://icons.example.org", click: true, Manifest)))["grantId"]!.GetValue<string>();
+        var call = new WireMessage(2, Wire.Call, "https://icons.example.org", false, new JsonObject
+        {
+            ["grantId"] = grant,
+            ["skill"] = "text.generate",
+            ["input"] = new JsonObject { ["messages"] = new JsonArray(new JsonObject { ["role"] = "user", ["content"] = "Ten motifs." }) },
+            ["params"] = new JsonObject { ["maxTokens"] = 600 },
+        });
+        var result = Assert.IsType<JsonObject>(await engine.HandleAsync(call));
+        Assert.False(result["ok"]!.GetValue<bool>());
+        Assert.Equal("limit", result["reason"]!.GetValue<string>());
+        Assert.Contains(TextRefusals.OutOfTokens, log.Recent().Single(e => e.Kind == "call").Note);
+        Assert.Equal(0.000113m, engine.FindGrant(grant)!.Spent);                       // what it cost is kept
+    }
+}
+
 /// <summary>A fake model behind a key that can be kept from text, as the OpenRouter source is.</summary>
 sealed class DrawingTextSource(string id) : FakeTextSource(id, Sources.Runs.ApiKey, costPerCall: 0.035m), ITextRefusal
 {

@@ -1813,8 +1813,11 @@ public sealed partial class WalletEngine
         if (timedOut) stopReason = "text route timed out";
         entry.Milliseconds = (int)Stopwatch.GetElapsedTime(started).TotalMilliseconds;
         entry.Cost = Money.ToSpec(totalCost);
+        // A model that used all of the site's maxTokens before its first word is not broken: the site's limit was too small for it.
         return stopReason is not null
             ? Failed(entry, "limit", stopReason, route.All(), timedOut ? CallReason.Timeout : null)
+            : route.RanOutOfTokens
+            ? Failed(entry, "limit", "a model " + TextRefusals.OutOfTokens, route.All(), CallReason.Limit)
             : Failed(entry, "failed",
                 plan.Steps.Count == 0 ? "no source can do text.generate" : choiceMiss ? "no source answered with one of the choices" : "no source answered",
                 route.All());
@@ -1845,6 +1848,7 @@ public sealed partial class WalletEngine
         if (first.Answer is null && (choices is null || !first.ResponseReceived))
         {
             route.Add(index, source.Name + ": " + (first.Note ?? "did not answer"));
+            if (first.OutOfTokens) route.RanOutOfTokens = true;
             return (null, false, firstCost);
         }
 
@@ -1950,7 +1954,7 @@ public sealed partial class WalletEngine
         catch (TextSourceException e)
         {
             if (e.Drew) LearnDrawsOnText(source);
-            return new TextAttempt(null, e.Cost, e.ProviderCalled, e.ResponseReceived, e.Message);
+            return new TextAttempt(null, e.Cost, e.ProviderCalled, e.ResponseReceived, e.Message, e.OutOfTokens);
         }
         catch (OperationCanceledException) when (!callerCt.IsCancellationRequested)
         {
@@ -2039,7 +2043,7 @@ public sealed partial class WalletEngine
         return new TextReservation(at, estimate);
     }
 
-    readonly record struct TextAttempt(TextAnswer? Answer, decimal? Cost, bool ProviderCalled, bool ResponseReceived, string? Note);
+    readonly record struct TextAttempt(TextAnswer? Answer, decimal? Cost, bool ProviderCalled, bool ResponseReceived, string? Note, bool OutOfTokens = false);
     readonly record struct TextReservation(DateTimeOffset At, decimal Estimate);
 
     static string TextCallJson(ITextSource source, string? language, int textChars, decimal estimate, DateTimeOffset at) =>
@@ -2704,6 +2708,9 @@ public sealed partial class WalletEngine
     sealed class Route
     {
         readonly List<(int Index, string Text)> _items = [];
+
+        /// <summary>A source used all of <c>maxTokens</c> before its first word: with none answering, the call ends with <c>limit</c>.</summary>
+        public bool RanOutOfTokens { get; set; }
 
         public void Add(int index, string text) => _items.Add((index, text));
 

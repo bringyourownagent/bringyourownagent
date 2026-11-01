@@ -336,11 +336,14 @@ public sealed class OpenRouterTextSource : ITextSource, IStreamingTextSource, II
         var answer = request.Choices is null
             ? Texts.CleanAnswer(ChatCompletions.Content(reply?["content"]) ?? "")
             : ChatCompletions.ExtractChoice(reply, request.Choices) ?? "";
+        var ranOut = !drew && ChatCompletions.Str(ChatCompletions.First(json)?["finish_reason"]) == "length";
         if (answer.Length == 0)
         {
             throw new TextSourceException(drew ? DrewInstead
+                : ranOut ? _displayModel + " " + TextRefusals.OutOfTokens
                 : request.Choices is null ? "OpenRouter answered nothing"
-                : "OpenRouter did not answer with one of the choices", cost, providerCalled: true, responseReceived: true, drew: drew);
+                : "OpenRouter did not answer with one of the choices", cost, providerCalled: true, responseReceived: true, drew: drew,
+                outOfTokens: ranOut && request.Choices is null);
         }
 
         // Usage and cost were read before checking the answer above. Missing cost is settled by the engine's estimate floor.
@@ -392,8 +395,13 @@ public sealed class OpenRouterTextSource : ITextSource, IStreamingTextSource, II
         var (input, output) = ChatCompletions.Tokens(streamed.Usage);
         var answer = Texts.CleanAnswer(streamed.Text);
         var drew = streamed.Drew || ChatCompletions.Drew(null, streamed.Usage);
+        // a model that used all of maxTokens before its first word (on hidden reasoning, as a rule) is not broken: the site's limit was too small
+        var ranOut = !drew && streamed.Finish == "length";
         if (answer.Length == 0)
-            throw new TextSourceException(drew ? DrewInstead : "OpenRouter answered nothing", cost, providerCalled: true, responseReceived: true, drew: drew);
+        {
+            throw new TextSourceException(drew ? DrewInstead : ranOut ? _displayModel + " " + TextRefusals.OutOfTokens : "OpenRouter answered nothing",
+                cost, providerCalled: true, responseReceived: true, drew: drew, outOfTokens: ranOut);
+        }
         return new TextAnswer(answer, cost, input, output, Model + " · OpenRouter", drew);
     }
 
