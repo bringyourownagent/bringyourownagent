@@ -116,71 +116,88 @@ sealed partial class SettingsWindow
         return host.Length == 0 ? site.Origin : host;
     }
 
-    /// <summary>The models a site that asked for several was given: in the visitor's order, with a way to take one away, add another, and hide their names.</summary>
+    /// <summary>
+    /// The models a site that asked for several was given, for text and for pictures: in the visitor's order, with a way to take one away and
+    /// add another, and one box to hide their names. The ids of the pictures' controls carry "Pictures" after the name of the control.
+    /// </summary>
     Control? SiteModelsBlock(SiteRecord site)
     {
-        var entry = site.ModelsFor(Vocabulary.Generate);
-        if (entry is null || entry.SourceIds.Count == 0) return null;
         var host = Host(site);
         var all = _w.Registry.ListSources(Vocabulary.Generate).Where(s => !s.BuiltIn || s.Kind is not null).ToList();
         string NameOf(string id) => all.FirstOrDefault(s => s.Id == id) is { } info ? info.Name : id;
-        var ids = entry.SourceIds.ToList();
-        var notes = _w.Engine.SiteModelNotes(site.Origin);         // what is amiss with a model for this site: it falls short, or the wallet does not know
 
         var panel = new StackPanel { Spacing = 5 };
-        panel.Children.Add(Ui.Text("Models this site is given", "label"));
-        for (var i = 0; i < ids.Count; i++)
+        var any = false;
+        foreach (var skill in new[] { Vocabulary.Generate, Vocabulary.ImageGenerate })
         {
-            var index = i;
-            var id = ids[i];
-            var known = all.FirstOrDefault(s => s.Id == id);
-            var up = Ui.Button("↑", "deny", "SiteModelUp-" + host + "-" + SafeId(id), () => Move(index, -1), "square");
-            var down = Ui.Button("↓", "deny", "SiteModelDown-" + host + "-" + SafeId(id), () => Move(index, 1), "square");
-            var remove = Ui.Button("Remove", "deny", "SiteModelRemove-" + host + "-" + SafeId(id), () =>
+            if (site.ModelsFor(skill) is { SourceIds.Count: > 0 } entry)
             {
-                var next = ids.Where(x => x != id).ToList();
-                _w.Engine.SetSiteModels(site.Origin, Vocabulary.Generate, next);
-                Render();
-            }, "small");
-            up.IsEnabled = index > 0;
-            down.IsEnabled = index < ids.Count - 1;
-            var line = known is null ? "no longer in your models" : known.StateText;
-            var text = Ui.Column(1, Ui.Wrap((index + 1).ToString(CultureInfo.InvariantCulture) + ".  " + NameOf(id), "strong"), Ui.Wrap(line, "muted", "small"));
-            if (notes.TryGetValue(id, out var note))
+                any = true;
+                AddSkillModels(skill, entry.SourceIds.ToList());
+            }
+        }
+
+        if (!any) return null;
+
+        void AddSkillModels(string skill, List<string> ids)
+        {
+            var pictures = skill == Vocabulary.ImageGenerate;
+            var tag = pictures ? "Pictures" : "";
+            var notes = _w.Engine.SiteModelNotes(site.Origin, skill);         // what is amiss with a model for this site: it falls short, or the wallet does not know
+            panel.Children.Add(Ui.Text(pictures ? "Models this site draws pictures with" : "Models this site is given", "label"));
+            for (var i = 0; i < ids.Count; i++)
             {
-                var mark = Ui.Wrap(note, "small");
-                mark.Foreground = Ui.Brush("SignalDark");
-                AutomationProperties.SetAutomationId(mark, "SiteModelNote-" + host + "-" + SafeId(id));
-                text.Children.Add(mark);
+                var index = i;
+                var id = ids[i];
+                var known = all.FirstOrDefault(s => s.Id == id);
+                var up = Ui.Button("↑", "deny", "SiteModel" + tag + "Up-" + host + "-" + SafeId(id), () => Move(index, -1), "square");
+                var down = Ui.Button("↓", "deny", "SiteModel" + tag + "Down-" + host + "-" + SafeId(id), () => Move(index, 1), "square");
+                var remove = Ui.Button("Remove", "deny", "SiteModel" + tag + "Remove-" + host + "-" + SafeId(id), () =>
+                {
+                    var next = ids.Where(x => x != id).ToList();
+                    _w.Engine.SetSiteModels(site.Origin, skill, next);
+                    Render();
+                }, "small");
+                up.IsEnabled = index > 0;
+                down.IsEnabled = index < ids.Count - 1;
+                var line = known is null ? "no longer in your models" : known.StateText;
+                var text = Ui.Column(1, Ui.Wrap((index + 1).ToString(CultureInfo.InvariantCulture) + ".  " + NameOf(id), "strong"), Ui.Wrap(line, "muted", "small"));
+                if (notes.TryGetValue(id, out var note))
+                {
+                    var mark = Ui.Wrap(note, "small");
+                    mark.Foreground = Ui.Brush("SignalDark");
+                    AutomationProperties.SetAutomationId(mark, "SiteModel" + tag + "Note-" + host + "-" + SafeId(id));
+                    text.Children.Add(mark);
+                }
+
+                panel.Children.Add(Ui.Columns("*,Auto,Auto,Auto", text, up, down, remove));
             }
 
-            panel.Children.Add(Ui.Columns("*,Auto,Auto,Auto", text, up, down, remove));
-        }
-
-        void Move(int index, int by)
-        {
-            var j = index + by;
-            if (j < 0 || j >= ids.Count) return;
-            (ids[index], ids[j]) = (ids[j], ids[index]);
-            _w.Engine.SetSiteModels(site.Origin, Vocabulary.Generate, ids);
-            Render();
-        }
-
-        var others = all.Where(s => !ids.Contains(s.Id) && _w.Engine.ServesText(s.Id)).ToList();
-        if (others.Count > 0)
-        {
-            var combo = new ComboBox { MinWidth = 280 };
-            foreach (var other in others) combo.Items.Add(new ComboBoxItem { Content = other.Name, Tag = other.Id });
-            combo.SelectedIndex = 0;
-            AutomationProperties.SetAutomationId(combo, "SiteModelChoice-" + host);
-            var add = Ui.Button("Add", "deny", "SiteModelAdd-" + host, () =>
+            void Move(int index, int by)
             {
-                if (combo.SelectedItem is not ComboBoxItem { Tag: string id }) return;
-                ids.Add(id);
-                _w.Engine.SetSiteModels(site.Origin, Vocabulary.Generate, ids);
+                var j = index + by;
+                if (j < 0 || j >= ids.Count) return;
+                (ids[index], ids[j]) = (ids[j], ids[index]);
+                _w.Engine.SetSiteModels(site.Origin, skill, ids);
                 Render();
-            }, "small");
-            panel.Children.Add(Ui.Row(8, combo, add));
+            }
+
+            var others = all.Where(s => !ids.Contains(s.Id) && (pictures ? _w.Engine.ServesPictures(s.Id) : _w.Engine.ServesText(s.Id))).ToList();
+            if (others.Count > 0)
+            {
+                var combo = new ComboBox { MinWidth = 280 };
+                foreach (var other in others) combo.Items.Add(new ComboBoxItem { Content = other.Name, Tag = other.Id });
+                combo.SelectedIndex = 0;
+                AutomationProperties.SetAutomationId(combo, "SiteModel" + tag + "Choice-" + host);
+                var add = Ui.Button("Add", "deny", "SiteModel" + tag + "Add-" + host, () =>
+                {
+                    if (combo.SelectedItem is not ComboBoxItem { Tag: string id }) return;
+                    ids.Add(id);
+                    _w.Engine.SetSiteModels(site.Origin, skill, ids);
+                    Render();
+                }, "small");
+                panel.Children.Add(Ui.Row(8, combo, add));
+            }
         }
 
         var names = new CheckBox { Content = "The site sees the names of its models", IsChecked = site.ShowModelNames };

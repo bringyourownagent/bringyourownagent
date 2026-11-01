@@ -6,12 +6,11 @@ public static class Vocabulary
     public const string Transcribe = "audio.transcribe";
     public const string Generate = "text.generate";
 
-    /// <summary>The skill a picture-drawing model serves. Not in <see cref="Served"/> in 0.1 (slice 2 serves it); the property rules of
-    /// PROPOSAL-v2 3.3 name it all the same, so the fit engine knows what a source that draws pictures is for.</summary>
+    /// <summary>The skill a picture-drawing model serves (wallet 0.37): through the visitor's OpenRouter key, for a site that is given the model by name.</summary>
     public const string ImageGenerate = "image.generate";
 
-    /// <summary>The skills this wallet can serve in 0.1.</summary>
-    public static readonly string[] Served = [Transcribe, Generate];
+    /// <summary>The skills this wallet can serve.</summary>
+    public static readonly string[] Served = [Transcribe, Generate, ImageGenerate];
 
     public static string SkillName(string skill) => skill switch
     {

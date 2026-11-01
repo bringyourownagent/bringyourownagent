@@ -825,7 +825,7 @@ public sealed partial class WalletEngine
         var rows = new List<ConsentRow>();
         foreach (var skill in manifest.Skills)
         {
-            if (isDifference && !newSkills.Contains(skill.Id) && !missingRequired.Contains(skill.Id) && !(modelsAsked && skill.Models is not null)) continue;
+            if (isDifference && !newSkills.Contains(skill.Id) && !missingRequired.Contains(skill.Id) && !ModelsNeedAsking(site, skill, settings)) continue;
             rows.Add(Row(skill, settings, site, isNew: isDifference && (newSkills.Contains(skill.Id) || missingRequired.Contains(skill.Id))));
         }
 
@@ -857,10 +857,11 @@ public sealed partial class WalletEngine
         if (!Vocabulary.Served.Contains(skill.Id))
         {
             return new ConsentRow(skill.Id, name, skill.Required, isNew, false, [], skill.Languages,
-                "None of your sources can do this yet: this wallet serves speech to text and text generation.");
+                "None of your sources can do this yet: this wallet serves speech to text, text generation and picture generation.");
         }
 
         if (skill.Id == Vocabulary.Generate) return TextRow(skill, name, settings, site, isNew);
+        if (skill.Id == Vocabulary.ImageGenerate) return ImageRow(skill, name, settings, site, isNew);
 
         var languages = skill.Languages.Count > 0 ? skill.Languages.Cast<string?>().ToList() : [null];
         var routes = new List<RouteLine>();
@@ -889,12 +890,7 @@ public sealed partial class WalletEngine
     {
         // A site that asks for several models gets the models to tick instead of one route line per language.
         if (PlanModels(skill, settings, site) is { } section)
-        {
-            var why = section.MissingRequired.Count > 0
-                ? "The site cannot work without " + string.Join(", ", section.MissingRequired) + "."
-                : section.Shortfall is { } shortfall ? "The site " + shortfall + ". Add models in My models, or an OpenRouter key." : "";
-            return new ConsentRow(skill.Id, name, skill.Required, isNew, section.CanServe, [], skill.Languages, why, section);
-        }
+            return new ConsentRow(skill.Id, name, skill.Required, isNew, section.CanServe, [], skill.Languages, ModelsWhy(section), section);
 
         var textLanguages = skill.Languages.Count > 0 ? skill.Languages.Cast<string?>().ToList() : [null];
         var routes = new List<RouteLine>();
@@ -917,6 +913,21 @@ public sealed partial class WalletEngine
         var canServe = routes.Count > 0 && routes.All(r => r.Fits);
         return new ConsentRow(skill.Id, name, skill.Required, isNew, canServe, routes, skill.Languages, string.Join(" ", whys.Distinct()));
     }
+
+    /// <summary>
+    /// The row of a picture skill: always the models to tick (the wallet has no route of its own to draw with; a site that wrote no
+    /// <c>models</c> block is read as asking for one to four), in the same section as the text models'.
+    /// </summary>
+    ConsentRow ImageRow(RequestedSkill skill, string name, WalletSettings settings, SiteRecord site, bool isNew)
+    {
+        var section = PlanModels(skill, settings, site)!;
+        return new ConsentRow(skill.Id, name, skill.Required, isNew, section.CanServe, [], skill.Languages, ModelsWhy(section), section);
+    }
+
+    static string ModelsWhy(ModelSection section) =>
+        section.MissingRequired.Count > 0
+            ? "The site cannot work without " + string.Join(", ", section.MissingRequired) + "."
+            : section.Shortfall is { } shortfall ? "The site " + shortfall + ". Add models in My models, or an OpenRouter key." : "";
 
     public static string Where(ISpeechSource s) => s.ProviderKind switch
     {
@@ -1073,6 +1084,7 @@ public sealed partial class WalletEngine
         var names = new List<string>();
         foreach (var (skill, language) in skills.Distinct())
         {
+            if (skill == Vocabulary.ImageGenerate) continue;            // a picture model is behind a key: there is nothing to load
             if (skill == Vocabulary.Generate)
             {
                 var textSteps = Router.PlanText(ChainFor(settings, skill, language), PlainTextSources(settings),

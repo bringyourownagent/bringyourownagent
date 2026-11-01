@@ -92,6 +92,9 @@ public sealed record RequestedModels(
 
     public bool ByVendor => Distinct == "vendor";
 
+    /// <summary>What a site that asks for <c>image.generate</c> with no <c>models</c> block is read as asking: one to four models, nothing more.</summary>
+    public static readonly RequestedModels Pictures = new(1, 4, "model", [], [], null, null, false);
+
     /// <summary>The words of the site's <c>kind</c> (PROPOSAL-v2 3.1): which sources may fill the skill. Anything else reads as <see cref="ModelKind"/>.</summary>
     public const string ModelKind = "model";
     public const string AgentKind = "agent";
@@ -248,7 +251,8 @@ public sealed record RequestedManifest(string Json, string Summary, IReadOnlyLis
                     }
                 }
 
-                skills.Add(new RequestedSkill(id, required, languages, RequestedModels.From(value?["models"])));
+                // (the wallet has no route of its own for pictures: a site that asks for them without a `models` block still gets models to tick)
+                skills.Add(new RequestedSkill(id, required, languages, RequestedModels.From(value?["models"]) ?? (id == Sources.Vocabulary.ImageGenerate ? RequestedModels.Pictures : null)));
             }
         }
 

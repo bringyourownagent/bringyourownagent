@@ -40,6 +40,15 @@ public sealed partial class WalletEngine
         }
     }
 
+    /// <summary>A model is a concern of a picture section when it draws (it is then judged: it may be behind the wrong road), or when it is behind the key and the public list says nothing of it.</summary>
+    static bool MayDraw(ModelFacts facts) => facts.Output is { } output ? Modalities.DrawsPictures(output) : facts.OpenRouter;
+
+    /// <summary>What a picture costs, in words: the price of a picture is not known unless the public list says the model is free (PROPOSAL-v3 1.3).</summary>
+    static string CostOfPicture(ITextSource source) =>
+        source is IImageSource picture && picture.EstimateImageCost(new ImageRequest("x", [], 1, null)) == 0 ? "free" : "price unknown";
+
+    string CostOfNewPicture(string model) => Catalog.Find(model) is { Free: true } ? "free" : "price unknown";
+
     string CostOfNew(string model)
     {
         var entry = Catalog.Find(model);
@@ -74,8 +83,12 @@ public sealed partial class WalletEngine
         _ => source is null ? "this PC" : Where(source),
     };
 
-    /// <summary>The visitor's text models in the order of his route, each with what stops it answering, if anything.</summary>
-    IReadOnlyList<ShelfModel> BuildShelf(WalletSettings settings)
+    /// <summary>
+    /// The visitor's models for one skill in the order of his route, each with what stops it answering, if anything. A model is on the shelf of
+    /// a text skill when it is a text model of his; on the shelf of a picture skill when nothing known says it cannot draw (a text model that
+    /// cannot is no concern of a picture section and is not counted there).
+    /// </summary>
+    IReadOnlyList<ShelfModel> BuildShelf(WalletSettings settings, string skill)
     {
         var chain = ChainFor(settings, Vocabulary.Generate, null);
         var ordered = new List<SourceSetting>();
@@ -94,6 +107,7 @@ public sealed partial class WalletEngine
         {
             if (setting.Skills.Count > 0 && !setting.Skills.Contains(Vocabulary.Generate)) continue;
             var source = _textSources.FirstOrDefault(s => s.Id == setting.Id);
+            if (skill == Vocabulary.ImageGenerate && !MayDraw(FactsOf(setting, source))) continue;
             var stop = chain.Stops.FirstOrDefault(s => s.SourceId == setting.Id);
             string? notReady = null;
             if (source is null) notReady = "not available";
@@ -108,7 +122,7 @@ public sealed partial class WalletEngine
             var catalogName = Catalog.Find(modelId)?.Name;
             var name = setting.Label is { Length: > 0 } label ? label : ModelNames.Display(setting.Model, catalogName);
             shelf.Add(new ShelfModel(setting.Id, name, modelId, WhereOf(setting, source), source?.Paid ?? setting.Kind is SourceKinds.OpenRouter or ApiServices.Kind,
-                source is null ? "" : CostText(source), setting.Offer, notReady, FactsOf(setting, source)));
+                source is null ? "" : skill == Vocabulary.ImageGenerate ? CostOfPicture(source) : CostText(source), setting.Offer, notReady, FactsOf(setting, source)));
         }
 
         return shelf;
@@ -123,8 +137,13 @@ public sealed partial class WalletEngine
     /// Whether one of the visitor's sources may answer text at all (the skill's own rule): where he picks a model for a text job himself (a site's models,
     /// the model that judges requests), one that does not write text is not offered.
     /// </summary>
-    public bool ServesText(string sourceId) =>
-        _store.Read(s => s.Sources.FirstOrDefault(x => x.Id == sourceId && x.Kind is not null) is { } setting && Offers(null, setting, Vocabulary.Generate));
+    public bool ServesText(string sourceId) => Serves(sourceId, Vocabulary.Generate);
+
+    /// <summary>Whether one of the visitor's sources may draw pictures at all: known to draw, and behind his OpenRouter key.</summary>
+    public bool ServesPictures(string sourceId) => Serves(sourceId, Vocabulary.ImageGenerate);
+
+    bool Serves(string sourceId, string skill) =>
+        _store.Read(s => s.Sources.FirstOrDefault(x => x.Id == sourceId && x.Kind is not null) is { } setting && Offers(null, setting, skill));
 
     /// <summary>What the wallet knows of one of the visitor's sources, for the pages that show it (My models); null when there is no such source.</summary>
     public ModelFacts? FactsOfSource(string sourceId) =>
@@ -133,19 +152,19 @@ public sealed partial class WalletEngine
             : null;
 
     /// <summary>
-    /// For the Sites page: what is amiss with each model a site was given, by source id (a model with nothing amiss is absent). It is judged by what the
+    /// For the Sites page: what is amiss with each model a site was given for a skill, by source id (a model with nothing amiss is absent). It is judged by what the
     /// site asked when it last connected, which a live grant remembers, and by the skill's own rule when there is none.
     /// </summary>
-    public IReadOnlyDictionary<string, string> SiteModelNotes(string origin)
+    public IReadOnlyDictionary<string, string> SiteModelNotes(string origin, string skill = Vocabulary.Generate)
     {
         var notes = new Dictionary<string, string>(StringComparer.Ordinal);
         var settings = _store.Snapshot();
-        var spec = _sessions.Values.Where(s => s.Origin == origin && s.ExpiresAt > Now).Select(s => s.Manifest.Skill(Vocabulary.Generate)?.Models).FirstOrDefault(m => m is not null);
-        foreach (var id in settings.Site(origin)?.ModelsFor(Vocabulary.Generate)?.SourceIds ?? [])
+        var spec = _sessions.Values.Where(s => s.Origin == origin && s.ExpiresAt > Now).Select(s => s.Manifest.Skill(skill)?.Models).FirstOrDefault(m => m is not null);
+        foreach (var id in settings.Site(origin)?.ModelsFor(skill)?.SourceIds ?? [])
         {
             if (settings.Sources.FirstOrDefault(s => s.Id == id && s.Kind is not null) is not { } setting) continue;
             var facts = FactsOf(setting, _textSources.FirstOrDefault(t => t.Id == id));
-            var verdict = ModelFit.Evaluate(facts, ModelIdOf(setting), Vocabulary.Generate, spec);
+            var verdict = ModelFit.Evaluate(facts, ModelIdOf(setting), skill, spec);
             var marks = ModelFit.Marks(verdict) ?? (verdict.State == FitState.Excluded ? verdict.Reasons : null);
             if (marks is null) continue;
             notes[id] = (verdict.Offered(ModelFit.DropsOnMismatch(spec, facts)) ? "" : "not given to the site: ") + string.Join("; ", marks);
@@ -181,31 +200,36 @@ public sealed partial class WalletEngine
         return ModelChoice.IsPlainModelName(name) ? new ModelRoad(SourceKinds.OpenRouter, name) : null;
     }
 
+    /// <summary>The skills whose models the visitor chooses for a site, in the order their refs are numbered in a grant: text first.</summary>
+    static readonly string[] ModelSkills = [Vocabulary.Generate, Vocabulary.ImageGenerate];
+
     ModelSection? PlanModels(RequestedSkill skill, WalletSettings settings, SiteRecord site)
     {
-        if (skill.Models is not { } spec || skill.Id != Vocabulary.Generate) return null;
+        if (skill.Models is not { } spec || !ModelSkills.Contains(skill.Id)) return null;
         var previous = site.ModelsFor(skill.Id)?.SourceIds ?? [];
-        return ModelPlanner.Plan(skill.Id, spec, new ModelPlanContext(BuildShelf(settings), previous, RoadFor, CostOfNew, FactsOfNew));
+        var picture = skill.Id == Vocabulary.ImageGenerate;
+        return ModelPlanner.Plan(skill.Id, spec, new ModelPlanContext(BuildShelf(settings, skill.Id), previous, RoadFor, picture ? CostOfNewPicture : CostOfNew, FactsOfNew));
     }
 
     /// <summary>
     /// Models a visitor can add behind his OpenRouter key from a site's window: the catalog's, narrowed by what he typed, and judged by what the site
     /// asked (<paramref name="spec"/>) like every other list: one that falls short is left out or shown unticked with the reason, never offered as fit.
     /// </summary>
-    public IReadOnlyList<ModelChoice> SearchNewModels(string? query, RequestedModels? spec = null, CatalogFilter filter = CatalogFilter.All, int limit = 30)
+    public IReadOnlyList<ModelChoice> SearchNewModels(string? query, RequestedModels? spec = null, CatalogFilter filter = CatalogFilter.All, int limit = 30,
+        string skill = Vocabulary.Generate)
     {
         if (!HasOpenRouterKey() || !Catalog.Loaded) return [];
         var have = _store.Read(s => s.Sources.Select(x => x.Id).ToHashSet(StringComparer.Ordinal));
         var found = new List<ModelChoice>();
-        foreach (var model in Catalog.Search(query, filter, limit + 20))
+        foreach (var model in Catalog.Search(query, filter, limit + 20, skill))
         {
             if (!ModelChoice.IsPlainModelName(model.Id)) continue;
             if (have.Contains(SourceKinds.OpenRouter + ":" + model.Id)) continue;
             var facts = FactsOfNew(model.Id);
-            var verdict = ModelFit.Evaluate(facts, model.Canonical, Vocabulary.Generate, spec);
+            var verdict = ModelFit.Evaluate(facts, model.Canonical, skill, spec);
             if (!verdict.Offered(ModelFit.DropsOnMismatch(spec, facts))) continue;
             found.Add(new ModelChoice(ModelChoice.NewKey(model.Id), null, ModelNames.Display(model.Id, model.Name), model.Canonical, "OpenRouter key",
-                Paid: !model.Free, Cost: CostOfNew(model.Id), Role: ModelRole.Yours, Checked: false, Ready: true, Note: null,
+                Paid: !model.Free, Cost: skill == Vocabulary.ImageGenerate ? CostOfNewPicture(model.Id) : CostOfNew(model.Id), Role: ModelRole.Yours, Checked: false, Ready: true, Note: null,
                 Road: new ModelRoad(SourceKinds.OpenRouter, model.Id), Fit: verdict.State, Marks: ModelFit.Marks(verdict)));
             if (found.Count >= limit) break;
         }
@@ -221,20 +245,19 @@ public sealed partial class WalletEngine
     /// answered (a changed <c>needs</c> is the site asking for more, never decided by the wallet), or the models he gave it, those that still fit,
     /// are fewer than it needs or lack one it requires.
     /// </summary>
-    bool ModelsNeedAsking(SiteRecord site, RequestedManifest manifest, WalletSettings settings)
+    bool ModelsNeedAsking(SiteRecord site, RequestedManifest manifest, WalletSettings settings) =>
+        manifest.Skills.Any(skill => ModelsNeedAsking(site, skill, settings));
+
+    /// <summary>The same for one skill: the window then shows that skill's models and not the others', which the visitor has no reason to look at again.</summary>
+    bool ModelsNeedAsking(SiteRecord site, RequestedSkill skill, WalletSettings settings)
     {
         if (site.Status != SiteStatus.Allowed) return false;
-        foreach (var skill in manifest.Skills)
-        {
-            if (skill.Models is not { } spec || skill.Id != Vocabulary.Generate) continue;
-            var stored = site.ModelsFor(skill.Id);
-            if (!string.Equals(stored?.Ask ?? "", spec.Ask, StringComparison.Ordinal)) return true;
-            var ids = (stored?.SourceIds ?? []).Select(id => settings.Sources.FirstOrDefault(x => x.Id == id)).OfType<SourceSetting>()
-                .Where(setting => Offers(spec, setting, skill.Id)).Select(ModelIdOf).ToList();
-            if (!ModelPlanner.Satisfies(spec, ids)) return true;
-        }
-
-        return false;
+        if (skill.Models is not { } spec || !ModelSkills.Contains(skill.Id)) return false;
+        var stored = site.ModelsFor(skill.Id);
+        if (!string.Equals(stored?.Ask ?? "", spec.Ask, StringComparison.Ordinal)) return true;
+        var ids = (stored?.SourceIds ?? []).Select(id => settings.Sources.FirstOrDefault(x => x.Id == id)).OfType<SourceSetting>()
+            .Where(setting => Offers(spec, setting, skill.Id)).Select(ModelIdOf).ToList();
+        return !ModelPlanner.Satisfies(spec, ids);
     }
 
     /// <summary>
@@ -341,16 +364,19 @@ public sealed partial class WalletEngine
 
     /// <summary>
     /// The models a site was given, per skill: the visitor's choice for it, one entry per model (two roads to the same model are one
-    /// entry, the visitor's choice first), referred to as m1, m2... Empty for a site that asked for no models. A model that no longer fits what
-    /// the site asks (the fit engine is asked again each time) is not given, and each one that is given carries the verdicts the site may be told.
+    /// entry, the visitor's choice first), referred to as m1, m2... Refs are unique within the grant (PROPOSAL-v3 3.3): the text entries are
+    /// m1 to mk and the picture entries go on from m(k+1), so a model ticked for both has one ref in each list. Empty for a site that asked for
+    /// no models. A model that no longer fits what the site asks (the fit engine is asked again each time) is not given, and each one that is
+    /// given carries the verdicts the site may be told.
     /// </summary>
     IReadOnlyDictionary<string, IReadOnlyList<GrantedModel>> BuildGranted(SiteRecord? site, RequestedManifest manifest, WalletSettings settings)
     {
         var result = new Dictionary<string, IReadOnlyList<GrantedModel>>(StringComparer.Ordinal);
         if (site is null) return result;
-        foreach (var skill in manifest.Skills)
+        var next = 1;
+        foreach (var skillId in ModelSkills)
         {
-            if (skill.Models is not { } spec || skill.Id != Vocabulary.Generate) continue;
+            if (manifest.Skill(skillId) is not { Models: { } spec } skill) continue;
             var list = new List<GrantedModel>();
             var seen = new HashSet<string>(StringComparer.Ordinal);
             foreach (var id in site.ModelsFor(skill.Id)?.SourceIds ?? [])
@@ -368,7 +394,7 @@ public sealed partial class WalletEngine
                     roads.Add(other.Id);
                 var name = setting.Label is { Length: > 0 } label ? label : ModelNames.Display(setting.Model, Catalog.Find(modelId)?.Name);
                 var abilities = facts.Agent && spec.Abilities is { Count: > 0 } asked ? AgentProfile.Verdicts(asked) : null;
-                list.Add(new GrantedModel("m" + (list.Count + 1).ToString(CultureInfo.InvariantCulture), roads, name, modelId,
+                list.Add(new GrantedModel("m" + (next++).ToString(CultureInfo.InvariantCulture), roads, name, modelId,
                     source is null ? "api-key" : ProviderReceipt(source), source?.Paid ?? true, verdict.Can, abilities));
             }
 
