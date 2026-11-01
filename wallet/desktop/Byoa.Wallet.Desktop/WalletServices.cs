@@ -34,6 +34,7 @@ sealed class WalletServices : IDisposable
         {
             Catalog = Sources.Catalog,
             HasOpenRouterKey = () => Secrets.Has(OpenRouterSource.SecretName),
+            PictureShrinker = new SkiaPictureShrinker(),
         };
         // The guard: Jev behind the visitor's OpenRouter key by default, or the text source he picked in Agent guard (a model on this
         // computer keeps the requests home and costs nothing). What a paid judge spends is counted in a file of its own.

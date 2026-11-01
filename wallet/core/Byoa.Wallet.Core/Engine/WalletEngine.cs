@@ -130,11 +130,13 @@ public sealed partial class WalletEngine
     DateTimeOffset Now => _time.GetUtcNow();
 
     /// <summary>Answers one message from the extension. Never throws for bad input: it answers the fallback.</summary>
-    public Task<JsonNode?> HandleAsync(WireMessage message, CancellationToken ct = default) =>
+    /// <param name="pictures">Where a picture call leaves the pictures it drew (their bytes, in the order of the result's <c>images</c>) for the carrier to send
+    /// before the result; null when the carrier cannot carry pictures, and then a picture call is answered <c>ok: false</c>.</param>
+    public Task<JsonNode?> HandleAsync(WireMessage message, CancellationToken ct = default, ICollection<byte[]>? pictures = null) =>
         GuardedAsync(message.Type, message.Origin, null, async () => message.Type switch
         {
             Wire.Request => await RequestAsync(message.Origin, message.UserActivation, message.Payload, ct, null).ConfigureAwait(false),
-            Wire.Call => await CallAsync(message.Origin, message.Payload, ct, null).ConfigureAwait(false),
+            Wire.Call => await CallAsync(message.Origin, message.Payload, ct, null, null, pictures).ConfigureAwait(false),
             Wire.Release => Release(message.Origin, message.Payload),
             Wire.Status => Status(),
             Wire.Open => OpenWindow(),
@@ -162,8 +164,9 @@ public sealed partial class WalletEngine
 
     /// <summary>A call that came over the wallet's own connection to the site: exactly the gate, limits and routing of a page's call.</summary>
     /// <param name="onChunk">When the call asked to stream and the source can: gets each piece of the answer as it arrives (the answer that comes back is the whole text).</param>
-    public Task<JsonNode?> CallViaLinkAsync(string origin, JsonObject payload, CancellationToken ct = default, Action<string>? onChunk = null) =>
-        GuardedAsync(Wire.Call, origin, ViaLink, () => CallAsync(origin, payload, ct, ViaLink, onChunk));
+    /// <param name="pictures">As for <see cref="HandleAsync"/>: where a picture call leaves the bytes of the pictures it drew.</param>
+    public Task<JsonNode?> CallViaLinkAsync(string origin, JsonObject payload, CancellationToken ct = default, Action<string>? onChunk = null, ICollection<byte[]>? pictures = null) =>
+        GuardedAsync(Wire.Call, origin, ViaLink, () => CallAsync(origin, payload, ct, ViaLink, onChunk, pictures));
 
     /// <summary>
     /// The site's welcome echoed the link's manifest, so the site issued the link: the visitor's Allow for it is stored
@@ -1191,7 +1194,7 @@ public sealed partial class WalletEngine
     // ------------------------------------------------------------------------------------------------
     // call
 
-    async Task<JsonNode?> CallAsync(string origin, JsonObject payload, CancellationToken ct, string? via, Action<string>? onChunk = null)
+    async Task<JsonNode?> CallAsync(string origin, JsonObject payload, CancellationToken ct, string? via, Action<string>? onChunk = null, ICollection<byte[]>? pictures = null)
     {
         var started = Stopwatch.GetTimestamp();
         var grantId = Str(payload["grantId"]);
@@ -1223,7 +1226,7 @@ public sealed partial class WalletEngine
         // for the session that is running too, not only for the site's next one.
         if (Money.TryParse(site.Budget, out var budgetNow)) session.Budget = budgetNow;
 
-        if (skill is not (Vocabulary.Transcribe or Vocabulary.Generate))
+        if (skill is not (Vocabulary.Transcribe or Vocabulary.Generate or Vocabulary.ImageGenerate))
         {
             return Failed(entry, "failed", "skill not served: " + (skill ?? "none"));
         }
@@ -1231,6 +1234,11 @@ public sealed partial class WalletEngine
         if (skill == Vocabulary.Generate)
         {
             return await GenerateCallAsync(entry, session, site, payload, started, ct, onChunk).ConfigureAwait(false);
+        }
+
+        if (skill == Vocabulary.ImageGenerate)
+        {
+            return await ImageCallAsync(entry, session, site, payload, started, ct, pictures).ConfigureAwait(false);
         }
 
         // The input: a WAV clip, measured here and never trusted from the page.
