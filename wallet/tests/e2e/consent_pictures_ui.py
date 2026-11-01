@@ -298,12 +298,15 @@ try:
     time.sleep(1.5)
     check("it is the same window as the first time: both sections, under \"Asks for 2:\"",
           name_of(consent, "ConsentAsksFor") == "Asks for 2:" and has_text(consent, "Text generation") and has_text(consent, "Image generation"))
-    check("each block has its number", present(consent, "ConsentNumber-text.generate") and present(consent, "ConsentNumber-image.generate"))
+    check("what is not allowed yet comes first: the pictures are 1, the text 2",
+          name_of(consent, "ConsentNumber-image.generate") == "1" and name_of(consent, "ConsentNumber-text.generate") == "2",
+          name_of(consent, "ConsentNumber-image.generate") + " " + name_of(consent, "ConsentNumber-text.generate"))
     check("the optional block has \"Allow\" with its box", ui.control(consent, "ConsentInclude-image.generate").Name == "Allow Image generation")
     check("the text, allowed before, says \"already allowed\"", present(consent, "ConsentAllowed-text.generate"))
     check("the pictures, asked for now, do not", not present(consent, "ConsentAllowed-image.generate", 0.5))
     check("no \"Only what is new\" and no \"updated\" chip", not has_text(consent, "Only what is new") and not has_text(consent, "updated"))
     check("the text models are ticked as before", ticked(consent, NANO))
+    time.sleep(1.5)
     shot(consent, "2b-asks-for-more")
     ui.invoke(consent, "ConsentAllow")
     check("site A is connected again, now with the pictures",

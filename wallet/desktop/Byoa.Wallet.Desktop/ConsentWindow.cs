@@ -38,6 +38,9 @@ sealed partial class ConsentWindow : CornerWindow
     Control? _stepper;
     Border? _glow;                                 // the ring of light around the check tick, while the visitor has not ticked it
     DispatcherTimer? _pulse;
+    readonly List<(Border Block, Color Color)> _asking = [];   // the blocks not allowed yet, in a window that has allowed ones too
+    DispatcherTimer? _askPulse;
+    bool _askBright;
     bool _glowBright;
     static double? _preferredCard;                 // the card's width (DIPs) the visitor last chose: the next windows open as wide
 
@@ -340,13 +343,16 @@ sealed partial class ConsentWindow : CornerWindow
 
         // A site that asks for more gets the same window as the first time; what its grant covers says "already allowed".
         // "Asks for 2: [Text generation] [Image generation]", each chip in the colour of its block, and then the blocks, numbered.
+        // What is not allowed yet comes first; when the window also has allowed blocks, the others glow slowly to be looked at.
+        var rows = _model.Rows.OrderBy(r => r.AlreadyAllowed ? 1 : 0).ToList();
+        var mixed = rows.Any(r => r.AlreadyAllowed);
         var asks = new WrapPanel { Orientation = Orientation.Horizontal };
-        var asksLabel = Ui.Text("Asks for " + _model.Rows.Count.ToString(CultureInfo.InvariantCulture) + ":", "label");
+        var asksLabel = Ui.Text("Asks for " + rows.Count.ToString(CultureInfo.InvariantCulture) + ":", "label");
         asksLabel.VerticalAlignment = VerticalAlignment.Center;
         asksLabel.Margin = new Thickness(0, 0, 8, 4);
         AutomationProperties.SetAutomationId(asksLabel, "ConsentAsksFor");
         asks.Children.Add(asksLabel);
-        foreach (var row in _model.Rows)
+        foreach (var row in rows)
         {
             var chip = Ui.Chip(row.SkillName, KindClass(row.Skill) ?? "");
             chip.Margin = new Thickness(0, 0, 5, 4);
@@ -354,7 +360,12 @@ sealed partial class ConsentWindow : CornerWindow
         }
 
         body.Children.Add(asks);
-        for (var i = 0; i < _model.Rows.Count; i++) body.Children.Add(SkillRow(_model.Rows[i], i + 1));
+        for (var i = 0; i < rows.Count; i++)
+        {
+            var block = SkillRow(rows[i], i + 1);
+            if (mixed && !rows[i].AlreadyAllowed && block is Border asking) AskForAttention(asking, rows[i].Skill);
+            body.Children.Add(block);
+        }
 
         if (_model.Limits is { } ask) body.Children.Add(LimitsBlock(ask));
         body.Children.Add(BudgetLine());
@@ -367,6 +378,52 @@ sealed partial class ConsentWindow : CornerWindow
         : skill == Vocabulary.ImageGenerate ? "kind-picture"
         : skill.StartsWith("audio.", StringComparison.Ordinal) ? "kind-speech"
         : null;
+
+    static Color KindColor(string skill) => KindClass(skill) switch
+    {
+        "kind-text" => Color.Parse("#2f5bbf"),
+        "kind-picture" => Color.Parse("#c2303c"),
+        "kind-speech" => Color.Parse("#2a8550"),
+        _ => Color.Parse("#c8401c"),
+    };
+
+    /// <summary>
+    /// A block the site asks for that is not allowed yet, in a window that has allowed ones too: its edges glow in its colour, swelling and fading
+    /// slowly, as if it asked to be looked at, until the window closes.
+    /// </summary>
+    void AskForAttention(Border block, string skill)
+    {
+        var duration = TimeSpan.FromMilliseconds(1400);
+        block.Transitions = [new BoxShadowsTransition { Property = Border.BoxShadowProperty, Duration = duration, Easing = new SineEaseInOut() }];
+        AutomationProperties.SetHelpText(block, "Not allowed yet");
+        _asking.Add((block, KindColor(skill)));
+        if (_askPulse is null)
+        {
+            _askPulse = new DispatcherTimer { Interval = duration };
+            _askPulse.Tick += (_, _) =>
+            {
+                _askBright = !_askBright;
+                ShowAsking();
+            };
+            Opened += (_, _) => _askPulse.Start();
+            Closed += (_, _) => _askPulse.Stop();
+        }
+
+        ShowAsking();
+    }
+
+    void ShowAsking()
+    {
+        foreach (var (block, color) in _asking)
+        {
+            block.BoxShadow = new BoxShadows(new BoxShadow
+            {
+                Blur = _askBright ? 16 : 5,
+                Spread = _askBright ? 2 : 0,
+                Color = Color.FromArgb((byte)(_askBright ? 210 : 60), color.R, color.G, color.B),
+            });
+        }
+    }
 
     /// <summary>The block's number in an orange circle, at the start of its title.</summary>
     static Control NumberBadge(int number)
