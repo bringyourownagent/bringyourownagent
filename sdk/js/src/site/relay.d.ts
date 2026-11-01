@@ -18,6 +18,23 @@ export type CallResult =
 /** The visitor's address as the limits count it: IPv4-mapped IPv6 becomes IPv4, any other IPv6 becomes its /64. */
 export function addressKey(ip: string): string;
 
+/** One picture of a picture call (`image.generate`, wallet 0.37): the type the bytes are, their size, their SHA-256 (hex), the bytes as
+ * base64, and whether the wallet made it smaller than the model drew it. The relay joined its parts and checked them; it is still user input. */
+export interface Picture { mime: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif'; size: number; sha256: string; data: string; reduced: boolean }
+
+/** The skill whose answers come as pictures: a call answers `{ ok: true, output: { images: Picture[] }, receipt }`. */
+export const PICTURE_SKILL: 'image.generate';
+
+/** The type the bytes are, by their first bytes; null for anything else. */
+export function sniffPicture(bytes: Uint8Array): Picture['mime'] | null;
+
+/** The pictures of one call as the wallet sends them: `add` each `image` frame, then `join` with the result's `output.images`. */
+export class PictureParts {
+  add(frame: { index?: unknown; seq?: unknown; of?: unknown; mime?: unknown; data?: unknown }): void;
+  /** The pictures joined and checked, or null when anything is missing or does not match. */
+  join(described: unknown): Picture[] | null;
+}
+
 /** One participant of a grant, as the relay passes it on (CONTRACT.md section 3.3). */
 export interface GrantedModel {
   ref: string;
@@ -26,7 +43,7 @@ export interface GrantedModel {
   runs: string | null;
   kind: 'model' | 'agent';
   /** The wallet's verdicts for the conditions the site asked about in `needs`; absent when it asked none or the wallet said none. */
-  can?: Partial<Record<'input' | 'output' | 'context' | 'runs', boolean>>;
+  can?: Partial<Record<'input' | 'output', boolean>>;
   /** For an agent entry: verdicts for the abilities the site asked about. Absent otherwise. */
   abilities?: Record<string, boolean>;
 }

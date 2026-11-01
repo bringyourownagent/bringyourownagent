@@ -11,7 +11,7 @@ export function hasExtension(): boolean;
 export function whenExtensionReady(timeoutMs?: number): Promise<boolean>;
 /** Call from a click. A grant, or null for every kind of "no" (declined, blocked, no wallet, no fitting model). */
 export function requestWithExtension(manifest: object): Promise<Grant | null>;
-/** Never throws. The output is user input: validate it. */
+/** Never throws. The output is user input: validate it. A picture call (`image.generate`, wallet 0.37) gives `output.images`: `[{ mime, size, sha256, data, reduced }]`. */
 export function callWithExtension(grant: Grant | null, skill: string, input: unknown, params?: Record<string, unknown>): Promise<ExtensionCallResult>;
 export function releaseWithExtension(grant: Grant): Promise<void>;
 /** Starts the wallet with its `bringyourownagent://connect?...` link. Throws for any other link. */

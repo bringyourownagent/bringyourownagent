@@ -113,7 +113,7 @@ function cleanModels(models) {
 const CAPABILITY_NAMES = ['needs', 'can', 'kind', 'cancel', 'image.generate', 'images-in', 'parts', 'frame-limit'];
 
 /** The properties a site may ask about in `needs`; a verdict for any other name is dropped. */
-const CAN_NAMES = ['input', 'output', 'context', 'runs'];
+const CAN_NAMES = ['input', 'output'];
 
 /** `can` or `abilities`: booleans only, at most four keys, safe names, and only what a site can ask about; undefined when nothing survives. */
 function cleanVerdicts(value, allowed) {
@@ -162,6 +162,78 @@ function cleanModelsBySkill(models) {
   return out;
 }
 
+/** The skill whose answers come as pictures (CONTRACT.md section 3.7, wallet 0.37). */
+export const PICTURE_SKILL = 'image.generate';
+
+/** The picture types a wallet may send. */
+const PICTURE_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'];
+
+/** At most 4 pictures an answer, parts of at most 524,288 base64 characters, 32 parts a picture, 8,000,000 bytes together. */
+const MAX_PICTURES = 4;
+const MAX_PART_CHARS = 524_288;
+const MAX_PARTS = 32;
+const MAX_PICTURE_BYTES = 8_000_000;
+const MAX_PICTURE_CHARS = Math.ceil(MAX_PICTURE_BYTES / 3) * 4;
+
+/** The type the bytes are, by their first bytes (never by a field); null for anything else. */
+export function sniffPicture(b) {
+  const at = (i, ...v) => v.every((x, k) => b[i + k] === x);
+  if (b.length >= 8 && at(0, 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)) return 'image/png';
+  if (b.length >= 3 && at(0, 0xff, 0xd8, 0xff)) return 'image/jpeg';
+  if (b.length >= 6 && at(0, 0x47, 0x49, 0x46, 0x38) && (b[4] === 0x37 || b[4] === 0x39) && b[5] === 0x61) return 'image/gif';
+  if (b.length >= 12 && at(0, 0x52, 0x49, 0x46, 0x46) && at(8, 0x57, 0x45, 0x42, 0x50)) return 'image/webp';
+  return null;
+}
+
+/**
+ * The pictures of one `image.generate` call as the wallet sends them (CONTRACT-DIRECT.md section 4): each picture in `image`
+ * parts, then the `result` that says what each one is. Joined in `seq` order and checked against the result: size, SHA-256,
+ * the type the bytes really are, at most 4 pictures and 8,000,000 bytes together. One bad part spoils the whole answer.
+ */
+export class PictureParts {
+  constructor() {
+    this.pictures = new Map();
+    this.chars = 0;
+    this.broken = false;
+  }
+
+  /** One `image` frame. A part out of shape, a repeat, one that disagrees with its picture's other parts, or one past the budget breaks the answer. */
+  add(frame) {
+    if (this.broken) return;
+    const { index, seq, of, mime, data } = frame;
+    const shape = Number.isInteger(index) && index >= 0 && index < MAX_PICTURES && Number.isInteger(of) && of >= 1 && of <= MAX_PARTS
+      && Number.isInteger(seq) && seq >= 0 && seq < of && PICTURE_TYPES.includes(mime) && typeof data === 'string' && data.length > 0
+      && data.length <= MAX_PART_CHARS && (this.chars += data.length) <= MAX_PICTURE_CHARS;
+    if (!shape) { this.broken = true; return; }
+    let picture = this.pictures.get(index);
+    if (!picture) this.pictures.set(index, (picture = { mime, parts: new Array(of).fill(null) }));
+    if (picture.mime !== mime || picture.parts.length !== of || picture.parts[seq] !== null) { this.broken = true; return; }
+    picture.parts[seq] = data;
+  }
+
+  /** The pictures `described` (the result's `output.images`, in order), joined and checked: `[{ mime, size, sha256, data, reduced }]`, or null. */
+  join(described) {
+    if (this.broken || !Array.isArray(described) || described.length === 0 || described.length > MAX_PICTURES
+      || described.length !== this.pictures.size) return null;
+    const out = [];
+    let total = 0;
+    for (let i = 0; i < described.length; i++) {
+      const info = described[i];
+      const picture = this.pictures.get(i);
+      if (info === null || typeof info !== 'object' || !picture || picture.parts.includes(null) || info.mime !== picture.mime) return null;
+      const data = picture.parts.join('');
+      if (!/^[A-Za-z0-9+/]*={0,2}$/.test(data) || data.length % 4 !== 0) return null;
+      const bytes = Buffer.from(data, 'base64');
+      total += bytes.length;
+      if (total > MAX_PICTURE_BYTES || info.size !== bytes.length || sniffPicture(bytes) !== picture.mime) return null;
+      const sha256 = createHash('sha256').update(bytes).digest('hex');
+      if (typeof info.sha256 !== 'string' || info.sha256.toLowerCase() !== sha256) return null;
+      out.push({ mime: picture.mime, size: bytes.length, sha256, data, reduced: info.reduced === true });
+    }
+    return out;
+  }
+}
+
 /**
  * One wallet connection. Calls go out with `call()`, which never rejects: the answer is
  * `{ ok: true, output, receipt }` or `{ ok: false }` (the wallet said no, did not answer in time, or went away).
@@ -203,12 +275,14 @@ export class WalletConnection extends EventEmitter {
    * the time spent waiting for a place: as many calls are in flight to one wallet as its `grant.limits.maxParallelCalls`
    * says (4 when it says nothing; the option `maxInFlight` caps it), up to `maxQueued` more wait their turn, and any call
    * beyond that fails at once. `options.onChunk(text)` gets the pieces of a streamed answer (`params.stream: true`) as the
-   * wallet sends them: a preview, the answer replaces them.
+   * wallet sends them: a preview, the answer replaces them. A picture call (`image.generate`, wallet 0.37) answers
+   * `{ ok: true, output: { images: [{ mime, size, sha256, data, reduced }] }, receipt }`, its parts joined and checked.
    */
   call(skill, input, params = {}, options = {}) {
     return new Promise((resolve) => {
       if (!this.live || this._queue.length >= this.options.maxQueued) { resolve({ ok: false }); return; }
-      const job = { skill, input, params, resolve, done: false, warm: this._warming, onChunk: options.onChunk };
+      const job = { skill, input, params, resolve, done: false, warm: this._warming, onChunk: options.onChunk,
+        pictures: skill === PICTURE_SKILL ? new PictureParts() : undefined };
       job.timer = setTimeout(() => this._expire(job), options.timeoutMs ?? (job.warm ? this.options.firstCallTimeoutMs : this.options.callTimeoutMs));
       this._queue.push(job);
       this._pump();
@@ -267,6 +341,11 @@ export class WalletConnection extends EventEmitter {
   _result(frame) {
     const job = Number.isInteger(frame.id) ? this._pending.get(frame.id) : undefined;
     if (!job) return; // late, repeated or made up
+    if (job.pictures && frame.ok === true) {
+      const images = job.pictures.join(frame.output?.images);
+      this._finish(job, images ? { ok: true, output: { images }, receipt: cleanReceipt(frame.receipt) } : { ok: false, reason: 'failed' });
+      return;
+    }
     const output = frame.output;
     const sane = frame.ok === true && output !== null && typeof output === 'object' && !Array.isArray(output)
       && JSON.stringify(output).length <= this.options.maxOutputBytes;
@@ -281,6 +360,12 @@ export class WalletConnection extends EventEmitter {
     const failed = { ok: false };
     if (frame.reason !== undefined) failed.reason = REASONS.has(frame.reason) ? frame.reason : 'failed';
     this._finish(job, failed);
+  }
+
+  /** One part of a picture (`image`); ignored unless a picture call with that id is waiting. */
+  _image(frame) {
+    const job = Number.isInteger(frame.id) ? this._pending.get(frame.id) : undefined;
+    if (job && !job.done && job.pictures) job.pictures.add(frame);
   }
 
   _chunk(frame) {
@@ -545,6 +630,8 @@ export class Relay extends EventEmitter {
         this._touch(conn);
       } else if (frame.type === 'chunk') {
         conn._chunk(frame);
+      } else if (frame.type === 'image') {
+        conn._image(frame);
       } else if (frame.type === 'grant') {
         // the visitor changed this site's models or limits in the wallet: whole objects, as in hello. A grant frame carries no
         // capabilities: what the wallet said it understands at hello still stands.

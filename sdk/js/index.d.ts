@@ -25,14 +25,10 @@ export interface Limits {
   maxTextChars?: number;
 }
 
-/** A condition on one property of the sources a site asks for, inside `models.needs`. */
+/** A condition on one property of the sources a site asks for, inside `models.needs` (`input` or `output`). */
 export type NeedsCondition =
   | ('audio' | 'image' | 'text')[]
-  | { includes: ('audio' | 'image' | 'text')[] }
-  | number
-  | { min: number }
-  | ('local' | 'home-server' | 'api-key')[]
-  | { oneOf: ('local' | 'home-server' | 'api-key')[] };
+  | { includes: ('audio' | 'image' | 'text')[] };
 
 /** The `models` block of a skill (CONTRACT.md section 3.3). Only these fields are typed; a block without `count` is valid. */
 export interface ModelsRequest {
@@ -41,7 +37,7 @@ export interface ModelsRequest {
   require?: unknown[];
   recommend?: unknown[];
   /** Conditions on the properties of the sources (wallet 0.36). */
-  needs?: { input?: NeedsCondition; output?: NeedsCondition; context?: NeedsCondition; runs?: NeedsCondition; [property: string]: unknown };
+  needs?: { input?: NeedsCondition; output?: NeedsCondition; [property: string]: unknown };
   /** Which sources may fill the skill: a model, the visitor's agent, or either (wallet 0.36). */
   kind?: 'model' | 'agent' | 'any';
   /** What happens to a source that fails a known condition (wallet 0.36). */
@@ -172,7 +168,7 @@ export const KNOWN_LIMITS: readonly (keyof Limits)[];
 export const COUNT_LIMITS: readonly (keyof Limits)[];
 export const SOURCE_KINDS: readonly ('model' | 'agent' | 'any')[];
 export const ON_MISMATCH: readonly ('drop' | 'show')[];
-export const NEEDS_PROPERTIES: readonly ('input' | 'output' | 'context' | 'runs')[];
+export const NEEDS_PROPERTIES: readonly ('input' | 'output')[];
 export const MODALITIES: readonly ('audio' | 'image' | 'text')[];
 export const RUNS: readonly ('local' | 'home-server' | 'api-key')[];
 export const ABILITIES: readonly string[];

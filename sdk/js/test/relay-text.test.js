@@ -62,7 +62,7 @@ test('every skill\'s models, their verdicts and the capabilities reach the site'
   assert.deepEqual(wallet.grant.models.map((m) => m.ref), ['m1', 'm2']);                // `models` stays the text list the calls use
   assert.deepEqual(wallet.grant.modelsBySkill['image.generate'].map((m) => m.ref), ['i1']);
   assert.equal('Not-A-Skill' in wallet.grant.modelsBySkill, false);
-  assert.deepEqual(wallet.grant.models[0].can, { input: true, output: true, runs: true });   // booleans only, the four properties only
+  assert.deepEqual(wallet.grant.models[0].can, { input: true, output: true });   // booleans only, input and output only (0.0.6)
   assert.equal('abilities' in wallet.grant.models[0], false);                                // abilities belong to an agent
   assert.deepEqual(wallet.grant.models[1].can, { input: true });
   assert.deepEqual(wallet.grant.models[1].abilities, { 'web.search': true, 'web.read': false, 'x-a': true, 'x-b': true });   // at most four
