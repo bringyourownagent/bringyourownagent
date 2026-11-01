@@ -7,6 +7,7 @@ using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Threading;
+using System.Globalization;
 using Byoa.Wallet.Engine;
 using Byoa.Wallet.Sources;
 
@@ -15,7 +16,7 @@ namespace Byoa.Wallet.Desktop;
 /// <summary>
 /// The short consent window: the site, its purpose in its own words, one row per skill with the source the
 /// manager suggests (and why), one limit, "decide on my own next time", Decline or Allow, and a link to the
-/// detailed settings. When a site asks for more than it has, only the difference is shown.
+/// detailed settings. When a site asks for more than it has, the window is the same, with "already allowed" on what it has.
 /// It takes the focus and works from the keyboard; Esc declines.
 /// </summary>
 sealed partial class ConsentWindow : CornerWindow
@@ -41,7 +42,7 @@ sealed partial class ConsentWindow : CornerWindow
     static double? _preferredCard;                 // the card's width (DIPs) the visitor last chose: the next windows open as wide
 
     /// <param name="searchModels">Searches the public model list for the models behind the visitor's own OpenRouter key that serve a skill (the text or the picture section); null when there is none.</param>
-    public ConsentWindow(ConsentModel model, Action<string?> openSettings, Func<string?, RequestedModels, string, IReadOnlyList<ModelChoice>>? searchModels = null, bool canSearch = false) : base(400)
+    public ConsentWindow(ConsentModel model, Action<string?> openSettings, Func<string?, RequestedModels, string, IReadOnlyList<ModelChoice>>? searchModels = null, bool canSearch = false) : base(600)
     {
         _model = model;
         _openSettings = openSettings;
@@ -338,18 +339,51 @@ sealed partial class ConsentWindow : CornerWindow
         }
 
         // A site that asks for more gets the same window as the first time; what its grant covers says "already allowed".
-        body.Children.Add(Ui.Text("Asks for", "label"));
-        foreach (var row in _model.Rows) body.Children.Add(SkillRow(row));
+        // "Asks for 2: [Text generation] [Image generation]", each chip in the colour of its block, and then the blocks, numbered.
+        var asks = new WrapPanel { Orientation = Orientation.Horizontal };
+        var asksLabel = Ui.Text("Asks for " + _model.Rows.Count.ToString(CultureInfo.InvariantCulture) + ":", "label");
+        asksLabel.VerticalAlignment = VerticalAlignment.Center;
+        asksLabel.Margin = new Thickness(0, 0, 8, 4);
+        AutomationProperties.SetAutomationId(asksLabel, "ConsentAsksFor");
+        asks.Children.Add(asksLabel);
+        foreach (var row in _model.Rows)
+        {
+            var chip = Ui.Chip(row.SkillName, KindClass(row.Skill) ?? "");
+            chip.Margin = new Thickness(0, 0, 5, 4);
+            asks.Children.Add(chip);
+        }
+
+        body.Children.Add(asks);
+        for (var i = 0; i < _model.Rows.Count; i++) body.Children.Add(SkillRow(_model.Rows[i], i + 1));
 
         if (_model.Limits is { } ask) body.Children.Add(LimitsBlock(ask));
         body.Children.Add(BudgetLine());
         return body;
     }
 
-    Control SkillRow(ConsentRow row)
+    /// <summary>The colour class of a kind of skill, the same on its chip in "Asks for" and on its block: text bluish, pictures reddish, speech greenish.</summary>
+    static string? KindClass(string skill) =>
+        skill == Vocabulary.Generate ? "kind-text"
+        : skill == Vocabulary.ImageGenerate ? "kind-picture"
+        : skill.StartsWith("audio.", StringComparison.Ordinal) ? "kind-speech"
+        : null;
+
+    /// <summary>The block's number in an orange circle, at the start of its title.</summary>
+    static Control NumberBadge(int number)
+    {
+        var text = new TextBlock { Text = number.ToString(CultureInfo.InvariantCulture), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+        var badge = new Border { Child = text, VerticalAlignment = VerticalAlignment.Center };
+        badge.Classes.Add("number");
+        return badge;
+    }
+
+    Control SkillRow(ConsentRow row, int number)
     {
         var panel = new StackPanel { Spacing = 4 };
         var title = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 7 };
+        var numbered = NumberBadge(number);
+        AutomationProperties.SetAutomationId(((Border)numbered).Child!, "ConsentNumber-" + row.Skill);
+        title.Children.Add(numbered);
         if (!row.Required && row.CanServe)
         {
             var include = new CheckBox { IsChecked = true, MinWidth = 0, Padding = new Thickness(0) };
@@ -373,7 +407,7 @@ sealed partial class ConsentWindow : CornerWindow
             AutomationProperties.SetAutomationId(allowed.Child!, "ConsentAllowed-" + row.Skill);
             title.Children.Add(allowed);
         }
-        if (row.Models is not null) return ModelRow(row, panel, title);
+        if (row.Models is not null) return Kind(ModelRow(row, panel, title), row.Skill);
 
         var why = Ui.Link("why?", "ConsentWhy-" + row.Skill, () => { });
         why.HorizontalAlignment = HorizontalAlignment.Right;
@@ -433,12 +467,18 @@ sealed partial class ConsentWindow : CornerWindow
             ((TextBlock)why.Content!).Text = details.IsVisible ? "hide" : "why?";
         };
 
-        var box = Ui.Box("row", panel);
+        var box = Kind(Ui.Box("row", panel), row.Skill);
         if (!row.CanServe)
         {
             box.BorderBrush = Ui.Brush("Signal");
         }
 
+        return box;
+    }
+
+    static T Kind<T>(T box, string skill) where T : StyledElement
+    {
+        if (KindClass(skill) is { } kind) box.Classes.Add(kind);
         return box;
     }
 

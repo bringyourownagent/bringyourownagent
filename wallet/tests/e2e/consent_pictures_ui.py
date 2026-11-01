@@ -296,8 +296,9 @@ try:
     consent = ui.to_consent(40)
     check("site A's second window shows", consent is not None)
     time.sleep(1.5)
-    check("it is the same window as the first time: both sections, under \"Asks for\"",
-          has_text(consent, "Asks for") and has_text(consent, "Text generation") and has_text(consent, "Image generation"))
+    check("it is the same window as the first time: both sections, under \"Asks for 2:\"",
+          name_of(consent, "ConsentAsksFor") == "Asks for 2:" and has_text(consent, "Text generation") and has_text(consent, "Image generation"))
+    check("each block has its number", present(consent, "ConsentNumber-text.generate") and present(consent, "ConsentNumber-image.generate"))
     check("the text, allowed before, says \"already allowed\"", present(consent, "ConsentAllowed-text.generate"))
     check("the pictures, asked for now, do not", not present(consent, "ConsentAllowed-image.generate", 0.5))
     check("no \"Only what is new\" and no \"updated\" chip", not has_text(consent, "Only what is new") and not has_text(consent, "updated"))

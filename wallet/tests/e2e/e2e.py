@@ -512,7 +512,7 @@ with sync_playwright() as p:
     ui.invoke(w, "NoticeShow")
     c = ui.find_window("Agent wallet consent", 10)
     time.sleep(0.8)
-    diff = c.TextControl(Name="already allowed", searchDepth=30).Exists(2, 0.2) and c.TextControl(Name="Asks for", searchDepth=30).Exists(1, 0.2)
+    diff = c.TextControl(Name="already allowed", searchDepth=30).Exists(2, 0.2) and c.TextControl(Name="Asks for 1:", searchDepth=30).Exists(1, 0.2)
     ui.shot(c, os.path.join(a.shots, "13-consent-difference.png"))
     check("asking for more shows the same window, with \"already allowed\" on what was allowed", diff)
     ui.invoke(c, "ConsentAllow")
