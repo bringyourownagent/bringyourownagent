@@ -148,7 +148,7 @@ try:
     consent = ui.to_consent(40)
     check("the consent window shows", consent is not None)
     time.sleep(1.5)
-    ui.invoke(consent, "ConsentModelsChange")                              # all four of the visitor's models, not only the ticked ones
+    ui.invoke(consent, "ConsentModelsMore")                                # "Show more": all four of the visitor's models, not only the ticked ones
     time.sleep(1.0)
     rows = boxes(consent)
     print("   models:", [(r[0][-18:], r[1]) for r in rows], flush=True)

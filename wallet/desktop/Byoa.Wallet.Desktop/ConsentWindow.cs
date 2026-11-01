@@ -42,7 +42,9 @@ sealed partial class ConsentWindow : CornerWindow
     DispatcherTimer? _askPulse;
     bool _askBright;
     bool _glowBright;
-    static double? _preferredCard;                 // the card's width (DIPs) the visitor last chose: the next windows open as wide
+    static double? _preferredCard;
+    Grid? _frame;                                  // the card and what goes over it (the "Add models" window)
+    Action? _closeOverlay;                         // closes the window over the card, while there is one                 // the card's width (DIPs) the visitor last chose: the next windows open as wide
 
     /// <param name="searchModels">Searches the public model list for the models behind the visitor's own OpenRouter key that serve a skill (the text or the picture section); null when there is none.</param>
     public ConsentWindow(ConsentModel model, Action<string?> openSettings, Func<string?, RequestedModels, string, IReadOnlyList<ModelChoice>>? searchModels = null, bool canSearch = false) : base(600)
@@ -101,7 +103,7 @@ sealed partial class ConsentWindow : CornerWindow
         layout.Children.Add(middle);
         card.Child = layout;
         // thin strips over the card's left and right edges change the width of the window
-        var frame = new Grid();
+        var frame = _frame = new Grid();
         frame.Children.Add(card);
         frame.Children.Add(EdgeGrip(left: true));
         frame.Children.Add(EdgeGrip(left: false));
@@ -113,7 +115,9 @@ sealed partial class ConsentWindow : CornerWindow
             if (e.Key == Key.Escape)
             {
                 e.Handled = true;
-                Answer(false);
+                // Esc closes the window over the card first ("Add models"), and only then declines
+                if (_closeOverlay is { } close) close();
+                else Answer(false);
             }
             else if (e.Key is Key.Enter or Key.Space)
             {

@@ -109,21 +109,26 @@ if wanted:
     for ident, name, ticked in boxes(consent):                       # untick what the wallet proposed
         if ident.startswith("ConsentModel-") and ticked and ident[len("ConsentModel-new:openrouter:"):] not in wanted:
             ui.toggle(consent, ident, on=False)
-    ui.invoke(consent, "ConsentModelsChange")
+    ui.invoke(consent, "ConsentModelsAdd")                           # "Add models": the search of the OpenRouter list, in a window over the consent
     time.sleep(1.0)
     for model in wanted:
         search = ui.control(consent, "ConsentModelsSearch")
         search.GetPattern(auto.PatternId.ValuePattern).SetValue(model.split("/", 1)[-1])
-        ident = "ConsentModel-new:openrouter:" + model
+        ident = "ConsentModelAdd-new:openrouter:" + model
         deadline = time.time() + 15
-        box = None
-        while time.time() < deadline and box is None:
+        button = None
+        while time.time() < deadline and button is None:
             time.sleep(0.4)
             c = consent.Control(AutomationId=ident, searchDepth=40)
-            box = c if c.Exists(0.3, 0.1) else None
-        if box is None:
+            button = c if c.Exists(0.3, 0.1) else None
+        if button is None:
             fail("model not found in the wallet's search: " + model)
-        ui.toggle(consent, ident, on=True)
+        ui.invoke(consent, ident)                                       # added to the list, not ticked
+        say("STEP added " + model)
+    ui.invoke(consent, "ConsentModelsDone")
+    time.sleep(1.2)
+    for model in wanted:
+        ui.toggle(consent, "ConsentModel-new:openrouter:" + model, on=True)
         say("STEP ticked " + model)
     time.sleep(0.8)
     say("INFO count=" + str(texts(consent, "ConsentModelsCount")))

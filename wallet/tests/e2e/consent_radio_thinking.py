@@ -175,7 +175,7 @@ try:
     time.sleep(1.5)
     shot(consent, "1-consent")
 
-    ui.invoke(consent, "ConsentModelsChange")                              # the list shows only the ticked model until "Change models…" opens all of yours
+    ui.invoke(consent, "ConsentModelsMore")                                # the list shows only the ticked model until "Show more" opens all of yours
     time.sleep(1.0)
     rows = [r for r in model_buttons(consent) if r[0].startswith("ConsentModel-openai-compatible")]
     print("   models:", [(r[0][-24:], r[1], r[2], r[3]) for r in rows], flush=True)

@@ -81,6 +81,9 @@ CATALOG = {"data": [
      "pricing": {"prompt": "0.000001", "completion": "0.000001"}, "architecture": {"input_modalities": ["text"], "output_modalities": ["image"]}},
     {"id": "openai/texty", "name": "OpenAI: Texty", "context_length": 100000, "created": 1760000002,
      "pricing": {"prompt": "0.0000001", "completion": "0.0000004"}, "architecture": {"input_modalities": ["text"], "output_modalities": ["text"]}},
+    # on the key's list, not among the visitor's models: "Add models" finds it
+    {"id": "someone/fresh", "name": "Someone: Fresh", "context_length": 32768, "created": 1760000003,
+     "pricing": {"prompt": "0.000001", "completion": "0.000001"}, "architecture": {"input_modalities": ["text", "image"], "output_modalities": ["image"]}},
 ]}
 local_bodies = []
 router_bodies = []          # (headers, body) of every request the stand-in for OpenRouter got
@@ -212,6 +215,12 @@ def ticked(window, key, tag=""):
     return ui.control(window, "ConsentModel" + tag + "-" + key).GetPattern(auto.PatternId.TogglePattern).ToggleState == 1
 
 
+def model_rows(window, tag=""):
+    """The automation ids of a section's model boxes, in the order the list shows them."""
+    prefix = "ConsentModel" + tag + "-"
+    return [c.AutomationId for c, _ in auto.WalkControl(window, maxDepth=40) if (c.AutomationId or "").startswith(prefix)]
+
+
 def name_of(window, automation_id):
     return ui.control(window, automation_id).Name or ""
 
@@ -253,8 +262,8 @@ try:
     ui.toggle(consent, "ConsentInclude-text.generate", True)
     time.sleep(0.6)
     check("each section has the site's reason", present(consent, "ConsentModelsWhy") and present(consent, "ConsentModelsWhyPictures"))
-    ui.invoke(consent, "ConsentModelsChange")                     # every model of the visitor's, not only the ticked ones
-    ui.invoke(consent, "ConsentModelsChangePictures")
+    ui.invoke(consent, "ConsentModelsMore")                       # "Show more": every model of the visitor's, not only the ticked ones
+    ui.invoke(consent, "ConsentModelsMorePictures")
     time.sleep(1.0)
     shot(consent, "1-two-sections")
 
@@ -283,6 +292,35 @@ try:
     reason = name_of(consent, "ConsentModelsMissPictures-0") if present(consent, "ConsentModelsMissPictures-0") else ""
     check("... with its reason", "draws" in reason and "only behind an OpenRouter key" in reason, reason)
     shot(consent, "2-do-not-fit")
+
+    # a tick never moves a row: the order is the same after a tick and after taking it back
+    first_order = model_rows(consent)
+    ui.toggle(consent, "ConsentModel-" + TEXTY, not ticked(consent, TEXTY))
+    time.sleep(0.6)
+    after_one = model_rows(consent)
+    ui.toggle(consent, "ConsentModel-" + TEXTY, not ticked(consent, TEXTY))
+    time.sleep(0.6)
+    after_two = model_rows(consent)
+    check("a tick never moves a row in the list", len(first_order) > 2 and first_order == after_one == after_two, str(after_one))
+
+    # "Add models": the search of the key's list in a window over the consent, "Add", and the model at the end of the list, not ticked
+    FRESH = "new:openrouter:someone/fresh"
+    ui.invoke(consent, "ConsentModelsAddPictures")
+    time.sleep(1.0)
+    check("Add models opens a window with the search of the key's list", present(consent, "ConsentModelsSearchPictures") and present(consent, "ConsentModelsDonePictures"))
+    ui.control(consent, "ConsentModelsSearchPictures").GetPattern(auto.PatternId.ValuePattern).SetValue("fresh")
+    check("the search finds a model of the key's list the visitor does not have", wait_for(lambda: present(consent, "ConsentModelAddPictures-" + FRESH, 0.3), 10))
+    check("a model of the list is not in it before Add", "ConsentModelPictures-" + FRESH not in model_rows(consent, "Pictures"))
+    ui.invoke(consent, "ConsentModelAddPictures-" + FRESH)
+    time.sleep(0.8)
+    shot(consent, "2a-add-models")
+    ui.invoke(consent, "ConsentModelsDonePictures")
+    time.sleep(1.5)
+    check("Done closes the window", not present(consent, "ConsentModelsSearchPictures", 0.5))
+    pictures_rows = model_rows(consent, "Pictures")
+    check("the model added is at the end of the picture list, not ticked",
+          bool(pictures_rows) and pictures_rows[-1] == "ConsentModelPictures-" + FRESH and not ticked(consent, FRESH, "Pictures"), str(pictures_rows))
+    shot(consent, "2a-added")
 
     # the optional section left off: the grant has no pictures
     ui.toggle(consent, "ConsentInclude-image.generate", False)

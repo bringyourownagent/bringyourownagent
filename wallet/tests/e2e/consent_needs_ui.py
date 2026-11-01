@@ -174,7 +174,8 @@ try:
     needs = name_of(consent, "ConsentModelsNeeds")
     check("the site's needs are said in plain words", "reads pictures" in needs and "a model or your agent" in needs, needs)
 
-    ui.invoke(consent, "ConsentModelsChange")                              # every model of the visitor's, not only the ticked ones
+    if present(consent, "ConsentModelsMore"):                              # "Show more" (only when the short list leaves some out): every model
+        ui.invoke(consent, "ConsentModelsMore")
     time.sleep(1.0)
     shot(consent, "1-sections")
 

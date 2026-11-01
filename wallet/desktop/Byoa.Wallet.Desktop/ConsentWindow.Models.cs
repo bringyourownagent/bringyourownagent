@@ -1,10 +1,14 @@
 using System.Globalization;
 using System.Runtime.CompilerServices;
 using Avalonia;
+using Avalonia.Animation;
+using Avalonia.Animation.Easings;
 using Avalonia.Automation;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Layout;
+using Avalonia.Media;
+using Avalonia.Threading;
 using Byoa.Wallet.Engine;
 using Byoa.Wallet.Sources;
 
@@ -25,8 +29,16 @@ sealed partial class ConsentWindow
         public Dictionary<string, ModelChoice> Known { get; } = new(StringComparer.Ordinal);
         public StackPanel List { get; } = new() { Spacing = 6 };
         public TextBlock Count { get; } = new() { TextWrapping = Avalonia.Media.TextWrapping.Wrap };
-        public StackPanel Extra { get; } = new() { Spacing = 6, IsVisible = false };
-        public StackPanel Results { get; } = new() { Spacing = 6 };
+        /// <summary>The order of the list: set when the window opens, a model added from the search goes to its end. A tick never moves a row.</summary>
+        public List<string> Shelf { get; } = [];
+
+        /// <summary>The rows the short list shows: those ticked or recommended when the window opened, and those ticked or added since.</summary>
+        public HashSet<string> Featured { get; } = new(StringComparer.Ordinal);
+
+        /// <summary>Models added from the search whose rows have not slid into the list yet (they do once the search window closes).</summary>
+        public HashSet<string> Arriving { get; } = new(StringComparer.Ordinal);
+
+        /// <summary>The list shows every model ("Show more"), not only the featured ones.</summary>
         public bool Expanded { get; set; }
         public bool Required { get; set; }
 
@@ -36,7 +48,7 @@ sealed partial class ConsentWindow
         public string Id(string id) => id + Tag;
     }
 
-    // The site's recommendations and the visitor's own models shown without opening "Change models…".
+    // The site's recommendations and the visitor's own models shown before "Show more".
     const int CollapsedRows = 6;
 
     static string Number(int value) => value.ToString("N0", CultureInfo.InvariantCulture);
@@ -110,6 +122,15 @@ sealed partial class ConsentWindow
         }
 
         _picks[row.Skill] = pick;
+        // The order the list keeps from now on (the ticked ones first, then the ones that fit, then the site's), and the rows of the short list.
+        var first = pick.Known.Values
+            .OrderBy(c => pick.Order.Contains(c.Key) ? pick.Order.IndexOf(c.Key) : int.MaxValue)
+            .ThenBy(c => c.Fit)
+            .ThenBy(c => c.Role == ModelRole.Required ? 0 : c.Role == ModelRole.Recommended ? 1 : 2)
+            .ToList();
+        pick.Shelf.AddRange(first.Select(c => c.Key));
+        foreach (var c in first.Where(c => pick.Order.Contains(c.Key) || c.Role != ModelRole.Yours || c.Fit != FitState.Fits).Take(CollapsedRows)) pick.Featured.Add(c.Key);
+        foreach (var key in pick.Order) pick.Featured.Add(key);
 
         // The site's reason in a field: its first two lines, and all of it (what the site wrote, what it asks, what the visitor keeps) behind "More".
         var how = spec.Min == spec.Max ? (spec.Min == 1 ? "one model" : Number(spec.Min) + " different models") : Number(spec.Min) + " to " + Number(spec.Max) + " different models";
@@ -139,21 +160,13 @@ sealed partial class ConsentWindow
 
         pick.Count.Classes.Add("muted");
         AutomationProperties.SetAutomationId(pick.Count, pick.Id("ConsentModelsCount"));
-        var change = Ui.Button("Change models", "tint", pick.Id("ConsentModelsChange"), () => { }, "small");
-        change.HorizontalAlignment = HorizontalAlignment.Right;
-        panel.Children.Add(Ui.Columns("*,Auto", pick.Count, change));
+        // "Add models" opens a window over this one to search the models behind the visitor's key; "Show more" under the list opens the list itself.
+        var add = Ui.Button("Add models", "tint", pick.Id("ConsentModelsAdd"), () => AddModels(pick), "small");
+        add.HorizontalAlignment = HorizontalAlignment.Right;
+        panel.Children.Add(Ui.Columns("*,Auto", pick.Count, add));
         panel.Children.Add(pick.List);
         if (MissesBlock(section, pick) is { } misses) panel.Children.Add(misses);
         if (ExamplesBlock(section, pick) is { } examples) panel.Children.Add(examples);
-        panel.Children.Add(ExtraModels(pick));
-        change.Click += (_, _) =>
-        {
-            pick.Expanded = !pick.Expanded;
-            pick.Extra.IsVisible = pick.Expanded;
-            change.Content = pick.Expanded ? "Fewer models" : "Change models";
-            FillModels(pick);
-        };
-
         FillModels(pick);
         return Block(header, panel, row.Skill);
     }
@@ -226,63 +239,185 @@ sealed partial class ConsentWindow
         return AgentProfile.Lacks(spec.Abilities) is { Count: > 0 } lacks ? line + " · may lack: " + string.Join(", ", lacks.Select(AgentProfile.Words)) : line;
     }
 
-    /// <summary>What "Change models…" opens: a search of the public list, for the models behind the visitor's own OpenRouter key.</summary>
-    Control ExtraModels(ModelPick pick)
+    /// <summary>
+    /// "Add models": a window over this one with a search of the public list, for the models behind the visitor's own OpenRouter key. Each model
+    /// found has "Add": it goes to the end of the list, not ticked (the visitor ticks it there), and its row here flies off. "Done" (or Esc) closes
+    /// the window, and the rows added slide into the list.
+    /// </summary>
+    void AddModels(ModelPick pick)
     {
-        pick.Extra.Children.Add(new Border { Height = 1, Background = Ui.Brush("Rule"), Margin = new Thickness(0, 2) });
+        if (_frame is null || _closeOverlay is not null) return;
+        var body = new StackPanel { Spacing = 8 };
+        body.Children.Add(Ui.Text("Add models", "h2"));
+        var results = new StackPanel { Spacing = 8 };
+        TextBox? query = null;
         if (_search is null || !_canSearch)
         {
-            pick.Extra.Children.Add(Ui.Wrap("To pick from hundreds more models, add your OpenRouter key in My models. Models you already have are in the list above.", "muted", "small"));
-            pick.Extra.Children.Add(Ui.Link("Open My models…", pick.Id("ConsentModelsSources"), () => _openSettings("sources")));
-            return pick.Extra;
+            body.Children.Add(Ui.Wrap("To pick from hundreds more models, add your OpenRouter key in My models. Models you already have are in the list.", "muted", "small"));
+            body.Children.Add(Ui.Link("Open My models…", pick.Id("ConsentModelsSources"), () => _openSettings("sources")));
         }
-
-        var query = new TextBox { Watermark = "Search models (OpenRouter)", MinWidth = 300 };
-        AutomationProperties.SetAutomationId(query, pick.Id("ConsentModelsSearch"));
-        AutomationProperties.SetName(query, "Search models");
-        void Refresh()
+        else
         {
-            pick.Results.Children.Clear();
-            var found = _search(query.Text, pick.Section.Spec, pick.Section.Skill);
-            if (found.Count == 0)
+            body.Children.Add(Ui.Wrap("Models behind your OpenRouter key. A model you add goes to the end of your list, not ticked: tick it there to give it to the site. It is paid from the key.", "muted", "small"));
+            query = new TextBox { Watermark = "Search models (OpenRouter)" };
+            AutomationProperties.SetAutomationId(query, pick.Id("ConsentModelsSearch"));
+            AutomationProperties.SetName(query, "Search models");
+            body.Children.Add(query);
+            var search = _search;
+            void Refresh()
             {
-                pick.Results.Children.Add(Ui.Wrap("No model found. Try fewer words.", "muted", "small"));
-                return;
+                results.Children.Clear();
+                var found = search(query.Text, pick.Section.Spec, pick.Section.Skill);
+                if (found.Count == 0)
+                {
+                    results.Children.Add(Ui.Wrap("No model found. Try fewer words.", "muted", "small"));
+                    return;
+                }
+
+                foreach (var choice in found.Take(20))
+                {
+                    pick.Known.TryAdd(choice.Key, choice);
+                    results.Children.Add(ResultLine(pick, pick.Known[choice.Key]));
+                }
             }
 
-            foreach (var choice in found.Take(8))
-            {
-                pick.Known.TryAdd(choice.Key, choice);
-                pick.Results.Children.Add(ModelLine(pick, pick.Known[choice.Key]));
-            }
+            query.TextChanged += (_, _) => Refresh();
+            Refresh();
         }
 
-        query.TextChanged += (_, _) => Refresh();
-        pick.Extra.Children.Add(Ui.Wrap("Models behind your OpenRouter key. A model you tick is added to your models and paid from the key.", "muted", "small"));
-        pick.Extra.Children.Add(query);
-        pick.Extra.Children.Add(pick.Results);
-        Refresh();
-        return pick.Extra;
+        var list = new ScrollViewer { Content = results, MaxHeight = 380, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
+        body.Children.Add(list);
+        var done = Ui.Button("Done", "allow", pick.Id("ConsentModelsDone"), () => _closeOverlay?.Invoke(), "small");
+        done.HorizontalAlignment = HorizontalAlignment.Right;
+        body.Children.Add(done);
+
+        var dialog = new Border
+        {
+            Child = body,
+            Background = Brushes.White,
+            CornerRadius = new CornerRadius(10),
+            Padding = new Thickness(16, 14),
+            Margin = new Thickness(ShadowMargin + 22, ShadowMargin + 60, ShadowMargin + 22, ShadowMargin + 60),
+            VerticalAlignment = VerticalAlignment.Center,
+            BoxShadow = BoxShadows.Parse("0 12 32 -8 #8C13151B"),
+        };
+        AutomationProperties.SetAutomationId(dialog, pick.Id("ConsentModelsAddWindow"));
+        var shade = new Border { Background = new SolidColorBrush(Color.FromArgb(0x73, 0x13, 0x15, 0x1B)), CornerRadius = new CornerRadius(12), Margin = new Thickness(ShadowMargin) };
+        var overlay = new Grid();
+        overlay.Children.Add(shade);
+        overlay.Children.Add(dialog);
+        shade.PointerPressed += (_, e) =>
+        {
+            e.Handled = true;
+            _closeOverlay?.Invoke();
+        };
+        _frame.Children.Add(overlay);
+        _closeOverlay = () =>
+        {
+            _frame.Children.Remove(overlay);
+            _closeOverlay = null;
+            if (pick.Arriving.Count == 0) return;
+            FillModels(pick);
+            // the last row added is brought into view as it slides in
+            if (pick.List.Children.LastOrDefault(c => c is Border { Tag: "arriving" }) is { } last) Dispatcher.UIThread.Post(() => last.BringIntoView(), DispatcherPriority.Background);
+        };
+        if (query is not null) Dispatcher.UIThread.Post(() => query.Focus(), DispatcherPriority.Background);
     }
 
-    /// <summary>Draws the models again: the ticked ones and the site's recommendations, or everything once the visitor has opened the list.</summary>
+    /// <summary>A model found by the search: what it is, and "Add" (or "Added" once it is in the list).</summary>
+    Control ResultLine(ModelPick pick, ModelChoice choice)
+    {
+        var (text, chips) = Describe(pick, choice);
+        var inList = pick.Shelf.Contains(choice.Key);
+        var add = Ui.Button(inList ? "Added" : "Add", "tint", "ConsentModelAdd" + pick.Tag + "-" + choice.Key, () => { }, "small");
+        add.IsEnabled = !inList && choice.Ready;
+        add.VerticalAlignment = VerticalAlignment.Top;
+        var line = Ui.Columns("*,Auto,Auto", text, chips, add);
+        chips.Margin = new Thickness(6, 0, 8, 0);
+        add.Click += (_, _) =>
+        {
+            if (pick.Shelf.Contains(choice.Key)) return;
+            pick.Shelf.Add(choice.Key);
+            pick.Featured.Add(choice.Key);
+            pick.Arriving.Add(choice.Key);
+            add.IsEnabled = false;
+            add.Content = "Added";
+            FlyOff(text);
+        };
+        if (!choice.Ready) line.Opacity = 0.6;
+        return line;
+    }
+
+    /// <summary>The row of a model just added, in the search window: it lifts off towards the list and fades.</summary>
+    static void FlyOff(Control text)
+    {
+        var move = new TranslateTransform();
+        move.Transitions = [new DoubleTransition { Property = TranslateTransform.YProperty, Duration = TimeSpan.FromMilliseconds(450), Easing = new CubicEaseIn() }];
+        text.RenderTransform = move;
+        text.Transitions = [new DoubleTransition { Property = Visual.OpacityProperty, Duration = TimeSpan.FromMilliseconds(450), Easing = new CubicEaseIn() }];
+        Dispatcher.UIThread.Post(() =>
+        {
+            move.Y = -26;
+            text.Opacity = 0.35;
+        }, DispatcherPriority.Background);
+    }
+
+    /// <summary>The row of a model added from the search, in the list: it slides in from above and glows for a moment.</summary>
+    static Control Arrive(Control line)
+    {
+        var move = new TranslateTransform(0, -30);
+        move.Transitions = [new DoubleTransition { Property = TranslateTransform.YProperty, Duration = TimeSpan.FromMilliseconds(560), Easing = new CubicEaseOut() }];
+        var glow = new Border
+        {
+            Child = line,
+            Tag = "arriving",
+            CornerRadius = new CornerRadius(6),
+            Background = new SolidColorBrush(Color.Parse("#ffe7a3")),
+            Opacity = 0,
+            RenderTransform = move,
+            Transitions =
+            [
+                new DoubleTransition { Property = Visual.OpacityProperty, Duration = TimeSpan.FromMilliseconds(460), Easing = new CubicEaseOut() },
+                new BrushTransition { Property = Border.BackgroundProperty, Duration = TimeSpan.FromMilliseconds(2200), Easing = new SineEaseInOut() },
+            ],
+        };
+        glow.AttachedToVisualTree += (_, _) => Dispatcher.UIThread.Post(() =>
+        {
+            glow.Opacity = 1;
+            move.Y = 0;
+            glow.Background = new SolidColorBrush(Color.FromArgb(0, 0xff, 0xe7, 0xa3));
+        }, DispatcherPriority.Background);
+        return glow;
+    }
+
+    /// <summary>
+    /// Draws the models again in the order the list keeps (a tick never moves a row): the short list, or every model once "Show more" is pressed.
+    /// </summary>
     void FillModels(ModelPick pick)
     {
         var spec = pick.Section.Spec;
         pick.List.Children.Clear();
-        // The ticked ones first, then the ones that fit, then the ones whose properties are not known, then the ones that fall short (shown, never ticked by the wallet).
-        var ordered = pick.Known.Values
-            .Where(c => !(c.IsNew && !pick.Order.Contains(c.Key) && !pick.Section.Choices.Any(x => x.Key == c.Key)))      // search results live in their own list
-            .OrderBy(c => pick.Order.Contains(c.Key) ? pick.Order.IndexOf(c.Key) : int.MaxValue)
-            .ThenBy(c => c.Fit)
-            .ThenBy(c => c.Role == ModelRole.Required ? 0 : c.Role == ModelRole.Recommended ? 1 : 2)
-            .ToList();
-        var shown = pick.Expanded ? ordered : ordered.Where(c => pick.Order.Contains(c.Key) || c.Role != ModelRole.Yours || c.Fit != FitState.Fits).Take(CollapsedRows).ToList();
+        var all = pick.Shelf.Where(pick.Known.ContainsKey).Select(k => pick.Known[k]).ToList();
+        var shown = pick.Expanded ? all : all.Where(c => pick.Featured.Contains(c.Key)).ToList();
         if (MasterTick(pick, shown) is { } master) pick.List.Children.Add(master);
-        foreach (var choice in shown) pick.List.Children.Add(ModelLine(pick, choice));
-        if (!pick.Expanded && ordered.Count > shown.Count)
-            pick.List.Children.Add(Ui.Wrap("and " + Number(ordered.Count - shown.Count) + " more of yours under “Change models”", "muted", "small"));
+        foreach (var choice in shown)
+        {
+            var line = ModelLine(pick, choice);
+            pick.List.Children.Add(pick.Arriving.Remove(choice.Key) ? Arrive(line) : line);
+        }
+
         if (shown.Count == 0) pick.List.Children.Add(Ui.Wrap("None of your models can answer this site yet.", "muted"));
+        var more = all.Count(c => !pick.Featured.Contains(c.Key));
+        if (more > 0)
+        {
+            var toggle = Ui.Link(pick.Expanded ? "Show less ▴" : "Show more ▾ (" + Number(more) + ")", pick.Id("ConsentModelsMore"), () =>
+            {
+                pick.Expanded = !pick.Expanded;
+                FillModels(pick);
+            });
+            toggle.HorizontalAlignment = HorizontalAlignment.Left;
+            pick.List.Children.Add(toggle);
+        }
 
         var limit = spec.Min == spec.Max ? "the site uses " + Number(spec.Max) : "the site uses " + Number(spec.Min) + " to " + Number(spec.Max);
         pick.Count.Text = Number(pick.Order.Count) + " ticked · " + limit;
@@ -319,9 +454,8 @@ sealed partial class ConsentWindow
         master.IsCheckedChanged += (_, _) =>             // the state it was drawn with is set before this is hooked: only a press gets here
         {
             if (pick.Order.Count > 0) pick.Order.Clear();
-            else foreach (var choice in ready.Take(pick.Section.Spec.Max)) pick.Order.Add(choice.Key);
+            else foreach (var choice in ready.Take(pick.Section.Spec.Max)) { pick.Order.Add(choice.Key); pick.Featured.Add(choice.Key); }
             FillModels(pick);
-            if (pick.Extra.IsVisible && pick.Results.Children.Count > 0) RefreshResultTicks(pick);
         };
         return master;
     }
@@ -341,13 +475,22 @@ sealed partial class ConsentWindow
             if (box.IsChecked == true)
             {
                 if (!pick.Order.Contains(choice.Key)) { pick.Order.Add(choice.Key); LetGo(pick, choice.Key); }
+                pick.Featured.Add(choice.Key);                              // still shown when the list is short again
             }
             else if (!radio) pick.Order.Remove(choice.Key);                 // a round button is let go of by picking another, never by hand
             FillModels(pick);
-            // a searched model ticked or unticked also changes the search list (its tick, and who is full)
-            if (pick.Extra.IsVisible && pick.Results.Children.Count > 0) RefreshResultTicks(pick);
         };
 
+        var (text, chips) = Describe(pick, choice);
+        var line = Ui.Columns("Auto,*,Auto", box, text, chips);
+        text.Margin = new Thickness(8, 0, 6, 0);
+        if (!choice.Ready) line.Opacity = 0.6;
+        return line;
+    }
+
+    /// <summary>What a model is, under its name (where it runs, what it costs, what falls short), and its chips: in the list and in the search.</summary>
+    (StackPanel Text, StackPanel Chips) Describe(ModelPick pick, ModelChoice choice)
+    {
         var name = Ui.Wrap(choice.Name, "strong");
         name.FontSize = 14;
         var about = choice.Where + " · " + choice.Cost + (choice.Note is { Length: > 0 } note ? " · " + note : "");
@@ -379,10 +522,7 @@ sealed partial class ConsentWindow
             ModelRole.Recommended => Ui.Chip("recommended", "outline"),
             _ => new Panel(),
         });
-        var line = Ui.Columns("Auto,*,Auto", box, text, chips);
-        text.Margin = new Thickness(8, 0, 6, 0);
-        if (!choice.Ready) line.Opacity = 0.6;
-        return line;
+        return (text, chips);
     }
 
     /// <summary>After a new tick: while more are ticked than the site uses, the oldest tick that is not required goes (the new one itself when nothing else can).</summary>
@@ -394,20 +534,6 @@ sealed partial class ConsentWindow
             var drop = pick.Order.FirstOrDefault(k => k != keep && pick.Known[k].Role != ModelRole.Required);
             if (drop is null) { pick.Order.Remove(keep); return; }
             pick.Order.Remove(drop);
-        }
-    }
-
-    void RefreshResultTicks(ModelPick pick)
-    {
-        var shown = pick.Results.Children.OfType<Grid>().ToList();
-        // The search list shows the same models again: redraw it with the current ticks.
-        if (shown.Count == 0) return;
-        var keys = pick.Results.Children.OfType<Grid>().Select(g => g.Children.OfType<ToggleButton>().First())
-            .Select(c => AutomationProperties.GetAutomationId(c)?[("ConsentModel" + pick.Tag + "-").Length..] ?? "").ToList();
-        pick.Results.Children.Clear();
-        foreach (var key in keys)
-        {
-            if (pick.Known.TryGetValue(key, out var choice)) pick.Results.Children.Add(ModelLine(pick, choice));
         }
     }
 
