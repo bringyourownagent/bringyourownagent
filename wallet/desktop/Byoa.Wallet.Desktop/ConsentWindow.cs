@@ -79,7 +79,26 @@ sealed partial class ConsentWindow : CornerWindow
             HorizontalContentAlignment = HorizontalAlignment.Stretch,
             VerticalContentAlignment = VerticalAlignment.Top,
         };
-        layout.Children.Add(scroll);
+        // While there is more of the body below, it fades out into the card's white just above the check code and the buttons.
+        var fade = new Border
+        {
+            Height = 40,
+            VerticalAlignment = VerticalAlignment.Bottom,
+            Margin = new Thickness(0, 0, 12, 0),
+            IsHitTestVisible = false,
+            IsVisible = false,
+            Background = new LinearGradientBrush
+            {
+                StartPoint = new RelativePoint(0, 0, RelativeUnit.Relative),
+                EndPoint = new RelativePoint(0, 1, RelativeUnit.Relative),
+                GradientStops = { new GradientStop(Color.FromArgb(0, 255, 255, 255), 0), new GradientStop(Colors.White, 1) },
+            },
+        };
+        scroll.ScrollChanged += (_, _) => fade.IsVisible = scroll.Extent.Height - scroll.Viewport.Height - scroll.Offset.Y > 1;
+        var middle = new Grid();
+        middle.Children.Add(scroll);
+        middle.Children.Add(fade);
+        layout.Children.Add(middle);
         card.Child = layout;
         // thin strips over the card's left and right edges change the width of the window
         var frame = new Grid();
@@ -418,8 +437,8 @@ sealed partial class ConsentWindow : CornerWindow
         {
             block.BoxShadow = new BoxShadows(new BoxShadow
             {
-                Blur = _askBright ? 16 : 5,
-                Spread = _askBright ? 2 : 0,
+                Blur = _askBright ? 28 : 10,
+                Spread = _askBright ? 5 : 1,
                 Color = Color.FromArgb((byte)(_askBright ? 210 : 60), color.R, color.G, color.B),
             });
         }
@@ -446,46 +465,30 @@ sealed partial class ConsentWindow : CornerWindow
         skillName.VerticalAlignment = VerticalAlignment.Center;
         title.Children.Add(skillName);
         if (!row.Required) title.Children.Add(Ui.Chip("Optional"));
+        if (row.AlreadyAllowed)
+        {
+            var allowed = Ui.Chip("already allowed", "allowed");
+            AutomationProperties.SetAutomationId(allowed.Child!, "ConsentAllowed-" + row.Skill);
+            title.Children.Add(allowed);
+        }
 
-        // The right end of every header says, the same way, what Allow does to the block: a box that allows an optional block or leaves it
-        // off, or a tick that cannot be taken away from a required one; "already allowed" when the site has it now.
+        // Every block has the same box at the right end of its header, "Allow", and any of them can be unticked: an optional block is then
+        // left off; without a required one Allow at the bottom does not work, and says why.
         Control? allow = null;
         if (row.CanServe)
         {
-            var include = new CheckBox { IsChecked = true, MinWidth = 0, MinHeight = 0, Padding = new Thickness(0), VerticalAlignment = VerticalAlignment.Center };
-            var said = Ui.Text(row.AlreadyAllowed ? "already allowed" : row.Required ? "Required" : "Allow", "small");
-            said.Classes.Add(row.AlreadyAllowed ? "allowedword" : "allowword");
-            said.VerticalAlignment = VerticalAlignment.Center;
-            if (row.AlreadyAllowed) AutomationProperties.SetAutomationId(said, "ConsentAllowed-" + row.Skill);
-            if (row.Required)
+            var include = new CheckBox { IsChecked = true, MinWidth = 0, Content = "Allow", VerticalAlignment = VerticalAlignment.Center };
+            include.Classes.Add("headallow");
+            AutomationProperties.SetName(include, "Allow " + row.SkillName);
+            AutomationProperties.SetAutomationId(include, "ConsentInclude-" + row.Skill);
+            include.IsCheckedChanged += (_, _) =>
             {
-                // the site cannot work without it: the tick shows it is given, and cannot be taken away
-                include.IsHitTestVisible = false;
-                include.Focusable = false;
-                AutomationProperties.SetHelpText(include, "The site cannot work without it");
-            }
-            else
-            {
-                AutomationProperties.SetName(include, "Allow " + row.SkillName);
-                AutomationProperties.SetAutomationId(include, "ConsentInclude-" + row.Skill);
-                include.IsCheckedChanged += (_, _) =>
-                {
-                    if (include.IsChecked == true) _leftOff.Remove(row.Skill);
-                    else _leftOff.Add(row.Skill);
-                    panel.Opacity = include.IsChecked == true ? 1 : 0.6;
-                    UpdateAllow();
-                };
-                said.Cursor = new Cursor(StandardCursorType.Hand);
-                said.PointerPressed += (_, e) =>
-                {
-                    include.IsChecked = include.IsChecked != true;
-                    e.Handled = true;
-                };
-            }
-
-            var pill = new Border { Child = Ui.Row(6, include, said), VerticalAlignment = VerticalAlignment.Center };
-            pill.Classes.Add("allowpill");
-            allow = pill;
+                if (include.IsChecked == true) _leftOff.Remove(row.Skill);
+                else _leftOff.Add(row.Skill);
+                panel.Opacity = include.IsChecked == true ? 1 : 0.6;
+                UpdateAllow();
+            };
+            allow = include;
         }
 
         title.VerticalAlignment = VerticalAlignment.Center;

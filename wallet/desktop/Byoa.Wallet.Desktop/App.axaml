@@ -315,18 +315,8 @@
     <Style Selector="Border.block.kind-speech">
       <Setter Property="Background" Value="#f3f9f5" />
     </Style>
-    <Style Selector="Border.allowpill">
-      <Setter Property="Background" Value="White" />
-      <Setter Property="CornerRadius" Value="999" />
-      <Setter Property="Padding" Value="8,3,11,3" />
-    </Style>
-    <Style Selector="TextBlock.allowword">
+    <Style Selector="CheckBox.headallow">
       <Setter Property="FontWeight" Value="SemiBold" />
-      <Setter Property="Foreground" Value="{StaticResource Ink}" />
-    </Style>
-    <Style Selector="TextBlock.allowedword">
-      <Setter Property="FontWeight" Value="SemiBold" />
-      <Setter Property="Foreground" Value="#1d6b3a" />
     </Style>
     <Style Selector="Border.field">
       <Setter Property="Background" Value="{StaticResource Field}" />

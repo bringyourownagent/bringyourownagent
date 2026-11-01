@@ -423,12 +423,17 @@ sealed partial class ConsentWindow
     {
         var plain = _model.Rows.Any(r => r.Required && r.Models is null && !r.CanServe);
         var models = _picks.Any(p => p.Value.Required && !_leftOff.Contains(p.Key) && !Satisfied(p.Value));
-        _allow.IsEnabled = !plain && !models && (_checkSame is null || _checkSame.IsChecked == true);
-        // a button that does not work says why: the code has to be confirmed first (a hint shows on a disabled button too)
+        // a required block the visitor unticked: the site cannot work without it, so Allow waits for the tick or Decline
+        var unticked = _model.Rows.Where(r => r.Required && _leftOff.Contains(r.Skill)).Select(r => r.SkillName).ToList();
+        _allow.IsEnabled = !plain && !models && unticked.Count == 0 && (_checkSame is null || _checkSame.IsChecked == true);
+        // a button that does not work says why: the code has to be confirmed first, or a required block is unticked (a hint shows on a disabled button too)
         var needsCode = _checkSame is { IsChecked: not true };
+        var why = needsCode ? "First confirm the code: tick “The code is the same on the site's page”. Allow works after that."
+            : unticked.Count > 0 ? "The site cannot work without " + string.Join(" and ", unticked) + ". Tick Allow on it to let the wallet serve this site, or Decline."
+            : null;
         ToolTip.SetShowOnDisabled(_allow, true);
-        ToolTip.SetTip(_allow, needsCode ? "First confirm the code: tick “The code is the same on the site's page”. Allow works after that." : null);
-        AutomationProperties.SetHelpText(_allow, needsCode ? "Confirm the code first: tick “The code is the same on the site's page”." : "");
+        ToolTip.SetTip(_allow, why);
+        AutomationProperties.SetHelpText(_allow, why ?? "");
     }
 
     /// <summary>What the site asked for above the visitor's limits, with one tick to accept it.</summary>

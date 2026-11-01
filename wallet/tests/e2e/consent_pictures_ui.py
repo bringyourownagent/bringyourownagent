@@ -244,7 +244,14 @@ try:
     check("a section for text generation", has_text(consent, "Text generation"))
     check("a section for image generation", has_text(consent, "Image generation"))
     check("the picture section is optional and has its own Include box", present(consent, "ConsentInclude-image.generate"))
-    check("the text section is not optional", not present(consent, "ConsentInclude-text.generate", 0.5))
+    check("the text section is not optional, but has the same Allow box", present(consent, "ConsentInclude-text.generate"))
+    ui.toggle(consent, "ConsentInclude-text.generate", False)
+    time.sleep(0.6)
+    off = ui.control(consent, "ConsentAllow")
+    check("unticking the required text turns Allow off, and Allow says why",
+          not off.IsEnabled and "cannot work without Text generation" in (off.GetPropertyValue(30013) or ""), off.GetPropertyValue(30013) or "")
+    ui.toggle(consent, "ConsentInclude-text.generate", True)
+    time.sleep(0.6)
     check("each section has the site's reason", present(consent, "ConsentModelsWhy") and present(consent, "ConsentModelsWhyPictures"))
     ui.invoke(consent, "ConsentModelsChange")                     # every model of the visitor's, not only the ticked ones
     ui.invoke(consent, "ConsentModelsChangePictures")
@@ -302,8 +309,8 @@ try:
           name_of(consent, "ConsentNumber-image.generate") == "1" and name_of(consent, "ConsentNumber-text.generate") == "2",
           name_of(consent, "ConsentNumber-image.generate") + " " + name_of(consent, "ConsentNumber-text.generate"))
     check("the optional block has \"Allow\" with its box", ui.control(consent, "ConsentInclude-image.generate").Name == "Allow Image generation")
-    check("the required block allowed before says \"already allowed\" at the same place, with no box to untick",
-          name_of(consent, "ConsentAllowed-text.generate") == "already allowed" and not present(consent, "ConsentInclude-text.generate", 0.5))
+    check("the required block allowed before says \"already allowed\", and has the same Allow box",
+          name_of(consent, "ConsentAllowed-text.generate") == "already allowed" and present(consent, "ConsentInclude-text.generate"))
     check("the text, allowed before, says \"already allowed\"", present(consent, "ConsentAllowed-text.generate"))
     check("the pictures, asked for now, do not", not present(consent, "ConsentAllowed-image.generate", 0.5))
     check("no \"Only what is new\" and no \"updated\" chip", not has_text(consent, "Only what is new") and not has_text(consent, "updated"))
