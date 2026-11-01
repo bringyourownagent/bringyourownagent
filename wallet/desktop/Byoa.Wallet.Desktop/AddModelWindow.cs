@@ -66,7 +66,7 @@ sealed class AddModelWindow : Window
         _w = services;
         _editingId = sourceId;
         var existing = sourceId is null ? null : services.Store.Snapshot().Sources.FirstOrDefault(s => s.Id == sourceId);
-        _canDo = new CanDoEditor(sourceId is null ? "new" : "edit", existing?.Inputs, existing?.Outputs, existing?.AlsoText ?? false,
+        _canDo = new CanDoEditor(sourceId is null ? "new" : "edit", existing?.Inputs, existing?.Outputs,
             () => sourceId is null ? null : services.Engine.FactsOfSource(sourceId), () => { });
         _model.Classes.Add("mono");
         _endpoint.Classes.Add("mono");
@@ -649,7 +649,7 @@ sealed class AddModelWindow : Window
         }
 
         // What he says it can do goes to every model added now (or to the one he edits); when he said nothing, a new model is left as it is.
-        if (result.Ok && SelectedSkill() == Vocabulary.Generate && added.Count > 0 && (_editingId is not null || _canDo.Inputs is not null || _canDo.Outputs is not null || _canDo.AlsoText))
+        if (result.Ok && SelectedSkill() == Vocabulary.Generate && added.Count > 0 && (_editingId is not null || _canDo.Inputs is not null || _canDo.Outputs is not null))
         {
             _w.Store.Update(s =>
             {

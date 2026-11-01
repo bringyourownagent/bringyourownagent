@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Nodes;
 
 namespace Byoa.Wallet.Protocol;
@@ -12,9 +13,16 @@ public sealed class FrameServer
 {
     public const int DefaultParallel = 16;
 
-    readonly Func<WireMessage, CancellationToken, Task<JsonNode?>> _handle;
+    readonly Func<WireMessage, ICollection<byte[]>, CancellationToken, Task<JsonNode?>> _handle;
 
     public FrameServer(Func<WireMessage, CancellationToken, Task<JsonNode?>> handle, int maxParallel = DefaultParallel)
+        : this((message, _, ct) => handle(message, ct), maxParallel)
+    {
+    }
+
+    /// <param name="handle">Answers one message; a call that draws pictures leaves their bytes in the collection, and they go to the host as
+    /// <c>image</c> frames (<see cref="PictureFrames"/>) before the response.</param>
+    public FrameServer(Func<WireMessage, ICollection<byte[]>, CancellationToken, Task<JsonNode?>> handle, int maxParallel = DefaultParallel)
     {
         _handle = handle;
         MaxParallel = maxParallel;
@@ -121,9 +129,10 @@ public sealed class FrameServer
         else
         {
             JsonNode? result;
+            var pictures = new List<byte[]>();
             try
             {
-                result = await _handle(message, ct).ConfigureAwait(false);
+                result = await _handle(message, pictures, ct).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
@@ -134,6 +143,13 @@ public sealed class FrameServer
                 // A malformed or unexpected handler failure must answer this frame and must not become an
                 // unobserved Task.Run exception that takes down the tray process.
                 result = Wire.Fallback(message.Type);
+            }
+
+            // The pictures of an answer go first, in frames of their own, and the response that describes them last.
+            if (message.Id is not null && PictureFrames.Carries(result, pictures))
+            {
+                foreach (var part in PictureFrames.Of(message.Id, (JsonObject)result!, pictures))
+                    await WriteAsync(stream, JsonSerializer.SerializeToUtf8Bytes(part), write).ConfigureAwait(false);
             }
 
             response = Wire.Response(message.Id, result);

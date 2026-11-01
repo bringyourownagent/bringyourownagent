@@ -437,11 +437,11 @@ public class StreamingDirectTests : IDisposable
     {
         var (_, socket, hello) = await PairAsync();
         // The closed list of PROPOSAL-v2 3.5, and only what this release does (no pictures yet): a site never guesses a feature from a missing key.
-        Assert.Equal(["needs", "can", "kind", "cancel"], hello["grant"]!["capabilities"]!.AsArray().Select(c => c!.GetValue<string>()));
+        Assert.Equal(["needs", "can", "kind", "cancel", "image.generate", "parts"], hello["grant"]!["capabilities"]!.AsArray().Select(c => c!.GetValue<string>()));
         _engine.SetSiteModels(_site.Origin, Vocabulary.Generate, ["lm:beta"]);
         var frame = await TestSite.ReceiveAsync(socket);
         Assert.Equal("grant", frame["type"]!.GetValue<string>());
-        Assert.Equal(["needs", "can", "kind", "cancel"], frame["capabilities"]!.AsArray().Select(c => c!.GetValue<string>()));
+        Assert.Equal(["needs", "can", "kind", "cancel", "image.generate", "parts"], frame["capabilities"]!.AsArray().Select(c => c!.GetValue<string>()));
     }
 
     [Fact]

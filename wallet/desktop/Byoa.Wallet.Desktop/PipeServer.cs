@@ -76,9 +76,9 @@ sealed class PipeServer : IDisposable
     }
 
     /// <summary>A link handed over by the browser or a second instance is acted on in the background; the sender only needs "accepted".</summary>
-    Task<JsonNode?> HandleAsync(WireMessage message, CancellationToken ct)
+    Task<JsonNode?> HandleAsync(WireMessage message, ICollection<byte[]> pictures, CancellationToken ct)
     {
-        if (message.Type != Wire.Link) return _engine.HandleAsync(message, ct);
+        if (message.Type != Wire.Link) return _engine.HandleAsync(message, ct, pictures);
         _openLink(message.Payload["url"] is JsonValue v && v.TryGetValue<string>(out var url) ? url : null, message.UserActivation);
         return Task.FromResult<JsonNode?>(new JsonObject { ["accepted"] = true });
     }

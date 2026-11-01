@@ -6,8 +6,8 @@ namespace Byoa.Wallet.Sources;
 /// <param name="PromptPerToken">Dollars per input token, or null when the list says nothing.</param>
 /// <param name="CompletionPerToken">Dollars per output token, or null.</param>
 /// <param name="InputModalities">What goes into the model (<c>architecture.input_modalities</c>); null when the list says nothing.</param>
-/// <param name="OutputModalities">What comes out (<c>architecture.output_modalities</c>); null when the list says nothing. A model that draws
-/// pictures is kept by the catalog and reaches no text picker (see <see cref="OffersText"/>).</param>
+/// <param name="OutputModalities">What comes out (<c>architecture.output_modalities</c>); null when the list says nothing. A picker for a skill
+/// takes the models that serve it (see <see cref="Serves"/>).</param>
 public sealed record CatalogModel(string Id, string Name, int ContextLength, decimal? PromptPerToken, decimal? CompletionPerToken, long Created,
     IReadOnlyList<string>? InputModalities = null, IReadOnlyList<string>? OutputModalities = null)
 {
@@ -17,9 +17,9 @@ public sealed record CatalogModel(string Id, string Name, int ContextLength, dec
     /// <summary>About what a short debate answer costs: 1,500 tokens in, 700 out. Null without prices.</summary>
     public decimal? TypicalAnswerCost => PromptPerToken is { } p && CompletionPerToken is { } c ? p * 1500 + c * 700 : null;
 
-    /// <summary>The primary-role rule for a text picker (PROPOSAL-v2 3.3): a model the catalog says nothing about is offered, one that writes
-    /// text and does not draw pictures is offered, and one that draws pictures is not.</summary>
-    public bool OffersText => Modalities.WritesText(OutputModalities);
+    /// <summary>The offering rule for a picker of a skill (PROPOSAL-v3 1.1): for text.generate a model the catalog says nothing about is offered, and so is
+    /// one that writes text; for image.generate one the catalog says draws pictures.</summary>
+    public bool Serves(string skill) => skill == Vocabulary.ImageGenerate ? Modalities.DrawsPictures(OutputModalities) : Modalities.WritesText(OutputModalities);
 
     public string Canonical => ModelNames.Canon(Id);
 }
@@ -45,9 +45,9 @@ public interface IModelCatalog
     /// <summary>The model a name stands for (the name need not be spelled the catalog's way), or null.</summary>
     CatalogModel? Find(string? name);
 
-    /// <summary>Models whose id or name contains every word of the query, best first, offered for text.generate (the primary-role rule:
-    /// a model that draws pictures is not in a text picker); no query lists the newest.</summary>
-    IReadOnlyList<CatalogModel> Search(string? query, CatalogFilter filter = CatalogFilter.All, int limit = 40);
+    /// <summary>Models whose id or name contains every word of the query, best first, that serve <paramref name="skill"/> (the offering rule:
+    /// a model that only draws is not in a text picker); no query lists the newest.</summary>
+    IReadOnlyList<CatalogModel> Search(string? query, CatalogFilter filter = CatalogFilter.All, int limit = 40, string skill = Vocabulary.Generate);
 }
 
 /// <summary>A catalog that knows nothing (tests, or a wallet that never got the list).</summary>
@@ -59,5 +59,5 @@ public sealed class EmptyCatalog : IModelCatalog
 
     public CatalogModel? Find(string? name) => null;
 
-    public IReadOnlyList<CatalogModel> Search(string? query, CatalogFilter filter = CatalogFilter.All, int limit = 40) => [];
+    public IReadOnlyList<CatalogModel> Search(string? query, CatalogFilter filter = CatalogFilter.All, int limit = 40, string skill = Vocabulary.Generate) => [];
 }

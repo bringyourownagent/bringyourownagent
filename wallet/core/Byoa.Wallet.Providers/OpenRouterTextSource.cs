@@ -10,9 +10,10 @@ namespace Byoa.Wallet.Providers;
 /// <summary>
 /// One chat model through OpenRouter, with the visitor's own API key. Paid: it asks before it runs, and it shows
 /// the cost estimate before that — from OpenRouter's public price list when the model is in it, a deliberately
-/// round figure when it is not. The real cost comes from the answer's <c>usage</c>.
+/// round figure when it is not. The real cost comes from the answer's <c>usage</c>. The same model, when it draws, also answers
+/// <c>image.generate</c> (<see cref="IImageSource"/>).
 /// </summary>
-public sealed class OpenRouterTextSource : ITextSource, IStreamingTextSource
+public sealed class OpenRouterTextSource : ITextSource, IStreamingTextSource, IImageSource
 {
     public const string SecretName = "openrouter";
 
@@ -94,6 +95,93 @@ public sealed class OpenRouterTextSource : ITextSource, IStreamingTextSource
                 return FlatEstimate;
             }
         }
+    }
+
+    /// <summary>
+    /// What one picture request is expected to cost (PROPOSAL-v3 1.3): nothing when the public list says the model is free, a round figure
+    /// otherwise, because the price of a picture is not in the list. The real cost is the answer's <c>usage.cost</c> when OpenRouter reports it.
+    /// </summary>
+    public decimal EstimateImageCost(ImageRequest request)
+    {
+        lock (_priceGate)
+        {
+            if (_promptPerToken is 0 && _completionPerToken is 0) return 0;
+        }
+
+        return _catalog?.Invoke().Find(ModelNames.Canon(Model)) is { Free: true } ? 0 : FlatEstimate;
+    }
+
+    /// <summary>The largest answer to a picture request that is read: a few pictures as data URLs (the wallet itself lets at most 8 MB of pictures through).</summary>
+    const int MaxPictureJsonBytes = 16 * 1024 * 1024;
+
+    /// <summary>
+    /// One request to the model for pictures (non-streaming): the prompt and the reference pictures as one user message, <c>modalities</c> image
+    /// and text, the aspect ratio when the site asked for one. The pictures are the data URLs of <c>choices[0].message.images</c>; a link is never followed.
+    /// </summary>
+    public async Task<ImageAnswer> GenerateImageAsync(ImageRequest request, CancellationToken ct)
+    {
+        var key = _key();
+        if (string.IsNullOrWhiteSpace(key)) throw new InvalidOperationException("no OpenRouter key");
+        var content = new JsonArray { new JsonObject { ["type"] = "text", ["text"] = request.Prompt } };
+        foreach (var reference in request.References)
+        {
+            content.Add(new JsonObject
+            {
+                ["type"] = "image_url",
+                ["image_url"] = new JsonObject { ["url"] = "data:" + reference.Mime + ";base64," + Convert.ToBase64String(reference.Data) },
+            });
+        }
+
+        var body = new JsonObject
+        {
+            ["model"] = Model,
+            ["messages"] = new JsonArray(new JsonObject { ["role"] = "user", ["content"] = content }),
+            ["modalities"] = new JsonArray("image", "text"),
+            ["stream"] = false,
+            ["usage"] = new JsonObject { ["include"] = true },
+        };
+        if (request.Aspect is { } aspect) body["image_config"] = new JsonObject { ["aspect_ratio"] = aspect };
+
+        using var message = new HttpRequestMessage(HttpMethod.Post, new Uri(_baseUrl, "api/v1/chat/completions"))
+        {
+            Content = new StringContent(body.ToJsonString(), Encoding.UTF8, "application/json"),
+        };
+        message.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
+        message.Headers.Add("X-Title", "BYOA agent wallet");
+        key = null;
+
+        using var response = await _http.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+        var text = await BoundedHttp.ReadJsonAsync(response, ct, MaxPictureJsonBytes).ConfigureAwait(false);
+        if (!response.IsSuccessStatusCode)
+        {
+            _lastError = "HTTP " + ((int)response.StatusCode).ToString(CultureInfo.InvariantCulture);        // the body may echo the request: only the status is kept
+            throw new HttpRequestException("OpenRouter answered " + _lastError);
+        }
+
+        JsonNode? json;
+        try
+        {
+            json = JsonNode.Parse(text);
+        }
+        catch (JsonException)
+        {
+            _lastError = "not JSON";
+            throw new HttpRequestException("OpenRouter answered something that is not JSON");
+        }
+
+        _lastError = null;
+        var cost = ChatCompletions.Cost(json?["usage"]);
+        var pictures = new List<byte[]>();
+        if (ChatCompletions.First(json)?["message"]?["images"] is JsonArray images)
+        {
+            foreach (var image in images)
+            {
+                if (Pictures.FromDataUrl(ChatCompletions.Str(image?["image_url"]?["url"])) is { Length: > 0 } bytes) pictures.Add(bytes);
+            }
+        }
+
+        if (pictures.Count == 0) throw new TextSourceException("OpenRouter answered no picture", cost, providerCalled: true, responseReceived: true);
+        return new ImageAnswer(pictures, cost, Model + " · OpenRouter");
     }
 
     static decimal Estimate(decimal tokens, decimal perToken)

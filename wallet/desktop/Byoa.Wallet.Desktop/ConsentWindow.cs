@@ -22,7 +22,7 @@ sealed partial class ConsentWindow : CornerWindow
 {
     readonly ConsentModel _model;
     readonly Action<string?> _openSettings;
-    readonly Func<string?, RequestedModels, IReadOnlyList<ModelChoice>>? _search;
+    readonly Func<string?, RequestedModels, string, IReadOnlyList<ModelChoice>>? _search;
     readonly bool _canSearch;
     readonly Dictionary<string, ModelPick> _picks = new(StringComparer.Ordinal);
     CheckBox? _siteLimits;
@@ -40,8 +40,8 @@ sealed partial class ConsentWindow : CornerWindow
     bool _glowBright;
     static double? _preferredCard;                 // the card's width (DIPs) the visitor last chose: the next windows open as wide
 
-    /// <param name="searchModels">Searches the public model list for the models behind the visitor's own OpenRouter key; null when there is none.</param>
-    public ConsentWindow(ConsentModel model, Action<string?> openSettings, Func<string?, RequestedModels, IReadOnlyList<ModelChoice>>? searchModels = null, bool canSearch = false) : base(400)
+    /// <param name="searchModels">Searches the public model list for the models behind the visitor's own OpenRouter key that serve a skill (the text or the picture section); null when there is none.</param>
+    public ConsentWindow(ConsentModel model, Action<string?> openSettings, Func<string?, RequestedModels, string, IReadOnlyList<ModelChoice>>? searchModels = null, bool canSearch = false) : base(400)
     {
         _model = model;
         _openSettings = openSettings;
@@ -363,6 +363,7 @@ sealed partial class ConsentWindow : CornerWindow
         {
             var include = new CheckBox { IsChecked = true, MinWidth = 0, Padding = new Thickness(0) };
             AutomationProperties.SetName(include, "Include " + row.SkillName);
+            AutomationProperties.SetAutomationId(include, "ConsentInclude-" + row.Skill);
             include.IsCheckedChanged += (_, _) =>
             {
                 if (include.IsChecked == true) _leftOff.Remove(row.Skill);

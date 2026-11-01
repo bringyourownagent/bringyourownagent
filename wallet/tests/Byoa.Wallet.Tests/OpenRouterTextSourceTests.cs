@@ -186,7 +186,7 @@ public class OpenRouterTextSourceTests
     {
         public bool Loaded => true;
         public CatalogModel? Find(string? name) => ModelNames.Canon(name) == model.Canonical ? model : null;
-        public IReadOnlyList<CatalogModel> Search(string? query, CatalogFilter filter = CatalogFilter.All, int limit = 40) => [model];
+        public IReadOnlyList<CatalogModel> Search(string? query, CatalogFilter filter = CatalogFilter.All, int limit = 40, string skill = Vocabulary.Generate) => [model];
     }
 
     [Fact]

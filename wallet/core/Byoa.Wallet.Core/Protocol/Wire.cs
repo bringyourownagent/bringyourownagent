@@ -18,6 +18,12 @@ public static class Wire
     public const string Open = "open";
 
     /// <summary>
+    /// A part of a picture, from the wallet towards the site or the extension, before the <c>result</c> of the <c>image.generate</c> call it belongs to
+    /// (see <see cref="PictureFrames"/>). Only the wallet sends it; the host passes it on while its call is running and ignores it otherwise.
+    /// </summary>
+    public const string Image = "image";
+
+    /// <summary>
     /// A <c>bringyourownagent://</c> link handed to the running wallet by the browser or by a second
     /// <c>Byoa.Wallet.exe --url</c> process. Its user-activation bit is preserved end to end.
     /// </summary>

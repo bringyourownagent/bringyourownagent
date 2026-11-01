@@ -32,9 +32,11 @@ public sealed class GrantSession
     /// <summary>
     /// The features of this wallet that a site may rely on (PROPOSAL-v2 3.5), from a closed list, in every grant: <c>needs</c> (the wallet checks a
     /// site's conditions on models), <c>can</c> (it tells the site the verdicts), <c>kind</c> and <c>cancel</c> (the frame of the direct link).
-    /// A site never infers a feature from a key that is missing. Only what this release really does is listed; slice 2 adds its own.
+    /// A site never infers a feature from a key that is missing. Only what this release really does is listed: from wallet 0.37 also <c>image.generate</c> (the
+    /// wallet serves the skill) and <c>parts</c> (a picture goes in <c>image</c> frames of any size, PROPOSAL-v3 3.2). <c>images-in</c> and <c>frame-limit</c> stay
+    /// reserved, and nobody sends them.
     /// </summary>
-    public static readonly IReadOnlyList<string> Capabilities = ["needs", "can", "kind", "cancel"];
+    public static readonly IReadOnlyList<string> Capabilities = ["needs", "can", "kind", "cancel", "image.generate", "parts"];
 
     /// <summary>The capabilities as the grant carries them.</summary>
     public static JsonArray CapabilitiesJson()
@@ -136,10 +138,13 @@ public sealed class GrantSession
         var skills = new JsonArray();
         foreach (var s in Skills) skills.Add(s);
         var result = new JsonObject { ["grantId"] = Id, ["skills"] = skills, ["expiresAt"] = Time(ExpiresAt), ["capabilities"] = CapabilitiesJson() };
-        if (Limits is not null && Skills.Contains(Sources.Vocabulary.Generate)) result["limits"] = LimitsJson();
+        if (Limits is not null && UsesTextLimits) result["limits"] = LimitsJson();
         if (ModelsJson() is { } models) result["models"] = models;
         return result;
     }
+
+    /// <summary>The site works with text, or with pictures drawn from a text (the prompt is held to the same size): the limits are told to it.</summary>
+    public bool UsesTextLimits => Skills.Contains(Sources.Vocabulary.Generate) || Skills.Contains(Sources.Vocabulary.ImageGenerate);
 
     /// <summary>The limits as the site reads them, in the manifest's names.</summary>
     public JsonObject LimitsJson()

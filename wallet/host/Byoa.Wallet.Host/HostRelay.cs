@@ -120,7 +120,15 @@ public sealed class HostRelay
             {
                 var frame = await Framing.ReadAsync(wallet, Framing.MaxIncoming, ct).ConfigureAwait(false);
                 if (frame is null) break;
-                if (!Wire.TryPeek(frame, out var id, out _)) continue;
+                if (!Wire.TryPeek(frame, out var id, out var type)) continue;
+                if (type == Wire.Image)
+                {
+                    // A part of a picture belongs to a call that is still running; it goes on as it is, and the call stays pending until its result.
+                    // One for a call that is not running is ignored, and so is one too big for the browser (its picture then never completes).
+                    if (_pending.ContainsKey(Key(id)) && frame.Length <= Framing.MaxToBrowser) await WriteBrowserAsync(frame, ct).ConfigureAwait(false);
+                    continue;
+                }
+
                 if (!_pending.TryRemove(Key(id), out var pending)) continue;
                 if (frame.Length > Framing.MaxToBrowser)
                 {

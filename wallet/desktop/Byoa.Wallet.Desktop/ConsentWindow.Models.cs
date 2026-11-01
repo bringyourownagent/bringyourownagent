@@ -29,6 +29,11 @@ sealed partial class ConsentWindow
         public StackPanel Results { get; } = new() { Spacing = 6 };
         public bool Expanded { get; set; }
         public bool Required { get; set; }
+
+        /// <summary>The text section's controls keep their automation ids; the picture section's end with "Pictures" (a model in both sections has a tick in each).</summary>
+        public string Tag { get; } = section.Skill == Vocabulary.ImageGenerate ? "Pictures" : "";
+
+        public string Id(string id) => id + Tag;
     }
 
     // The site's recommendations and the visitor's own models shown without opening "Change models…".
@@ -115,8 +120,8 @@ sealed partial class ConsentWindow
             + (spec.Recommend.Count > 0 ? " It recommends " + string.Join(", ", spec.Recommend.Take(6)) + (spec.Recommend.Count > 6 ? " and " + Number(spec.Recommend.Count - 6) + " more" : "") + "." : "")
             + " You choose which of your models it gets; it never sees the others.";
         var whole = reason + "\n\n" + (spec.WhyLong ?? "The site did not say more. It asks for " + how + (spec.ByVendor ? ", from different companies where possible" : "") + ".") + "\n\n" + detail;
-        panel.Children.Add(Ui.Box("field", Expandable(reason, whole, "ConsentModelsWhy")));
-        if (NeedsChips(spec) is { } wanted) panel.Children.Add(wanted);
+        panel.Children.Add(Ui.Box("field", Expandable(reason, whole, pick.Id("ConsentModelsWhy"))));
+        if (NeedsChips(spec, pick.Id("ConsentModelsNeeds")) is { } wanted) panel.Children.Add(wanted);
 
         if (section.MissingRequired.Count > 0 || section.Shortfall is not null)
         {
@@ -128,19 +133,19 @@ sealed partial class ConsentWindow
                 ? " Add a model that fits (" + string.Join(" · ", words) + "), or an OpenRouter key, and try again."
                 : " Add a model, or an OpenRouter key, and try again.";
             var explanation = Ui.Wrap(problem + fix, "muted");
-            AutomationProperties.SetAutomationId(explanation, "ConsentModelsProblem");
+            AutomationProperties.SetAutomationId(explanation, pick.Id("ConsentModelsProblem"));
             panel.Children.Add(explanation);
-            panel.Children.Add(Ui.Link("Add a model or a key…", "ConsentFix", () => _openSettings("add-model")));
+            panel.Children.Add(Ui.Link("Add a model or a key…", pick.Id("ConsentFix"), () => _openSettings("add-model")));
         }
 
         pick.Count.Classes.Add("muted");
-        AutomationProperties.SetAutomationId(pick.Count, "ConsentModelsCount");
-        var change = Ui.Button("Change models", "tint", "ConsentModelsChange", () => { }, "small");
+        AutomationProperties.SetAutomationId(pick.Count, pick.Id("ConsentModelsCount"));
+        var change = Ui.Button("Change models", "tint", pick.Id("ConsentModelsChange"), () => { }, "small");
         change.HorizontalAlignment = HorizontalAlignment.Right;
         panel.Children.Add(Ui.Columns("*,Auto", pick.Count, change));
         panel.Children.Add(pick.List);
-        if (MissesBlock(section) is { } misses) panel.Children.Add(misses);
-        if (ExamplesBlock(section) is { } examples) panel.Children.Add(examples);
+        if (MissesBlock(section, pick) is { } misses) panel.Children.Add(misses);
+        if (ExamplesBlock(section, pick) is { } examples) panel.Children.Add(examples);
         panel.Children.Add(ExtraModels(pick));
         change.Click += (_, _) =>
         {
@@ -156,7 +161,7 @@ sealed partial class ConsentWindow
     }
 
     /// <summary>What the site asked of the models, as short chips under its reason ("reads pictures", "context 64k+", "your own agent"); null when it asked nothing.</summary>
-    static Control? NeedsChips(RequestedModels spec)
+    static Control? NeedsChips(RequestedModels spec, string id)
     {
         var words = ModelFit.NeedsWords(spec);
         if (words.Count == 0) return null;
@@ -172,20 +177,20 @@ sealed partial class ConsentWindow
             chips.Children.Add(chip);
         }
 
-        AutomationProperties.SetAutomationId(chips, "ConsentModelsNeeds");
+        AutomationProperties.SetAutomationId(chips, id);
         AutomationProperties.SetName(chips, "The site wants models that: " + string.Join(", ", words));
         return chips;
     }
 
     /// <summary>"3 of your models do not fit": a line that opens to the reason for each one the wallet left out of the list. Null when none was left out.</summary>
-    static Control? MissesBlock(ModelSection section)
+    static Control? MissesBlock(ModelSection section, ModelPick pick)
     {
         if (section.Misses.Count == 0) return null;
         var reasons = Ui.Column(3);
         reasons.Margin = new Thickness(18, 0, 0, 0);
         var count = section.Misses.Count;
         var title = Number(count) + (count == 1 ? " of your models does not fit" : " of your models do not fit");
-        var toggle = Ui.Link(title, "ConsentModelsMisses", () => { });
+        var toggle = Ui.Link(title, pick.Id("ConsentModelsMisses"), () => { });
         toggle.Click += (_, _) =>
         {
             var open = reasons.Children.Count == 0;
@@ -196,7 +201,7 @@ sealed partial class ConsentWindow
                 for (var i = 0; i < count; i++)
                 {
                     var line = Ui.Wrap(section.Misses[i].Name + ": " + section.Misses[i].Why, "muted", "small");
-                    AutomationProperties.SetAutomationId(line, "ConsentModelsMiss-" + i.ToString(CultureInfo.InvariantCulture));
+                    AutomationProperties.SetAutomationId(line, pick.Id("ConsentModelsMiss") + "-" + i.ToString(CultureInfo.InvariantCulture));
                     reasons.Children.Add(line);
                 }
             }
@@ -208,12 +213,12 @@ sealed partial class ConsentWindow
     }
 
     /// <summary>The names the site likes that none of the visitor's models answers to, as examples with a way to add one. Null when there are none.</summary>
-    Control? ExamplesBlock(ModelSection section)
+    Control? ExamplesBlock(ModelSection section, ModelPick pick)
     {
         if (section.ExampleNames.Count == 0) return null;
         var text = Ui.Wrap("The site suggests " + string.Join(", ", section.ExampleNames) + ". None of your models is one of these.", "muted", "small");
-        AutomationProperties.SetAutomationId(text, "ConsentModelsExamples");
-        return Ui.Column(3, text, Ui.Link("Add a model…", "ConsentModelsExampleAdd", () => _openSettings("add-model")));
+        AutomationProperties.SetAutomationId(text, pick.Id("ConsentModelsExamples"));
+        return Ui.Column(3, text, Ui.Link("Add a model…", pick.Id("ConsentModelsExampleAdd"), () => _openSettings("add-model")));
     }
 
     /// <summary>"can: search the web, read web pages · may lack: look at pictures": what his agent can do, and what the site hoped for that it cannot.</summary>
@@ -230,17 +235,17 @@ sealed partial class ConsentWindow
         if (_search is null || !_canSearch)
         {
             pick.Extra.Children.Add(Ui.Wrap("To pick from hundreds more models, add your OpenRouter key in My models. Models you already have are in the list above.", "muted", "small"));
-            pick.Extra.Children.Add(Ui.Link("Open My models…", "ConsentModelsSources", () => _openSettings("sources")));
+            pick.Extra.Children.Add(Ui.Link("Open My models…", pick.Id("ConsentModelsSources"), () => _openSettings("sources")));
             return pick.Extra;
         }
 
         var query = new TextBox { Watermark = "Search models (OpenRouter)", MinWidth = 300 };
-        AutomationProperties.SetAutomationId(query, "ConsentModelsSearch");
+        AutomationProperties.SetAutomationId(query, pick.Id("ConsentModelsSearch"));
         AutomationProperties.SetName(query, "Search models");
         void Refresh()
         {
             pick.Results.Children.Clear();
-            var found = _search(query.Text, pick.Section.Spec);
+            var found = _search(query.Text, pick.Section.Spec, pick.Section.Skill);
             if (found.Count == 0)
             {
                 pick.Results.Children.Add(Ui.Wrap("No model found. Try fewer words.", "muted", "small"));
@@ -310,7 +315,7 @@ sealed partial class ConsentWindow
         var hint = Ui.Text(pick.Order.Count > 0 ? "press to untick all" : "press to tick the first ones", "muted", "small");
         hint.Margin = new Thickness(8, 0, 0, 0);
         master.Content = Ui.Columns("Auto,*", Ui.Text("All of them", "strong"), hint);
-        AutomationProperties.SetAutomationId(master, "ConsentModelsAll");
+        AutomationProperties.SetAutomationId(master, pick.Id("ConsentModelsAll"));
         AutomationProperties.SetName(master, "All models");
         ToolTip.SetTip(master, pick.Order.Count > 0 ? "Untick all the models" : "Tick the models the site takes first");
         master.IsCheckedChanged += (_, _) =>             // the state it was drawn with is set before this is hooked: only a press gets here
@@ -331,7 +336,7 @@ sealed partial class ConsentWindow
         ToggleButton box = radio
             ? new RadioButton { GroupName = "ConsentModels-" + RuntimeHelpers.GetHashCode(pick), IsChecked = ticked, IsEnabled = choice.Ready, MinWidth = 0, Padding = new Thickness(0), VerticalAlignment = VerticalAlignment.Top }
             : new CheckBox { IsChecked = ticked, IsEnabled = choice.Ready, MinWidth = 0, Padding = new Thickness(0), VerticalAlignment = VerticalAlignment.Top };
-        AutomationProperties.SetAutomationId(box, "ConsentModel-" + choice.Key);
+        AutomationProperties.SetAutomationId(box, "ConsentModel" + pick.Tag + "-" + choice.Key);
         AutomationProperties.SetName(box, choice.Name + ", " + choice.Where + ", " + choice.Cost);
         box.IsCheckedChanged += (_, _) =>
         {
@@ -355,7 +360,7 @@ sealed partial class ConsentWindow
         if (agent)
         {
             var abilities = Ui.Wrap(AgentAbilitiesLine(pick.Section.Spec), "muted", "small");
-            AutomationProperties.SetAutomationId(abilities, "ConsentAgentAbilities-" + choice.Key);
+            AutomationProperties.SetAutomationId(abilities, pick.Id("ConsentAgentAbilities") + "-" + choice.Key);
             text.Children.Add(abilities);
         }
 
@@ -364,7 +369,7 @@ sealed partial class ConsentWindow
         {
             var mark = Ui.Wrap(string.Join("; ", marks), "small");
             mark.Foreground = choice.Fit == FitState.Mismatch ? Ui.Brush("SignalDark") : Ui.Brush("Muted");
-            AutomationProperties.SetAutomationId(mark, "ConsentModelMark-" + choice.Key);
+            AutomationProperties.SetAutomationId(mark, "ConsentModelMark" + pick.Tag + "-" + choice.Key);
             text.Children.Add(mark);
         }
 
@@ -400,7 +405,7 @@ sealed partial class ConsentWindow
         // The search list shows the same models again: redraw it with the current ticks.
         if (shown.Count == 0) return;
         var keys = pick.Results.Children.OfType<Grid>().Select(g => g.Children.OfType<ToggleButton>().First())
-            .Select(c => AutomationProperties.GetAutomationId(c)?["ConsentModel-".Length..] ?? "").ToList();
+            .Select(c => AutomationProperties.GetAutomationId(c)?[("ConsentModel" + pick.Tag + "-").Length..] ?? "").ToList();
         pick.Results.Children.Clear();
         foreach (var key in keys)
         {

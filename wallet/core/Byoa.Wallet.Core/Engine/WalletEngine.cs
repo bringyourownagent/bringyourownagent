@@ -130,11 +130,13 @@ public sealed partial class WalletEngine
     DateTimeOffset Now => _time.GetUtcNow();
 
     /// <summary>Answers one message from the extension. Never throws for bad input: it answers the fallback.</summary>
-    public Task<JsonNode?> HandleAsync(WireMessage message, CancellationToken ct = default) =>
+    /// <param name="pictures">Where a picture call leaves the pictures it drew (their bytes, in the order of the result's <c>images</c>) for the carrier to send
+    /// before the result; null when the carrier cannot carry pictures, and then a picture call is answered <c>ok: false</c>.</param>
+    public Task<JsonNode?> HandleAsync(WireMessage message, CancellationToken ct = default, ICollection<byte[]>? pictures = null) =>
         GuardedAsync(message.Type, message.Origin, null, async () => message.Type switch
         {
             Wire.Request => await RequestAsync(message.Origin, message.UserActivation, message.Payload, ct, null).ConfigureAwait(false),
-            Wire.Call => await CallAsync(message.Origin, message.Payload, ct, null).ConfigureAwait(false),
+            Wire.Call => await CallAsync(message.Origin, message.Payload, ct, null, null, pictures).ConfigureAwait(false),
             Wire.Release => Release(message.Origin, message.Payload),
             Wire.Status => Status(),
             Wire.Open => OpenWindow(),
@@ -162,8 +164,9 @@ public sealed partial class WalletEngine
 
     /// <summary>A call that came over the wallet's own connection to the site: exactly the gate, limits and routing of a page's call.</summary>
     /// <param name="onChunk">When the call asked to stream and the source can: gets each piece of the answer as it arrives (the answer that comes back is the whole text).</param>
-    public Task<JsonNode?> CallViaLinkAsync(string origin, JsonObject payload, CancellationToken ct = default, Action<string>? onChunk = null) =>
-        GuardedAsync(Wire.Call, origin, ViaLink, () => CallAsync(origin, payload, ct, ViaLink, onChunk));
+    /// <param name="pictures">As for <see cref="HandleAsync"/>: where a picture call leaves the bytes of the pictures it drew.</param>
+    public Task<JsonNode?> CallViaLinkAsync(string origin, JsonObject payload, CancellationToken ct = default, Action<string>? onChunk = null, ICollection<byte[]>? pictures = null) =>
+        GuardedAsync(Wire.Call, origin, ViaLink, () => CallAsync(origin, payload, ct, ViaLink, onChunk, pictures));
 
     /// <summary>
     /// The site's welcome echoed the link's manifest, so the site issued the link: the visitor's Allow for it is stored
@@ -823,9 +826,10 @@ public sealed partial class WalletEngine
         var limitsAsk = BuildLimitsAsk(site, manifest, settings.Limits);
         var isDifference = site.Status == SiteStatus.Allowed && (newSkills.Count > 0 || missingRequired.Count > 0 || costRaised || modelsAsked || limitsAsk is not null);
         var rows = new List<ConsentRow>();
-        foreach (var skill in manifest.Skills)
+        // (the skills come in the order of their names; the pictures, which come after the text they are drawn for, are shown last)
+        foreach (var skill in manifest.Skills.OrderBy(k => k.Id == Vocabulary.ImageGenerate ? 1 : 0))
         {
-            if (isDifference && !newSkills.Contains(skill.Id) && !missingRequired.Contains(skill.Id) && !(modelsAsked && skill.Models is not null)) continue;
+            if (isDifference && !newSkills.Contains(skill.Id) && !missingRequired.Contains(skill.Id) && !ModelsNeedAsking(site, skill, settings)) continue;
             rows.Add(Row(skill, settings, site, isNew: isDifference && (newSkills.Contains(skill.Id) || missingRequired.Contains(skill.Id))));
         }
 
@@ -857,10 +861,11 @@ public sealed partial class WalletEngine
         if (!Vocabulary.Served.Contains(skill.Id))
         {
             return new ConsentRow(skill.Id, name, skill.Required, isNew, false, [], skill.Languages,
-                "None of your sources can do this yet: this wallet serves speech to text and text generation.");
+                "None of your sources can do this yet: this wallet serves speech to text, text generation and picture generation.");
         }
 
         if (skill.Id == Vocabulary.Generate) return TextRow(skill, name, settings, site, isNew);
+        if (skill.Id == Vocabulary.ImageGenerate) return ImageRow(skill, name, settings, site, isNew);
 
         var languages = skill.Languages.Count > 0 ? skill.Languages.Cast<string?>().ToList() : [null];
         var routes = new List<RouteLine>();
@@ -889,12 +894,7 @@ public sealed partial class WalletEngine
     {
         // A site that asks for several models gets the models to tick instead of one route line per language.
         if (PlanModels(skill, settings, site) is { } section)
-        {
-            var why = section.MissingRequired.Count > 0
-                ? "The site cannot work without " + string.Join(", ", section.MissingRequired) + "."
-                : section.Shortfall is { } shortfall ? "The site " + shortfall + ". Add models in My models, or an OpenRouter key." : "";
-            return new ConsentRow(skill.Id, name, skill.Required, isNew, section.CanServe, [], skill.Languages, why, section);
-        }
+            return new ConsentRow(skill.Id, name, skill.Required, isNew, section.CanServe, [], skill.Languages, ModelsWhy(section), section);
 
         var textLanguages = skill.Languages.Count > 0 ? skill.Languages.Cast<string?>().ToList() : [null];
         var routes = new List<RouteLine>();
@@ -917,6 +917,21 @@ public sealed partial class WalletEngine
         var canServe = routes.Count > 0 && routes.All(r => r.Fits);
         return new ConsentRow(skill.Id, name, skill.Required, isNew, canServe, routes, skill.Languages, string.Join(" ", whys.Distinct()));
     }
+
+    /// <summary>
+    /// The row of a picture skill: always the models to tick (the wallet has no route of its own to draw with; a site that wrote no
+    /// <c>models</c> block is read as asking for one to four), in the same section as the text models'.
+    /// </summary>
+    ConsentRow ImageRow(RequestedSkill skill, string name, WalletSettings settings, SiteRecord site, bool isNew)
+    {
+        var section = PlanModels(skill, settings, site)!;
+        return new ConsentRow(skill.Id, name, skill.Required, isNew, section.CanServe, [], skill.Languages, ModelsWhy(section), section);
+    }
+
+    static string ModelsWhy(ModelSection section) =>
+        section.MissingRequired.Count > 0
+            ? "The site cannot work without " + string.Join(", ", section.MissingRequired) + "."
+            : section.Shortfall is { } shortfall ? "The site " + shortfall + ". Add models in My models, or an OpenRouter key." : "";
 
     public static string Where(ISpeechSource s) => s.ProviderKind switch
     {
@@ -1073,6 +1088,7 @@ public sealed partial class WalletEngine
         var names = new List<string>();
         foreach (var (skill, language) in skills.Distinct())
         {
+            if (skill == Vocabulary.ImageGenerate) continue;            // a picture model is behind a key: there is nothing to load
             if (skill == Vocabulary.Generate)
             {
                 var textSteps = Router.PlanText(ChainFor(settings, skill, language), PlainTextSources(settings),
@@ -1179,7 +1195,7 @@ public sealed partial class WalletEngine
     // ------------------------------------------------------------------------------------------------
     // call
 
-    async Task<JsonNode?> CallAsync(string origin, JsonObject payload, CancellationToken ct, string? via, Action<string>? onChunk = null)
+    async Task<JsonNode?> CallAsync(string origin, JsonObject payload, CancellationToken ct, string? via, Action<string>? onChunk = null, ICollection<byte[]>? pictures = null)
     {
         var started = Stopwatch.GetTimestamp();
         var grantId = Str(payload["grantId"]);
@@ -1211,7 +1227,7 @@ public sealed partial class WalletEngine
         // for the session that is running too, not only for the site's next one.
         if (Money.TryParse(site.Budget, out var budgetNow)) session.Budget = budgetNow;
 
-        if (skill is not (Vocabulary.Transcribe or Vocabulary.Generate))
+        if (skill is not (Vocabulary.Transcribe or Vocabulary.Generate or Vocabulary.ImageGenerate))
         {
             return Failed(entry, "failed", "skill not served: " + (skill ?? "none"));
         }
@@ -1219,6 +1235,11 @@ public sealed partial class WalletEngine
         if (skill == Vocabulary.Generate)
         {
             return await GenerateCallAsync(entry, session, site, payload, started, ct, onChunk).ConfigureAwait(false);
+        }
+
+        if (skill == Vocabulary.ImageGenerate)
+        {
+            return await ImageCallAsync(entry, session, site, payload, started, ct, pictures).ConfigureAwait(false);
         }
 
         // The input: a WAV clip, measured here and never trusted from the page.
@@ -1515,8 +1536,7 @@ public sealed partial class WalletEngine
             var wanted = Str(parameters["model"]);
             var pick = wanted is null ? granted.ToList() : granted.Where(g => g.Ref == wanted).ToList();
             if (pick.Count == 0) return Failed(entry, "invalid", "no such model for this site: " + (wanted ?? "none"));
-            // The fit is asked again at every call: what the visitor changed since the grant (a source's properties, its "also use as a text
-            // model" tick) counts at once, and a road that no longer fits is not tried.
+            // The fit is asked again at every call: what the visitor changed since the grant (a source's properties) counts at once, and a road that no longer fits is not tried.
             var spec = session.Manifest.Skill(Vocabulary.Generate)?.Models;
             var fitting = _store.Read(s => pick.SelectMany(g => g.SourceIds).Distinct(StringComparer.Ordinal)
                 .Where(id => s.Sources.FirstOrDefault(x => x.Id == id) is { } setting && Offers(spec, setting, Vocabulary.Generate))
