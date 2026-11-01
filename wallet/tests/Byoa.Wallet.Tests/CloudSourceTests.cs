@@ -34,7 +34,7 @@ public class OpenRouterCatalogTests
     public void EveryModelIsKeptWithItsModalitiesAndPricesAreDollarsPerToken()
     {
         // The catalog keeps a model that draws pictures too (it is a model; a site may add it by name and ask about its
-        // properties) — only a text picker never offers it. The old rule dropped such models whole, so nothing could be
+        // properties) — only a text picker never offers it when it writes no text. The old rule dropped such models whole, so nothing could be
         // known about them; PROPOSAL-v2 2 ("Catalogue drops image-only models") replaces it.
         var models = OpenRouterCatalog.Parse(List);
         Assert.Equal(["google/gemma-3-12b-it", "google/gemma-3-12b-it:free", "openai/gpt-5-mini", "someone/imagine", "odd/price"], models.Select(m => m.Id));
@@ -43,15 +43,18 @@ public class OpenRouterCatalogTests
         Assert.Equal(131_072, gemma.ContextLength);
         Assert.Equal(["text", "image"], gemma.InputModalities);
         Assert.Equal(["text"], gemma.OutputModalities);
-        Assert.True(gemma.OffersText);
+        Assert.True(gemma.Serves(Vocabulary.Generate));
+        Assert.False(gemma.Serves(Vocabulary.ImageGenerate));
         Assert.False(gemma.Free);
         Assert.True(models[1].Free);
         Assert.Null(models[1].InputModalities);                 // the list said nothing: unknown, not "text only"
         var picture = models[3];
         Assert.Equal(["image"], picture.OutputModalities);
-        Assert.False(picture.OffersText);                       // draws pictures only: never in a text picker
+        Assert.False(picture.Serves(Vocabulary.Generate));      // draws pictures only: never in a text picker
+        Assert.True(picture.Serves(Vocabulary.ImageGenerate));
         Assert.Null(models[4].OutputModalities);                // no architecture at all: offered, the wallet cannot tell
-        Assert.True(models[4].OffersText);
+        Assert.True(models[4].Serves(Vocabulary.Generate));
+        Assert.False(models[4].Serves(Vocabulary.ImageGenerate));       // (an unknown output is not known to draw)
         Assert.Null(models[4].PromptPerToken);                  // a price above a dollar a token is not a price
         Assert.Null(models[4].CompletionPerToken);
         Assert.Empty(OpenRouterCatalog.Parse("not json"));
@@ -88,7 +91,7 @@ public class OpenRouterCatalogTests
     }
 
     [Fact]
-    public void APickerOfTextModelsNeverOffersOneThatDrawsPictures()
+    public void APickerOfASkillOffersTheModelsThatServeItAndNoOthers()
     {
         var dir = TestFolder.New();
         var path = Path.Combine(dir, "models.json");
@@ -106,11 +109,12 @@ public class OpenRouterCatalogTests
             ]}
             """);
         var catalog = new OpenRouterCatalog(Plain(), path);
-        // The primary-role rule (PROPOSAL-v2 3.3): unknown output is offered, text without pictures is offered, and a model that
-        // draws pictures is not, not even when it writes text as well; a model whose only output is something else (a vector
-        // of numbers) never was a text model, as before.
-        Assert.Equal(["openai/gpt-5-mini"], catalog.Search(null).Select(m => m.Id));
-        Assert.NotNull(catalog.Find("google/gemini-3.1-flash-image"));                     // but the wallet still knows it
+        // The offering rule (PROPOSAL-v3 1.1): a text picker offers a model whose output includes text, whether it draws as well or not;
+        // a model that only draws, or whose only output is something else (a vector of numbers), never was a text model. A picture
+        // picker offers the models known to draw, those that write text as well among them.
+        Assert.Equal(["google/gemini-3.1-flash-image", "openai/gpt-5-mini"], catalog.Search(null).Select(m => m.Id));
+        Assert.Equal(["someone/imagine", "google/gemini-3.1-flash-image"], catalog.Search(null, skill: Vocabulary.ImageGenerate).Select(m => m.Id));
+        Assert.NotNull(catalog.Find("someone/imagine"));                                   // the wallet still knows the one the text picker left out
         Assert.Equal(["text", "image"], catalog.Find("google/gemini-3.1-flash-image")!.OutputModalities);
     }
 
@@ -165,7 +169,7 @@ public class CloudChatSourceTests
     {
         public bool Loaded => true;
         public CatalogModel? Find(string? name) => ModelNames.Canon(name) == model.Canonical ? model : null;
-        public IReadOnlyList<CatalogModel> Search(string? query, CatalogFilter filter = CatalogFilter.All, int limit = 40) => [model];
+        public IReadOnlyList<CatalogModel> Search(string? query, CatalogFilter filter = CatalogFilter.All, int limit = 40, string skill = Vocabulary.Generate) => [model];
     }
 
     [Fact]

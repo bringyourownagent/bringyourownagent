@@ -258,13 +258,6 @@ public sealed class SourceSetting
     List<string>? _inputs;
     List<string>? _outputs;
 
-    /// <summary>
-    /// "Also use as a text model" (PROPOSAL-v2 3.3): the visitor's own tick, off by default, that lets a model whose output includes image
-    /// answer text.generate. No key of a site lifts this; the site's needs can only narrow the rule.
-    /// </summary>
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
-    public bool AlsoText { get; set; }
-
     /// <summary>In the visitor's default set: the wallet offers this model first when a site asks for several and names none he has.</summary>
     public bool Offer { get; set; } = true;
 

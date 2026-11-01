@@ -122,7 +122,7 @@ public class GetStartedTests
     {
         public bool Loaded => true;
         public CatalogModel? Find(string? name) => null;
-        public IReadOnlyList<CatalogModel> Search(string? query, CatalogFilter filter = CatalogFilter.All, int limit = 40) => models.Take(limit).ToList();
+        public IReadOnlyList<CatalogModel> Search(string? query, CatalogFilter filter = CatalogFilter.All, int limit = 40, string skill = Vocabulary.Generate) => models.Take(limit).ToList();
     }
 
     static CatalogModel Free(string id, int context, long created = 5) => new(id, id, context, 0m, 0m, created);

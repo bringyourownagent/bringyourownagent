@@ -1515,8 +1515,7 @@ public sealed partial class WalletEngine
             var wanted = Str(parameters["model"]);
             var pick = wanted is null ? granted.ToList() : granted.Where(g => g.Ref == wanted).ToList();
             if (pick.Count == 0) return Failed(entry, "invalid", "no such model for this site: " + (wanted ?? "none"));
-            // The fit is asked again at every call: what the visitor changed since the grant (a source's properties, its "also use as a text
-            // model" tick) counts at once, and a road that no longer fits is not tried.
+            // The fit is asked again at every call: what the visitor changed since the grant (a source's properties) counts at once, and a road that no longer fits is not tried.
             var spec = session.Manifest.Skill(Vocabulary.Generate)?.Models;
             var fitting = _store.Read(s => pick.SelectMany(g => g.SourceIds).Distinct(StringComparer.Ordinal)
                 .Where(id => s.Sources.FirstOrDefault(x => x.Id == id) is { } setting && Offers(spec, setting, Vocabulary.Generate))

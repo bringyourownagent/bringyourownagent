@@ -45,12 +45,12 @@ public sealed class OpenRouterCatalog : IModelCatalog
         return _snapshot.ByCanonical.TryGetValue(canonical, out var exact) ? exact : null;
     }
 
-    public IReadOnlyList<CatalogModel> Search(string? query, CatalogFilter filter = CatalogFilter.All, int limit = 40)
+    public IReadOnlyList<CatalogModel> Search(string? query, CatalogFilter filter = CatalogFilter.All, int limit = 40, string skill = Vocabulary.Generate)
     {
         var words = (query ?? "").ToLowerInvariant().Split([' ', '\t', '/'], StringSplitOptions.RemoveEmptyEntries);
-        // The primary-role rule (PROPOSAL-v2 3.3): a text picker never offers a model that draws pictures. The catalog keeps them,
+        // The offering rule (PROPOSAL-v3 1.1): a picker of a skill offers the models that serve it. The catalog keeps the others,
         // so `Find` still knows their price and their modalities when a visitor adds one by name.
-        IEnumerable<CatalogModel> found = _snapshot.All.Where(m => m.OffersText);
+        IEnumerable<CatalogModel> found = _snapshot.All.Where(m => m.Serves(skill));
         if (filter == CatalogFilter.Free) found = found.Where(m => m.Free);
         if (filter == CatalogFilter.Cheap) found = found.Where(m => m.TypicalAnswerCost is { } cost && cost <= 0.002m);
         if (words.Length > 0)
@@ -97,7 +97,7 @@ public sealed class OpenRouterCatalog : IModelCatalog
         }
     }
 
-    /// <summary>The list as models: every model is kept (one that draws pictures is a model too, only never a text one), ids that look like
+    /// <summary>The list as models: every model is kept (one that only draws pictures is a model too, only never a text one), ids that look like
     /// ids, prices read as dollars per token, and what the list says goes in and out.</summary>
     public static IReadOnlyList<CatalogModel> Parse(string json)
     {

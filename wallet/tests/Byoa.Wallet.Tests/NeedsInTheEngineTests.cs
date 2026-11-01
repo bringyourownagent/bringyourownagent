@@ -14,8 +14,8 @@ sealed class ListedCatalog(params CatalogModel[] models) : IModelCatalog
 
     public CatalogModel? Find(string? name) => models.FirstOrDefault(m => m.Canonical == ModelNames.Canon(name));
 
-    public IReadOnlyList<CatalogModel> Search(string? query, CatalogFilter filter = CatalogFilter.All, int limit = 40) =>
-        models.Where(m => m.OffersText).Take(limit).ToList();
+    public IReadOnlyList<CatalogModel> Search(string? query, CatalogFilter filter = CatalogFilter.All, int limit = 40, string skill = Vocabulary.Generate) =>
+        models.Where(m => m.Serves(skill)).Take(limit).ToList();
 }
 
 /// <summary>The engine with a site that asks for models by what they can do: the list the window shows, the grant, a stored choice, and every call.</summary>
@@ -28,7 +28,7 @@ public class NeedsInTheEngineTests
     readonly FakeTextSource _gemma = new("lm:gemma") { Answers = new Queue<string>(Enumerable.Repeat("gemma says 60", 50)) };
     readonly FakeTextSource _gpt = new("openrouter:openai/gpt-5-mini", Runs.ApiKey, costPerCall: 0.004m) { Answers = new Queue<string>(Enumerable.Repeat("gpt says 80", 50)) };
     readonly FakeTextSource _small = new("openrouter:mistralai/small", Runs.ApiKey, costPerCall: 0.001m) { Answers = new Queue<string>(Enumerable.Repeat("small says 70", 50)) };
-    readonly FakeTextSource _pic = new("openrouter:google/gemini-3.1-flash-image", Runs.ApiKey) { Answers = new Queue<string>(Enumerable.Repeat("pic says 90", 50)) };
+    readonly FakeTextSource _pic = new("openrouter:someone/imagine", Runs.ApiKey) { Answers = new Queue<string>(Enumerable.Repeat("pic says 90", 50)) };
     readonly SettingsStore _store = new(null);
     readonly ActivityLog _log;
     readonly WalletEngine _engine;
@@ -41,14 +41,14 @@ public class NeedsInTheEngineTests
             Catalog = new ListedCatalog(
                 new CatalogModel("openai/gpt-5-mini", "OpenAI: GPT-5 Mini", 400_000, null, null, 0, ["text", "image"], ["text"]),
                 new CatalogModel("mistralai/small", "Mistral: Small", 32_768, null, null, 0, ["text"], ["text"]),
-                new CatalogModel("google/gemini-3.1-flash-image", "Google: Gemini Image", 32_768, null, null, 0, ["text", "image"], ["text", "image"])),
+                new CatalogModel("someone/imagine", "Someone: Imagine", 32_768, null, null, 0, ["text"], ["image"])),
         };
         _store.Update(s =>
         {
             s.Sources.Add(new SourceSetting { Id = "lm:gemma", Kind = SourceKinds.LmStudio, Model = "google/gemma-3-1b-it", Skills = [Vocabulary.Generate] });
             s.Sources.Add(new SourceSetting { Id = "openrouter:openai/gpt-5-mini", Kind = SourceKinds.OpenRouter, Model = "openai/gpt-5-mini", Skills = [Vocabulary.Generate], Offer = false });
             s.Sources.Add(new SourceSetting { Id = "openrouter:mistralai/small", Kind = SourceKinds.OpenRouter, Model = "mistralai/small", Skills = [Vocabulary.Generate], Offer = false });
-            s.Sources.Add(new SourceSetting { Id = "openrouter:google/gemini-3.1-flash-image", Kind = SourceKinds.OpenRouter, Model = "google/gemini-3.1-flash-image", Skills = [Vocabulary.Generate] });
+            s.Sources.Add(new SourceSetting { Id = "openrouter:someone/imagine", Kind = SourceKinds.OpenRouter, Model = "someone/imagine", Skills = [Vocabulary.Generate] });
             Router.EnsureTextChain(s, [_gemma, _gpt, _small, _pic]);
             var stops = s.Chain(Vocabulary.Generate).Stops;
             stops.RemoveAll(x => x.SourceId == _pic.Id);
@@ -78,27 +78,27 @@ public class NeedsInTheEngineTests
 
     static bool Ok(JsonNode? result) => result is JsonObject o && o["ok"]?.GetValue<bool>() == true;
 
-    // ------------------------------------------------------------------ the primary-role rule
+    // ------------------------------------------------------------------ the offering rule (a model that only draws writes no text)
 
     [Fact]
-    public async Task AModelThatDrawsPicturesIsNotInTheTextListOfAnySiteAndTheWindowCountsItWithItsReason()
+    public async Task AModelThatOnlyDrawsPicturesIsNotInTheTextListOfAnySiteAndTheWindowCountsItWithItsReason()
     {
         await RequestAsync(Manifest("{\"count\":{\"min\":1,\"max\":3}}"));
         var section = LastSection();
-        Assert.DoesNotContain("openrouter:google/gemini-3.1-flash-image", Keys(section.Choices));
+        Assert.DoesNotContain("openrouter:someone/imagine", Keys(section.Choices));
         var miss = Assert.Single(section.Misses);
-        Assert.Equal("Gemini Image", miss.Name);
-        Assert.Contains("draws pictures", miss.Why);
-        Assert.Contains("Also use as a text model", miss.Why);                  // and says what would change it
+        Assert.Equal("Imagine", miss.Name);
+        Assert.Equal("does not write text", miss.Why);
     }
 
     [Fact]
-    public async Task TheVisitorsTickBringsItBackAsAnOrdinaryTextModelAndTheCallReachesIt()
+    public async Task AModelThatWritesTextAndDrawsAsWellIsAnOrdinaryTextModelWithoutAnyTick()
     {
-        _store.Update(s => s.Source("openrouter:google/gemini-3.1-flash-image").AlsoText = true);
-        var granted = await RequestAsync(Manifest("{\"count\":1,\"require\":[\"google/gemini-3.1-flash-image\"]}"));
+        // The visitor says it draws as well as writes (or the public list does): it is offered for text, fits, and the call reaches it.
+        _store.Update(s => s.Source("openrouter:someone/imagine").Outputs = ["text", "image"]);
+        var granted = await RequestAsync(Manifest("{\"count\":1,\"require\":[\"someone/imagine\"]}"));
         var section = LastSection();
-        var choice = section.Choices.Single(c => c.Key == "openrouter:google/gemini-3.1-flash-image");
+        var choice = section.Choices.Single(c => c.Key == "openrouter:someone/imagine");
         Assert.True(choice.Checked);
         Assert.Equal(FitState.Fits, choice.Fit);
         Assert.Empty(section.Misses);
@@ -107,7 +107,7 @@ public class NeedsInTheEngineTests
     }
 
     [Fact]
-    public async Task ASiteThatNamedNoModelsNeverReachesAPictureModelEitherAndSeesItAgainWhenTheVisitorTicks()
+    public async Task ASiteThatNamedNoModelsReachesAPictureModelOnlyWhileItWritesText()
     {
         var granted = await RequestAsync(Manifest(null));                       // the old kind of site: the skill and the wallet's route
         var grant = granted!["grantId"]!.GetValue<string>();
@@ -116,9 +116,9 @@ public class NeedsInTheEngineTests
         Assert.Equal("gemma says 60", first["output"]!["text"]!.GetValue<string>());       // the picture model is first on the route and is passed over
         Assert.Equal(0, _pic.Calls);
 
-        _store.Update(s => s.Source("openrouter:google/gemini-3.1-flash-image").AlsoText = true);
+        _store.Update(s => s.Source("openrouter:someone/imagine").Outputs = ["text", "image"]);
         var second = Assert.IsType<JsonObject>(await _engine.HandleAsync(Call(grant, null)));
-        Assert.Equal("pic says 90", second["output"]!["text"]!.GetValue<string>());        // the tick counts at once, at the next call
+        Assert.Equal("pic says 90", second["output"]!["text"]!.GetValue<string>());        // what the visitor says counts at once, at the next call
     }
 
     [Fact]
@@ -126,8 +126,8 @@ public class NeedsInTheEngineTests
     {
         await RequestAsync(Manifest("{\"count\":1,\"kind\":\"any\",\"onMismatch\":\"show\",\"needs\":{\"output\":[\"text\",\"image\"]}}"));
         var section = LastSection();
-        Assert.DoesNotContain("openrouter:google/gemini-3.1-flash-image", Keys(section.Choices));
-        Assert.Contains(section.Misses, m => m.Name == "Gemini Image");
+        Assert.DoesNotContain("openrouter:someone/imagine", Keys(section.Choices));
+        Assert.Contains(section.Misses, m => m.Name == "Imagine");
     }
 
     // ------------------------------------------------------------------ unknown properties and mismatches
@@ -267,19 +267,19 @@ public class NeedsInTheEngineTests
     }
 
     [Fact]
-    public async Task APictureModelTheVisitorTickedForTextStopsAnsweringTextTheMomentHeUnticksItEvenInAnOpenGrant()
+    public async Task AModelThatStopsWritingTextStopsAnsweringTextTheMomentTheVisitorSaysSoEvenInAnOpenGrant()
     {
-        _store.Update(s => s.Source("openrouter:google/gemini-3.1-flash-image").AlsoText = true);
+        _store.Update(s => s.Source("openrouter:someone/imagine").Outputs = ["text", "image"]);
         _ui.Consent = new ConsentAnswer(true, 0.05m, false, [], new Dictionary<string, IReadOnlyList<string>>
         {
-            ["text.generate"] = ["openrouter:google/gemini-3.1-flash-image"],
+            ["text.generate"] = ["openrouter:someone/imagine"],
         });
         var granted = await RequestAsync(Manifest("{\"count\":1}"));
         var grant = granted!["grantId"]!.GetValue<string>();
         Assert.True(Ok(await _engine.HandleAsync(Call(grant, "m1"))));
         Assert.Equal(1, _pic.Calls);
 
-        _store.Update(s => s.Source("openrouter:google/gemini-3.1-flash-image").AlsoText = false);
+        _store.Update(s => s.Source("openrouter:someone/imagine").Outputs = ["image"]);
         Assert.False(Ok(await _engine.HandleAsync(Call(grant, "m1"))));
         Assert.Equal(1, _pic.Calls);
     }
@@ -290,7 +290,7 @@ public class NeedsInTheEngineTests
     public async Task TheNamesTheSiteLikesThatNothingOfTheVisitorsAnswersToAreExamplesAndTheOnesHeHasOrWasDroppedAreNot()
     {
         // gpt-5-mini is his (ticked or not), gemini-image is his but left out for text, the others are nothing of his.
-        await RequestAsync(Manifest("{\"count\":1,\"recommend\":[\"openai/gpt-5-mini\",\"google/gemini-3.1-flash-image\",\"anthropic/claude-sonnet-5.5\",\"x-ai/grok-*\"]}"));
+        await RequestAsync(Manifest("{\"count\":1,\"recommend\":[\"openai/gpt-5-mini\",\"someone/imagine\",\"anthropic/claude-sonnet-5.5\",\"x-ai/grok-*\"]}"));
         var section = LastSection();
         Assert.Equal(["anthropic/claude-sonnet-5.5", "x-ai/grok-*"], section.ExampleNames);
         Assert.Single(section.Misses);
@@ -311,10 +311,10 @@ public class NeedsInTheEngineTests
         Assert.Equal("cannot read pictures", _engine.SiteModelNotes(Site)["openrouter:openai/gpt-5-mini"]);       // shown to the site, with the mismatch
 
         _store.Update(s => s.Source("openrouter:openai/gpt-5-mini").Inputs = null);
-        _store.Update(s => s.Source("openrouter:google/gemini-3.1-flash-image").AlsoText = true);
-        _engine.SetSiteModels(Site, Vocabulary.Generate, ["openrouter:google/gemini-3.1-flash-image"]);
-        _store.Update(s => s.Source("openrouter:google/gemini-3.1-flash-image").AlsoText = false);
-        Assert.StartsWith("not given to the site: draws pictures", _engine.SiteModelNotes(Site)["openrouter:google/gemini-3.1-flash-image"]);
+        _store.Update(s => s.Source("openrouter:someone/imagine").Outputs = ["text", "image"]);
+        _engine.SetSiteModels(Site, Vocabulary.Generate, ["openrouter:someone/imagine"]);
+        _store.Update(s => s.Source("openrouter:someone/imagine").Outputs = ["image"]);
+        Assert.StartsWith("not given to the site: does not write text", _engine.SiteModelNotes(Site)["openrouter:someone/imagine"]);
     }
 
     [Fact]
@@ -330,14 +330,14 @@ public class NeedsInTheEngineTests
     }
 
     [Fact]
-    public void WherePickingAModelForATextJobAModelThatDrawsPicturesIsOfferedOnlyWhenTheVisitorSaidItMayAnswerText()
+    public void WherePickingAModelForATextJobAModelThatWritesNoTextIsNotOffered()
     {
         Assert.True(_engine.ServesText("lm:gemma"));
         Assert.True(_engine.ServesText("openrouter:openai/gpt-5-mini"));
-        Assert.False(_engine.ServesText("openrouter:google/gemini-3.1-flash-image"));
+        Assert.False(_engine.ServesText("openrouter:someone/imagine"));
         Assert.False(_engine.ServesText("no:such"));
-        _store.Update(s => s.Source("openrouter:google/gemini-3.1-flash-image").AlsoText = true);
-        Assert.True(_engine.ServesText("openrouter:google/gemini-3.1-flash-image"));
+        _store.Update(s => s.Source("openrouter:someone/imagine").Outputs = ["text", "image"]);
+        Assert.True(_engine.ServesText("openrouter:someone/imagine"));
     }
 
     // ------------------------------------------------------------------ what the site is told

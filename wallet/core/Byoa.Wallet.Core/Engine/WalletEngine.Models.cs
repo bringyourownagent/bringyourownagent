@@ -121,7 +121,7 @@ public sealed partial class WalletEngine
 
     /// <summary>
     /// Whether one of the visitor's sources may answer text at all (the skill's own rule): where he picks a model for a text job himself (a site's models,
-    /// the model that judges requests), one that draws pictures is not offered, unless he ticked "Also use as a text model" for it.
+    /// the model that judges requests), one that does not write text is not offered.
     /// </summary>
     public bool ServesText(string sourceId) =>
         _store.Read(s => s.Sources.FirstOrDefault(x => x.Id == sourceId && x.Kind is not null) is { } setting && Offers(null, setting, Vocabulary.Generate));
@@ -160,7 +160,7 @@ public sealed partial class WalletEngine
 
     /// <summary>
     /// Whether a source of the visitor's is in the list for a skill and what a site asks of it (null: nothing asked, so only the skill's own
-    /// rule counts: a model that draws pictures does not answer text unless he ticked "Also use as a text model" for it). The one question
+    /// rule counts: a model that does not write text does not answer text). The one question
     /// that a stored choice, a grant and every call ask again each time.
     /// </summary>
     bool Offers(RequestedModels? spec, SourceSetting setting, string skill)

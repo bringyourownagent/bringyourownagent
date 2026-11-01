@@ -80,7 +80,7 @@ public static class ModelPlanner
             if (entries.Any(e => ModelNames.Matches(name, e.ModelId))) continue;
             if (context.RoadFor(name) is not { } road) continue;
             if (entries.Any(e => e.Key == ModelChoice.NewKey(road.Model))) continue;
-            // (a model behind a key is judged by what the catalog says of it, and has no "also use as a text model" tick: it is not his yet)
+            // (a model behind a key is judged by what the catalog says of it, and the visitor has said nothing of it: it is not his yet)
             var facts = context.FactsOf?.Invoke(road.Model) ?? ModelFacts.Unknown;
             var verdict = ModelFit.Evaluate(facts, ModelNames.Canon(road.Model), skill, spec);
             if (!verdict.Offered(ModelFit.DropsOnMismatch(spec, facts)))

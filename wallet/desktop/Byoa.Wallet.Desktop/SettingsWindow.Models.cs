@@ -202,12 +202,12 @@ sealed partial class SettingsWindow
         return Ui.Column(2, offer, Ui.Wrap("A site that asks for several models gets the ones in your default set first. Known as: " + (known.Length == 0 ? "unknown" : known) + ".", "muted", "small"));
     }
 
-    /// <summary>"What it can do" and "Also use as a text model": what the visitor says about a text model, which beats the public list. Text models only.</summary>
+    /// <summary>"What it can do": what the visitor says about a text model, which beats the public list. Text models only.</summary>
     Control? CanDoRow(SourceSetting source)
     {
         if (source.Skills.Count > 0 && !source.Skills.Contains(Vocabulary.Generate)) return null;
         CanDoEditor? editor = null;
-        editor = new CanDoEditor(SafeId(source.Id), source.Inputs, source.Outputs, source.AlsoText, () => _w.Engine.FactsOfSource(source.Id), () =>
+        editor = new CanDoEditor(SafeId(source.Id), source.Inputs, source.Outputs, () => _w.Engine.FactsOfSource(source.Id), () =>
         {
             _w.Store.Update(s => editor!.WriteTo(s.Source(source.Id)));
             _w.Engine.SourcePropertiesChanged();            // the sites that are connected hear it at once

@@ -14,7 +14,7 @@ public enum FitState
     /// <summary>A property the site asked about is known and wrong. The site's <c>onMismatch</c> decides: dropped, or shown with the mismatch and never ticked.</summary>
     Mismatch,
 
-    /// <summary>The skill itself rules it out (the primary-role rule). No site's word changes that.</summary>
+    /// <summary>The skill itself rules it out (it does not write text, it is not known to draw). No site's word changes that.</summary>
     Excluded,
 }
 
@@ -34,8 +34,8 @@ public sealed record FitVerdict(
 /// <summary>
 /// The one place that decides whether a source suits what a site asks of a skill (PROPOSAL-v2 3.1 to 3.3). The planner, the list in the
 /// consent window, the grant, a stored choice that is looked at again, and every call use it; a rule that lived in each of them would diverge.
-/// First the skill's own properties, which no site can widen (a picture model is not offered for text unless the visitor ticked
-/// "Also use as a text model"); then the site's <c>needs</c> and <c>kind</c>, which can only narrow.
+/// First the skill's own properties, which no site can widen (a model that only draws is not offered for text, a model that is not known to
+/// draw is not offered for pictures); then the site's <c>needs</c> and <c>kind</c>, which can only narrow.
 /// </summary>
 public static class ModelFit
 {
@@ -57,8 +57,8 @@ public static class ModelFit
         var can = new Dictionary<string, bool>(StringComparer.Ordinal);
         if (spec?.Needs is { } needs)
         {
-            // (a source the visitor added for text surely takes text and writes text, whatever else nobody knows of it)
-            var sure = skill == Vocabulary.Generate ? new[] { Modalities.Text } : [];
+            // (a source the visitor added for text surely takes text and writes text, whatever else nobody knows of it; one that draws takes a prompt)
+            var sure = skill is Vocabulary.Generate or Vocabulary.ImageGenerate ? new[] { Modalities.Text } : [];
             CheckModalities("input", needs.Input, facts.Input, sure);
             CheckModalities("output", needs.Output, facts.Output, sure);
             if (needs.ContextThousands is { } wanted)
@@ -112,21 +112,20 @@ public static class ModelFit
         _ => "does not make " + Plain(modality),
     };
 
-    /// <summary>The skill's own properties (PROPOSAL-v2 3.3), as the reason a source is out, or null when it may serve the skill.</summary>
+    /// <summary>The skill's own properties (PROPOSAL-v3 4.1), as the reason a source is out, or null when it may serve the skill.</summary>
     static string? SkillRule(ModelFacts facts, string skill)
     {
         switch (skill)
         {
             case Vocabulary.Generate when facts.Output is { } output:
-                // text.generate: writes text, and does not draw pictures unless the visitor said that is fine for this source. An unknown output is
-                // offered: the visitor added the source for text, and the wallet has no reason to think it draws.
-                if (!output.Contains(Modalities.Text)) return "does not write text";
-                return output.Contains(Modalities.Image) && !facts.AlsoText
-                    ? "draws pictures; to use it for text, tick “Also use as a text model” in its settings"
-                    : null;
+                // text.generate: its output includes text. A model that draws as well is offered too (it is in both sections), and an unknown output is
+                // offered: the visitor added the source for text, and the wallet has no reason to think it cannot write.
+                return output.Contains(Modalities.Text) ? null : "does not write text";
             case Vocabulary.ImageGenerate:
-                // image.generate: known to draw pictures. An unknown output is not enough, and an agent never does.
-                return facts.Output?.Contains(Modalities.Image) == true ? null : facts.Output is null ? "is not known to draw pictures" : "does not draw pictures";
+                // image.generate: known to draw pictures, and behind the visitor's OpenRouter key (the only road that can draw). An unknown output is
+                // not enough, and an agent never does.
+                if (facts.Output?.Contains(Modalities.Image) != true) return facts.Output is null ? "is not known to draw pictures" : "does not draw pictures";
+                return facts.OpenRouter ? null : "can draw only behind an OpenRouter key";
             default:
                 return null;
         }

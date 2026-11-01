@@ -14,10 +14,10 @@ namespace Byoa.Wallet.Engine;
 /// <param name="ContextThousands">Context length in thousands of tokens; null if unknown (most local models).</param>
 /// <param name="Runs">Where it runs, in the grant's words (<c>local</c>, <c>home-server</c>, <c>api-key</c>); never unknown for a real source.</param>
 /// <param name="Agent">The visitor's own agent, not a model: it takes and writes text, whatever program is behind it.</param>
-/// <param name="AlsoText">The visitor ticked "Also use as a text model" for it.</param>
+/// <param name="OpenRouter">It is a model behind the visitor's OpenRouter key: the one road that can draw a picture in wallet 0.37.</param>
 public sealed record ModelFacts(
     IReadOnlyList<string>? Input = null, IReadOnlyList<string>? Output = null, int? ContextThousands = null, string? Runs = null,
-    bool Agent = false, bool AlsoText = false)
+    bool Agent = false, bool OpenRouter = false)
 {
     /// <summary>A source the wallet knows nothing about.</summary>
     public static readonly ModelFacts Unknown = new();
@@ -36,6 +36,6 @@ public sealed record ModelFacts(
             setting.Inputs ?? fromCatalog?.InputModalities,
             setting.Outputs ?? fromCatalog?.OutputModalities,
             fromCatalog is { ContextLength: > 0 } ? fromCatalog.ContextLength / 1000 : null,
-            runs, AlsoText: setting.AlsoText);
+            runs, OpenRouter: string.Equals(setting.Kind, SourceKinds.OpenRouter, StringComparison.OrdinalIgnoreCase));
     }
 }

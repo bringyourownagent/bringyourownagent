@@ -147,7 +147,7 @@ static class ShotsMode
         };
         var misses = new[]
         {
-            new ModelMiss("Gemini Image", "draws pictures; to use it for text, tick “Also use as a text model” in its settings", "google/gemini-3.1-flash-image"),
+            new ModelMiss("Flux Pictures", "does not write text", "black-forest-labs/flux-pictures"),
             new ModelMiss("Qwen3 Embedding", "does not write text", "qwen/qwen3-embedding"),
         };
         var section = new ModelSection("text.generate", spec, choices, [], null, misses, ["openai/gpt-image-*"]);

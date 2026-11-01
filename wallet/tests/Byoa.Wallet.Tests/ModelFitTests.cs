@@ -19,27 +19,27 @@ public class ModelFitTests
     // ------------------------------------------------------------------ the skill's own properties
 
     [Fact]
-    public void ATextSkillNeverOffersAModelThatDrawsPicturesUnlessTheVisitorSaidSo()
+    public void ATextSkillOffersEveryModelWhoseOutputIncludesTextAndNoOtherWhetherItDrawsToo()
     {
         var draws = new ModelFacts(Output: TextAndImage);
-        var verdict = Evaluate(draws);
-        Assert.Equal(FitState.Excluded, verdict.State);
-        Assert.Contains("draws pictures", Assert.Single(verdict.Reasons));
-        Assert.False(verdict.Offered(dropOnMismatch: false));                  // not even where the site wants mismatches shown
+        Assert.Equal(FitState.Fits, Evaluate(draws).State);                    // it writes text: no tick, no second rule
+        Assert.Equal(FitState.Fits, Evaluate(new ModelFacts(Output: Text)).State);
 
-        Assert.Equal(FitState.Fits, Evaluate(draws with { AlsoText = true }).State);
-        Assert.Equal(FitState.Excluded, Evaluate(new ModelFacts(Output: ["image"]) { AlsoText = true }).State);     // nothing to write text with
+        var onlyDraws = Evaluate(new ModelFacts(Output: ["image"]));           // nothing to write text with
+        Assert.Equal(FitState.Excluded, onlyDraws.State);
+        Assert.Equal("does not write text", Assert.Single(onlyDraws.Reasons));
+        Assert.False(onlyDraws.Offered(dropOnMismatch: false));                // not even where the site wants mismatches shown
         Assert.Equal(FitState.Excluded, Evaluate(new ModelFacts(Output: ["embeddings"])).State);
     }
 
     [Fact]
     public void ASitesNeedsCanOnlyNarrowTheSkillsPropertiesNeverWidenThem()
     {
-        var draws = new ModelFacts(Output: TextAndImage);
-        // The site asks for picture output on a text skill, in every form it could write it: the model stays out.
-        Assert.Equal(FitState.Excluded, Evaluate(draws, spec: """{"count":1,"needs":{"output":["image"]}}""").State);
-        Assert.Equal(FitState.Excluded, Evaluate(draws, spec: """{"count":1,"kind":"any","onMismatch":"show","needs":{"output":{"includes":["text","image"]}}}""").State);
-        Assert.Equal(FitState.Excluded, Evaluate(draws, spec: """{"count":1,"require":["some/model"]}""").State);       // naming it does not help either
+        var onlyDraws = new ModelFacts(Output: ["image"]);
+        // The site asks for picture output on a text skill, in every form it could write it: a model that writes no text stays out.
+        Assert.Equal(FitState.Excluded, Evaluate(onlyDraws, spec: """{"count":1,"needs":{"output":["image"]}}""").State);
+        Assert.Equal(FitState.Excluded, Evaluate(onlyDraws, spec: """{"count":1,"kind":"any","onMismatch":"show","needs":{"output":{"includes":["text","image"]}}}""").State);
+        Assert.Equal(FitState.Excluded, Evaluate(onlyDraws, spec: """{"count":1,"require":["some/model"]}""").State);       // naming it does not help either
     }
 
     [Fact]
@@ -52,13 +52,23 @@ public class ModelFitTests
     }
 
     [Fact]
-    public void APictureSkillIsOfferedOnlyASourceKnownToDrawPictures()
+    public void APictureSkillIsOfferedOnlyASourceKnownToDrawPicturesBehindAnOpenRouterKey()
     {
-        Assert.Equal(FitState.Fits, Evaluate(new ModelFacts(Output: TextAndImage), Vocabulary.ImageGenerate).State);
-        Assert.Equal(FitState.Excluded, Evaluate(ModelFacts.Unknown, Vocabulary.ImageGenerate).State);                  // unknown is not known to draw
-        Assert.Equal(FitState.Excluded, Evaluate(new ModelFacts(Output: Text), Vocabulary.ImageGenerate).State);
+        Assert.Equal(FitState.Fits, Evaluate(new ModelFacts(Output: TextAndImage, OpenRouter: true), Vocabulary.ImageGenerate).State);
+        Assert.Equal(FitState.Fits, Evaluate(new ModelFacts(Output: ["image"], OpenRouter: true), Vocabulary.ImageGenerate).State);      // a model that only draws
+        Assert.Equal(FitState.Excluded, Evaluate(new ModelFacts(OpenRouter: true), Vocabulary.ImageGenerate).State);                    // unknown is not known to draw
+        Assert.Equal(FitState.Excluded, Evaluate(new ModelFacts(Output: Text, OpenRouter: true), Vocabulary.ImageGenerate).State);
         var agent = ModelFacts.Of(new SourceSetting { Kind = SourceKinds.Agent }, null, "api-key");
         Assert.Equal(FitState.Excluded, Evaluate(agent, Vocabulary.ImageGenerate, modelId: "agent/mine").State);       // an agent never serves it
+
+        // The only road that can draw in 0.37 is the visitor's OpenRouter key: a model that draws, but is behind another key or on this PC, is not offered.
+        var elsewhere = Evaluate(new ModelFacts(Output: TextAndImage), Vocabulary.ImageGenerate);
+        Assert.Equal(FitState.Excluded, elsewhere.State);
+        Assert.Equal("can draw only behind an OpenRouter key", Assert.Single(elsewhere.Reasons));
+        var local = ModelFacts.Of(new SourceSetting { Kind = SourceKinds.LmStudio, Outputs = ["text", "image"] }, null, "local");
+        Assert.Equal(FitState.Excluded, Evaluate(local, Vocabulary.ImageGenerate).State);
+        var viaKey = ModelFacts.Of(new SourceSetting { Kind = SourceKinds.OpenRouter, Outputs = ["image"] }, null, "api-key");
+        Assert.Equal(FitState.Fits, Evaluate(viaKey, Vocabulary.ImageGenerate).State);
     }
 
     // ------------------------------------------------------------------ the site's needs
@@ -195,10 +205,10 @@ public class ModelFitTests
         Assert.Equal(131, behindKey.ContextThousands);                          // thousands of tokens
         Assert.Equal("api-key", behindKey.Runs);
 
-        var said = ModelFacts.Of(new SourceSetting { Kind = SourceKinds.OpenRouter, Inputs = ["text"], AlsoText = true }, listed, "api-key");
+        var said = ModelFacts.Of(new SourceSetting { Kind = SourceKinds.OpenRouter, Inputs = ["text"] }, listed, "api-key");
         Assert.Equal(["text"], said.Input);                                     // his word beats the list
         Assert.Equal(["text"], said.Output);                                    // what he did not say, the list says
-        Assert.True(said.AlsoText);
+        Assert.True(said.OpenRouter);
 
         // A copy of the model that runs here may lack what the model has (the picture part): the catalog is not asked about it.
         var local = ModelFacts.Of(new SourceSetting { Kind = SourceKinds.LmStudio }, listed, "local");
@@ -215,7 +225,7 @@ public class ModelFitTests
     [Fact]
     public void AnAgentsFactsComeFromWhatTheWalletLaunches()
     {
-        var agent = ModelFacts.Of(new SourceSetting { Kind = SourceKinds.Agent, Inputs = ["image"], AlsoText = true }, null, "api-key");
+        var agent = ModelFacts.Of(new SourceSetting { Kind = SourceKinds.Agent, Inputs = ["image"], Outputs = ["image"] }, null, "api-key");
         Assert.True(agent.Agent);
         Assert.Equal(["text"], agent.Input);                                    // nothing the visitor writes makes the agent read pictures
         Assert.Equal(["text"], agent.Output);

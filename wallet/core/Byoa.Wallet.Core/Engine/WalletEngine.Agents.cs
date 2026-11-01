@@ -33,8 +33,7 @@ public sealed partial class WalletEngine
 
     /// <summary>
     /// The text sources a site that was not given a model by name may use: every source that is a model and may answer text at all. An agent is
-    /// never one of them, nor a model that draws pictures (unless the visitor ticked "Also use as a text model" for it): that rule is the skill's
-    /// own and holds for every site and for the wallet's own use.
+    /// never one of them, nor a model that does not write text: that rule is the skill's own and holds for every site and for the wallet's own use.
     /// </summary>
     IReadOnlyList<ITextSource> PlainTextSources(WalletSettings settings) =>
         _textSources.Where(s => s is not IAgentTextSource
