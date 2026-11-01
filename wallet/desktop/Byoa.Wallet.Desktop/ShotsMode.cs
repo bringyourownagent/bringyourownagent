@@ -71,6 +71,13 @@ static class ShotsMode
             withNeeds.Cancel();
             await Task.Delay(500);
 
+            // a site that asks for pictures as well as text: two sections, the picture one optional, a model that writes and draws in both
+            using var withPictures = new CancellationTokenSource();
+            _ = w.Ui.ShowConsentAsync(SampleConsentWithPictures(), withPictures.Token);
+            await Snap(desktop, folder, "consent-pictures", log, excludeSettings: true);
+            withPictures.Cancel();
+            await Task.Delay(500);
+
             using var raise = new CancellationTokenSource();
             _ = w.Ui.AskRaiseAsync(WalletEngine.RaiseModelOf("https://geo.example.com", "geo.example.com", "budget", 0.10m, 0.1294m), raise.Token);
             await Snap(desktop, folder, "raise", log, excludeSettings: true);
@@ -132,7 +139,7 @@ static class ShotsMode
     static ConsentModel SampleConsentWithNeeds()
     {
         var spec = RequestedModels.From(JsonNode.Parse("""
-            {"count":{"min":1,"max":2},"kind":"any","onMismatch":"show","needs":{"input":["text","image"],"output":["text"],"context":64},
+            {"count":{"min":1,"max":2},"kind":"any","onMismatch":"show","needs":{"input":["text","image"],"output":["text"]},
              "recommend":["anthropic/claude-sonnet-5.5","openai/gpt-image-*","agent/*"],"abilities":["web.search","image.read"],
              "why":"Looks at a candidate and writes clean SVG code for it."}
             """))!;
@@ -141,8 +148,8 @@ static class ShotsMode
         var choices = new[]
         {
             Pick("sonnet", "Claude Sonnet 5.5", "OpenRouter key", "about $0.004 an answer", ModelRole.Recommended, true),
-            Pick("gemma", "gemma-3-12b-it", "this PC", "free", ModelRole.Yours, false, FitState.Unknown, "not known: what it reads, how much it reads at once"),
-            Pick("mistral", "Mistral Small", "OpenRouter key", "about $0.0004 an answer", ModelRole.Yours, false, FitState.Mismatch, "cannot read pictures", "reads 32k at most; the site wants 64k or more"),
+            Pick("gemma", "gemma-3-12b-it", "this PC", "free", ModelRole.Yours, false, FitState.Unknown, "not known: what it reads"),
+            Pick("mistral", "Mistral Small", "OpenRouter key", "about $0.0004 an answer", ModelRole.Yours, false, FitState.Mismatch, "cannot read pictures"),
             Pick("agent:claude", "My Claude (your agent)", "your agent", "free", ModelRole.Recommended, false, FitState.Mismatch, "cannot read pictures"),
         };
         var misses = new[]
@@ -154,6 +161,42 @@ static class ShotsMode
         return new ConsentModel("https://icons.example.com", "icons.example.com", true,
             "An icon designer: it draws candidates for your icon and asks a model that can look at them to write the clean SVG code for the best one.",
             [new ConsentRow("text.generate", "Text generation", true, true, true, [], [], "", section)],
+            0.25m, null, false, false);
+    }
+
+    static ConsentModel SampleConsentWithPictures()
+    {
+        var text = RequestedModels.From(JsonNode.Parse("""
+            {"count":{"min":1,"max":16},"kind":"any","recommend":["agent/*","anthropic/claude-sonnet-5.5","google/gemini-3.8-flash"],
+             "why":"Draws each icon as SVG code."}
+            """))!;
+        var pictures = RequestedModels.From(JsonNode.Parse("""
+            {"count":{"min":1,"max":4},"recommend":["google/gemini-3.1-flash-image*"],"why":"Draws picture candidates for your icon."}
+            """))!;
+        ModelChoice Pick(string key, string name, string where, string cost, ModelRole role, bool on, FitState fit = FitState.Fits, params string[] marks) =>
+            new(key, key, name, "x/" + key, where, where.Contains("key"), cost, role, on, true, null, null, fit, marks.Length == 0 ? null : marks);
+        var textChoices = new[]
+        {
+            Pick("sonnet", "Claude Sonnet 5.5", "OpenRouter key", "about $0.004 an answer", ModelRole.Recommended, true),
+            Pick("nano", "Gemini Image (Nano Banana)", "OpenRouter key", "about $0.0007 an answer", ModelRole.Yours, false),
+            Pick("agent:claude", "My Claude (your agent)", "your agent", "free", ModelRole.Recommended, false),
+            Pick("gemma", "gemma-3-12b-it", "this PC", "free", ModelRole.Yours, false),
+        };
+        var pictureChoices = new[]
+        {
+            Pick("nano", "Gemini Image (Nano Banana)", "OpenRouter key", "price unknown", ModelRole.Recommended, true),
+            Pick("flux", "FLUX Pictures", "OpenRouter key", "price unknown", ModelRole.Yours, false),
+            Pick("odd", "odd/unlisted-model", "OpenRouter key", "price unknown", ModelRole.Yours, false, FitState.Unknown, "not known: what it reads"),
+        };
+        var misses = new[] { new ModelMiss("gemma-3-12b-it", "can draw only behind an OpenRouter key", "google/gemma-3-12b-it") };
+        var textSection = new ModelSection("text.generate", text, textChoices, [], null, [new ModelMiss("FLUX Pictures", "does not write text", "x/flux")], []);
+        var pictureSection = new ModelSection("image.generate", pictures, pictureChoices, [], null, misses, ["black-forest-labs/flux-2-pro"]);
+        return new ConsentModel("https://icons.example.com", "icons.example.com", true,
+            "An icon designer: it asks a model for picture candidates of your icon, and a text model to write the clean SVG code for the best one.",
+            [
+                new ConsentRow("text.generate", "Text generation", true, true, true, [], [], "", textSection),
+                new ConsentRow("image.generate", "Image generation", false, true, true, [], [], "", pictureSection),
+            ],
             0.25m, null, false, false);
     }
 
