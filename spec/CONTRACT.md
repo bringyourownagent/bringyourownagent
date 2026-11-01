@@ -248,7 +248,7 @@ A wallet before 0.37 serves no `image.generate`, and a site that requires the sk
 
 (`google/gemini-3.1-flash-image*` is a mask of the kind section 3.3 allows — one star, at the end. A mask with a star in the middle matches nothing. `needs.output: ["image"]` is built into `image.generate`; a site may write it, and it changes nothing.)
 
-`image.generate` is served by OpenRouter's models that draw, through the visitor's key. A call through a paid source follows "ask before paid" and the budgets as for text; its price is unknown unless the catalogue says the model is free, and the receipt carries the cost OpenRouter reports. A `local-only` site is not served pictures: there is no local picture runtime.
+`image.generate` is served by OpenRouter's models that draw, through the visitor's key. A call through a paid source follows "ask before paid" and the budgets as for text; its price is unknown unless the catalogue says the model is free, and the receipt carries the cost OpenRouter reports (`"unknown"` when it reports none). A `local-only` site is not served pictures: there is no local picture runtime.
 
 **Pictures inside `text.generate`** (a text model that looks at a picture) are not part of wallet 0.37; the capability name `images-in` is reserved for them.
 

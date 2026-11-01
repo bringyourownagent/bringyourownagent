@@ -2,7 +2,7 @@
 
 The libraries share one version number and one rule set. Dates are UTC.
 
-## Unreleased (the next shared version)
+## 0.0.6 (2026-11-01)
 
 - Rule change: `needs` has two conditions, `input` and `output`; `context` and `runs` are unknown keys now (a `needs-unknown` warning, never an error, so every manifest the 0.0.5 libraries accepted is still accepted). `kind` on `image.generate` may only be `model` (M23). The shared vectors say so in all three libraries.
 - Pictures (wallet 0.37, `image.generate`, spec/CONTRACT.md section 3.7): the .NET relay's `job` takes `skill: "image.generate"` with `prompt`, `references`, `count`, `aspect`, `maxSide` and `maxBytes`, and `job/poll` always has `images` (null, or `[{ mime, size, sha256, data, reduced }]`); the Node.js relay's `wallet.call('image.generate', ...)` answers `output.images` the same way. Both join the wallet's picture parts and check them; anything that does not add up is a failed call.
