@@ -6,7 +6,8 @@ using Byoa.Wallet.Sources;
 namespace Byoa.Wallet.Providers;
 
 /// <summary>What a streamed chat answer came to: the visible text as the model wrote it, its hidden reasoning, the usage report and why it stopped.</summary>
-internal sealed record StreamResult(string Text, string Reasoning, JsonNode? Usage, string? Finish);
+/// <param name="Drew">A piece of the stream carried a picture (a model that draws can do so on a text request).</param>
+internal sealed record StreamResult(string Text, string Reasoning, JsonNode? Usage, string? Finish, bool Drew = false);
 
 /// <summary>
 /// Reads a chat answer that arrives as server-sent events (<c>data: {...}</c> lines, <c>[DONE]</c> at the end) and hands the text over as it comes, with
@@ -34,6 +35,7 @@ internal static class ChatStream
         var filter = new ThinkFilter();
         JsonNode? usage = null;
         string? finish = null;
+        var drew = false;
         long seen = 0;
         using var silence = CancellationTokenSource.CreateLinkedTokenSource(ct);
         while (true)
@@ -80,6 +82,7 @@ internal static class ChatStream
             var choice = ChatCompletions.First(json);
             if (ChatCompletions.Str(choice?["finish_reason"]) is { } why) finish = why;
             var delta = choice?["delta"];
+            if (delta?["images"] is JsonArray { Count: > 0 }) drew = true;
             if ((ChatCompletions.Str(delta?["reasoning_content"]) ?? ChatCompletions.Str(delta?["reasoning"])) is { Length: > 0 } thought)
                 reasoning.Append(thought);
             if (ChatCompletions.Content(delta?["content"]) is { Length: > 0 } piece)
@@ -92,6 +95,6 @@ internal static class ChatStream
 
         var rest = filter.Flush();
         if (rest.Length > 0) onText?.Invoke(rest);
-        return new StreamResult(text.ToString(), reasoning.ToString(), usage, finish);
+        return new StreamResult(text.ToString(), reasoning.ToString(), usage, finish, drew);
     }
 }

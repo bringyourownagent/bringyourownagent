@@ -146,9 +146,11 @@ public static class Router
 
     /// <summary>
     /// The same walk for text.generate: the chain's stops in the visitor's order, only sources that are switched on,
-    /// can run (their runtime is up, their key is added) and know the language.
+    /// can run (their runtime is up, their key is added) and know the language. A source that draws a picture on every text request is
+    /// left out of text, not of <paramref name="pictures"/>.
     /// </summary>
-    public static TextRoutePlan PlanText(SkillChain chain, IEnumerable<ITextSource> sources, Func<string, bool> enabled, string? language = null)
+    public static TextRoutePlan PlanText(SkillChain chain, IEnumerable<ITextSource> sources, Func<string, bool> enabled, string? language = null,
+        bool pictures = false)
     {
         var byId = sources.ToDictionary(s => s.Id);
         var steps = new List<TextRouteStep>();
@@ -158,6 +160,7 @@ public static class Router
             if (!byId.TryGetValue(stop.SourceId, out var source)) continue;
             string? why = null;
             if (!stop.Enabled || !enabled(source.Id)) why = "turned off";
+            else if (!pictures && source is ITextRefusal { RefusesText: { } refused }) why = refused;
             else if (!KnowsText(source, language)) why = language is null ? "needs to know the language" : "does not know " + Vocabulary.LanguageName(language);
             else if (source is ILiveness { Up: false }) why = "not running";
             else if (source.State is SourceState.Missing) why = "model not found";

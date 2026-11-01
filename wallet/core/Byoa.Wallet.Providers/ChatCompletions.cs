@@ -70,6 +70,13 @@ static class ChatCompletions
     /// <summary>The first choice of a reply, or null: the last piece of a stream, which only reports the usage, has none.</summary>
     public static JsonNode? First(JsonNode? reply) => reply?["choices"] is JsonArray { Count: > 0 } choices ? choices[0] : null;
 
+    /// <summary>
+    /// The model drew a picture in its answer: pictures in the message, or picture tokens in the usage (a stream reports only those). OpenRouter
+    /// bills them as a picture even when the request asked for text.
+    /// </summary>
+    public static bool Drew(JsonNode? message, JsonNode? usage) =>
+        message?["images"] is JsonArray { Count: > 0 } || Int(usage?["completion_tokens_details"]?["image_tokens"]) > 0;
+
     public static (int In, int Out) Tokens(JsonNode? usage) =>
         (Int(usage?["prompt_tokens"]), Int(usage?["completion_tokens"]));
 

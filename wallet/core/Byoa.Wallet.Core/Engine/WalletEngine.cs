@@ -1917,6 +1917,19 @@ public sealed partial class WalletEngine
         return (answer! with { Text = text, Cost = answerCost }, false, answerCost);
     }
 
+    /// <summary>
+    /// A model that drew a picture on a text request (paid as a picture, and its text may be empty) takes no text request from now on, also
+    /// after a restart; its list says why. Its pictures are not affected.
+    /// </summary>
+    void LearnDrawsOnText(ITextSource source)
+    {
+        if (source is ITextRefusal refusal) refusal.RefuseText(TextRefusals.DrawsPictures);
+        _store.Update(s =>
+        {
+            if (s.Sources.FirstOrDefault(x => x.Id == source.Id) is { } setting) setting.DrawsOnText = true;
+        });
+    }
+
     async Task<TextAttempt> InvokeTextAttemptAsync(ITextSource source, TextRequest request, CancellationToken routeCt,
         long routeDeadline, CancellationToken callerCt, ActivityEntry entry, TimeSpan sourceTimeout, Action<string>? onChunk = null)
     {
@@ -1931,10 +1944,12 @@ public sealed partial class WalletEngine
             var answer = onChunk is not null && request.Choices is null && source is IStreamingTextSource streaming
                 ? await streaming.GenerateStreamAsync(request, onChunk, limit.Token).ConfigureAwait(false)
                 : await source.GenerateAsync(request, limit.Token).ConfigureAwait(false);
+            if (answer.Drew) LearnDrawsOnText(source);
             return new TextAttempt(answer, answer.Cost, true, true, null);
         }
         catch (TextSourceException e)
         {
+            if (e.Drew) LearnDrawsOnText(source);
             return new TextAttempt(null, e.Cost, e.ProviderCalled, e.ResponseReceived, e.Message);
         }
         catch (OperationCanceledException) when (!callerCt.IsCancellationRequested)

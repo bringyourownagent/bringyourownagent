@@ -354,6 +354,7 @@ public sealed class SourceSet : IDisposable
                     () => testKey is not null || _secrets.Has(ApiSecretName(setting)), () => Catalog),
             _ => null,
         };
+        if (setting.DrawsOnText && source is ITextRefusal refusal) refusal.RefuseText(TextRefusals.DrawsPictures);
         if (source is OpenAiCompatibleSource runtime && setting.AddedByAgent && !setting.EndpointConfirmed)
             runtime.MarkUnavailable("waiting for visitor endpoint confirmation");
         return source;

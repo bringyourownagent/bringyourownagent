@@ -13,7 +13,7 @@ namespace Byoa.Wallet.Providers;
 /// round figure when it is not. The real cost comes from the answer's <c>usage</c>. The same model, when it draws, also answers
 /// <c>image.generate</c> (<see cref="IImageSource"/>).
 /// </summary>
-public sealed class OpenRouterTextSource : ITextSource, IStreamingTextSource, IImageSource
+public sealed class OpenRouterTextSource : ITextSource, IStreamingTextSource, IImageSource, ITextRefusal
 {
     public const string SecretName = "openrouter";
 
@@ -244,8 +244,21 @@ public sealed class OpenRouterTextSource : ITextSource, IStreamingTextSource, II
         return null;
     }
 
+    public string? RefusesText => _refusesText;
+
+    public void RefuseText(string why) => _refusesText = why;
+
+    volatile string? _refusesText;
+
+    /// <summary>A model that drew a picture on a text request is not asked for text again: nothing is sent, and nothing is paid.</summary>
+    void RefuseIfLearned()
+    {
+        if (_refusesText is { } why) throw new TextSourceException(_displayModel + " " + why + ": it is not asked for text", 0m, providerCalled: false);
+    }
+
     public async Task<TextAnswer> GenerateAsync(TextRequest request, CancellationToken ct)
     {
+        RefuseIfLearned();
         var key = _key();
         if (string.IsNullOrWhiteSpace(key)) throw new InvalidOperationException("no OpenRouter key");
         var messages = new JsonArray();
@@ -319,23 +332,25 @@ public sealed class OpenRouterTextSource : ITextSource, IStreamingTextSource, II
         var cost = reported is > 0 ? reported.Value : estimate;
         var (input, output) = ChatCompletions.Tokens(usage);
         var reply = ChatCompletions.First(json)?["message"];
+        var drew = ChatCompletions.Drew(reply, usage);
         var answer = request.Choices is null
             ? Texts.CleanAnswer(ChatCompletions.Content(reply?["content"]) ?? "")
             : ChatCompletions.ExtractChoice(reply, request.Choices) ?? "";
         if (answer.Length == 0)
         {
-            throw new TextSourceException(request.Choices is null
-                ? "OpenRouter answered nothing"
-                : "OpenRouter did not answer with one of the choices", cost, providerCalled: true, responseReceived: true);
+            throw new TextSourceException(drew ? DrewInstead
+                : request.Choices is null ? "OpenRouter answered nothing"
+                : "OpenRouter did not answer with one of the choices", cost, providerCalled: true, responseReceived: true, drew: drew);
         }
 
         // Usage and cost were read before checking the answer above. Missing cost is settled by the engine's estimate floor.
-        return new TextAnswer(answer, cost, input, output, Model + " · OpenRouter");
+        return new TextAnswer(answer, cost, input, output, Model + " · OpenRouter", drew);
     }
 
     /// <summary>The same answer, handed over as the model writes it; the cost still comes from the usage report at the end of the stream.</summary>
     public async Task<TextAnswer> GenerateStreamAsync(TextRequest request, Action<string> onText, CancellationToken ct)
     {
+        RefuseIfLearned();
         var key = _key();
         if (string.IsNullOrWhiteSpace(key)) throw new InvalidOperationException("no OpenRouter key");
         if (request.Choices is not null)
@@ -376,9 +391,13 @@ public sealed class OpenRouterTextSource : ITextSource, IStreamingTextSource, II
         var cost = reported is > 0 ? reported.Value : EstimateCost(request);
         var (input, output) = ChatCompletions.Tokens(streamed.Usage);
         var answer = Texts.CleanAnswer(streamed.Text);
-        if (answer.Length == 0) throw new TextSourceException("OpenRouter answered nothing", cost, providerCalled: true, responseReceived: true);
-        return new TextAnswer(answer, cost, input, output, Model + " · OpenRouter");
+        var drew = streamed.Drew || ChatCompletions.Drew(null, streamed.Usage);
+        if (answer.Length == 0)
+            throw new TextSourceException(drew ? DrewInstead : "OpenRouter answered nothing", cost, providerCalled: true, responseReceived: true, drew: drew);
+        return new TextAnswer(answer, cost, input, output, Model + " · OpenRouter", drew);
     }
+
+    const string DrewInstead = "the model drew a picture instead of writing (OpenRouter bills it as a picture)";
 
     /// <summary>A model that refused the structured answer once gets plain instructions from then on.</summary>
     volatile bool _schemaBlocked;

@@ -5,9 +5,14 @@ using Byoa.Wallet.Sources;
 namespace Byoa.Wallet.Tests;
 
 /// <summary>A model behind a key that draws: it answers text like <see cref="FakeTextSource"/> and gives one scripted picture (or none, or a failure) per request.</summary>
-sealed class FakeImageSource : FakeTextSource, IImageSource
+sealed class FakeImageSource : FakeTextSource, IImageSource, ITextRefusal
 {
     public FakeImageSource(string id, decimal costPerCall = 0.004m) : base(id, Sources.Runs.ApiKey, costPerCall) { }
+
+    /// <summary>Set when the wallet learned the model draws a picture on every text request.</summary>
+    public string? RefusesText { get; private set; }
+
+    public void RefuseText(string why) => RefusesText = why;
 
     /// <summary>What each request gives, in order (the last repeats); empty means one small PNG.</summary>
     public Queue<Func<ImageRequest, ImageAnswer>> Pictures { get; } = new();

@@ -171,7 +171,7 @@ public sealed partial class WalletEngine
             : long.MaxValue;
         var routeCt = routeTimeout.Token;
         var settings = _store.Snapshot();
-        var plan = Router.PlanText(chain, sources, id => IsEnabled(settings, id));
+        var plan = Router.PlanText(chain, sources, id => IsEnabled(settings, id), pictures: true);
         int Index(ITextSource s) => chain.Stops.FindIndex(x => x.SourceId == s.Id);
 
         var route = new Route();

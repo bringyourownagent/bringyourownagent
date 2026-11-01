@@ -241,6 +241,20 @@ public class PictureModelsTests
     }
 
     [Fact]
+    public async Task AModelThatDrawsOnEveryTextRequestIsOfferedForPicturesAndNotForText()
+    {
+        _nano.RefuseText(TextRefusals.DrawsPictures);                      // learned on an earlier text call (DrawsOnTextTests)
+        _store.Update(s => s.Source("openrouter:google/nano").DrawsOnText = true);
+        await RequestAsync(Manifest(TextBlock + "," + PictureBlock));
+        var forText = Section("text.generate").Choices.Single(c => c.Key == "openrouter:google/nano");
+        Assert.False(forText.Ready);
+        Assert.False(forText.Checked);
+        Assert.Contains(TextRefusals.DrawsPictures, forText.Note);
+        var forPictures = Section("image.generate").Choices.Single(c => c.Key == "openrouter:google/nano");
+        Assert.True(forPictures.Ready);
+    }
+
+    [Fact]
     public async Task APictureSkillThatTheSiteAddsLaterIsAskedAboutWithTheTextMarkedAlreadyAllowed()
     {
         _ui.Consent = new ConsentAnswer(true, 0.05m, AutoDecide: true, [], new Dictionary<string, IReadOnlyList<string>> { ["text.generate"] = ["lm:gemma"] });

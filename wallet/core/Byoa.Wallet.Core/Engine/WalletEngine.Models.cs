@@ -114,7 +114,8 @@ public sealed partial class WalletEngine
             else if (!setting.Enabled || stop is { Enabled: false }) notReady = "turned off";
             else
             {
-                var plan = Router.PlanText(new SkillChain { Skill = Vocabulary.Generate, Stops = [new ChainStop { SourceId = setting.Id }] }, [source], _ => true, null);
+                var plan = Router.PlanText(new SkillChain { Skill = Vocabulary.Generate, Stops = [new ChainStop { SourceId = setting.Id }] }, [source], _ => true, null,
+                    pictures: skill == Vocabulary.ImageGenerate);
                 notReady = plan.Skipped.FirstOrDefault()?.Why;
             }
 

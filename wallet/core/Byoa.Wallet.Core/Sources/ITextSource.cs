@@ -99,7 +99,25 @@ public sealed record TextRequest(
 /// <param name="Text">The answer only: never the model's hidden reasoning.</param>
 /// <param name="Cost">What it cost in dollars (0 for a local model).</param>
 /// <param name="Detail">A short note for the activity log, e.g. "LM Studio · qwen3.5-4b".</param>
-public sealed record TextAnswer(string Text, decimal Cost, int InputTokens, int OutputTokens, string? Detail = null);
+/// <param name="Drew">The model drew a picture as well (it was paid as a picture): it is not asked for text again.</param>
+public sealed record TextAnswer(string Text, decimal Cost, int InputTokens, int OutputTokens, string? Detail = null, bool Drew = false);
+
+/// <summary>
+/// A source that can be kept from text requests: a model behind a key that drew a picture on a text request (paid as a picture, and its text
+/// can be empty) takes no text request from then on, and says why. Its pictures are not affected.
+/// </summary>
+public interface ITextRefusal
+{
+    /// <summary>Why it takes no text request; null when it takes them.</summary>
+    string? RefusesText { get; }
+
+    void RefuseText(string why);
+}
+
+public static class TextRefusals
+{
+    public const string DrawsPictures = "draws a picture on every text request";
+}
 
 /// <summary>
 /// A text provider was called but could not produce a usable answer. A provider may still know what that attempt
@@ -109,13 +127,17 @@ public sealed record TextAnswer(string Text, decimal Cost, int InputTokens, int 
 public sealed class TextSourceException : InvalidOperationException
 {
     public TextSourceException(string message, decimal? cost = null, bool providerCalled = true,
-        bool responseReceived = false, Exception? inner = null)
+        bool responseReceived = false, Exception? inner = null, bool drew = false)
         : base(message, inner)
     {
         Cost = cost;
         ProviderCalled = providerCalled;
         ResponseReceived = responseReceived;
+        Drew = drew;
     }
+
+    /// <summary>The model drew a picture instead of writing (paid as a picture).</summary>
+    public bool Drew { get; }
 
     public decimal? Cost { get; }
     public bool ProviderCalled { get; }

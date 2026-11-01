@@ -262,6 +262,13 @@ public sealed class SourceSetting
     public bool Offer { get; set; } = true;
 
     /// <summary>
+    /// Learned by the wallet: the model drew a picture on a text request (paid as a picture, its text may be empty), so it takes no text
+    /// request any more. Its pictures are not affected.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool DrawsOnText { get; set; }
+
+    /// <summary>
     /// False when the visitor does not let this model think before it answers: a model that reasons first (Qwen3.5, DeepSeek-R1 and the like) is
     /// asked to answer straight away, whatever a site wants. True (the default) leaves it to the model and to the site's own request.
     /// </summary>
