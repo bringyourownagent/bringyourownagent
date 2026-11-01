@@ -98,7 +98,7 @@ sealed partial class ConsentWindow
         return Ui.Column(4, scroll, more);
     }
 
-    Control ModelRow(ConsentRow row, StackPanel panel, StackPanel title)
+    Control ModelRow(ConsentRow row, StackPanel panel, Border header)
     {
         var section = row.Models!;
         var spec = section.Spec;
@@ -110,7 +110,6 @@ sealed partial class ConsentWindow
         }
 
         _picks[row.Skill] = pick;
-        panel.Children.Add(title);
 
         // The site's reason in a field: its first two lines, and all of it (what the site wrote, what it asks, what the visitor keeps) behind "More".
         var how = spec.Min == spec.Max ? (spec.Min == 1 ? "one model" : Number(spec.Min) + " different models") : Number(spec.Min) + " to " + Number(spec.Max) + " different models";
@@ -156,8 +155,7 @@ sealed partial class ConsentWindow
         };
 
         FillModels(pick);
-        var box = Ui.Box("row", panel);
-        return box;
+        return Block(header, panel, row.Skill);
     }
 
     /// <summary>What the site asked of the models, as short chips under its reason ("reads pictures", "context 64k+", "your own agent"); null when it asked nothing.</summary>

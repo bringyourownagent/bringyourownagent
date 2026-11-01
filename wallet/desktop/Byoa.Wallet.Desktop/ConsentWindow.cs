@@ -384,10 +384,24 @@ sealed partial class ConsentWindow : CornerWindow
         var numbered = NumberBadge(number);
         AutomationProperties.SetAutomationId(((Border)numbered).Child!, "ConsentNumber-" + row.Skill);
         title.Children.Add(numbered);
+        var skillName = Ui.Text(row.SkillName, "strong");
+        skillName.Classes.Add("headtitle");
+        skillName.VerticalAlignment = VerticalAlignment.Center;
+        title.Children.Add(skillName);
+        if (!row.Required) title.Children.Add(Ui.Chip("Optional"));
+        if (row.AlreadyAllowed)
+        {
+            var allowed = Ui.Chip("already allowed", "allowed");
+            AutomationProperties.SetAutomationId(allowed.Child!, "ConsentAllowed-" + row.Skill);
+            title.Children.Add(allowed);
+        }
+
+        // an optional block is allowed or left off with the box at the right end of its header
+        Control? allow = null;
         if (!row.Required && row.CanServe)
         {
-            var include = new CheckBox { IsChecked = true, MinWidth = 0, Padding = new Thickness(0) };
-            AutomationProperties.SetName(include, "Include " + row.SkillName);
+            var include = new CheckBox { IsChecked = true, MinWidth = 0, Content = "Allow", VerticalAlignment = VerticalAlignment.Center };
+            AutomationProperties.SetName(include, "Allow " + row.SkillName);
             AutomationProperties.SetAutomationId(include, "ConsentInclude-" + row.Skill);
             include.IsCheckedChanged += (_, _) =>
             {
@@ -396,22 +410,17 @@ sealed partial class ConsentWindow : CornerWindow
                 panel.Opacity = include.IsChecked == true ? 1 : 0.6;
                 UpdateAllow();
             };
-            title.Children.Add(include);
+            var pill = new Border { Child = include, VerticalAlignment = VerticalAlignment.Center };
+            pill.Classes.Add("allowpill");
+            allow = pill;
         }
 
-        title.Children.Add(Ui.Text(row.SkillName, "strong"));
-        if (!row.Required) title.Children.Add(Ui.Chip("Optional"));
-        if (row.AlreadyAllowed)
-        {
-            var allowed = Ui.Chip("already allowed", "allowed");
-            AutomationProperties.SetAutomationId(allowed.Child!, "ConsentAllowed-" + row.Skill);
-            title.Children.Add(allowed);
-        }
-        if (row.Models is not null) return Kind(ModelRow(row, panel, title), row.Skill);
+        var header = Kind(new Border { Child = allow is null ? title : Ui.Columns("*,Auto", title, allow) }, row.Skill);
+        header.Classes.Add("blockhead");
+        if (row.Models is not null) return ModelRow(row, panel, header);
 
         var why = Ui.Link("why?", "ConsentWhy-" + row.Skill, () => { });
         why.HorizontalAlignment = HorizontalAlignment.Right;
-        panel.Children.Add(Ui.Columns("*,Auto", title, why));
 
         if (!row.CanServe)
         {
@@ -460,6 +469,7 @@ sealed partial class ConsentWindow : CornerWindow
         tags.Children.Add(TagBox("runs", string.Join(", ", row.Routes.Select(r => r.Where == "API key" ? "api-key" : "this-device").Distinct())));
         details.Children.Add(tags);
         details.Children.Add(Ui.Wrap(row.Why, "muted"));
+        panel.Children.Add(why);
         panel.Children.Add(details);
         why.Click += (_, _) =>
         {
@@ -467,13 +477,22 @@ sealed partial class ConsentWindow : CornerWindow
             ((TextBlock)why.Content!).Text = details.IsVisible ? "hide" : "why?";
         };
 
-        var box = Kind(Ui.Box("row", panel), row.Skill);
+        var box = Block(header, panel, row.Skill);
         if (!row.CanServe)
         {
             box.BorderBrush = Ui.Brush("Signal");
         }
 
         return box;
+    }
+
+    /// <summary>A block like a small window: a header bar in the colour of its kind (number, title, "Allow"), and its body under it.</summary>
+    static Border Block(Border header, StackPanel body, string skill)
+    {
+        body.Margin = new Thickness(10, 8, 10, 9);
+        var block = Kind(new Border { Child = Ui.Column(0, header, body) }, skill);
+        block.Classes.Add("block");
+        return block;
     }
 
     static T Kind<T>(T box, string skill) where T : StyledElement

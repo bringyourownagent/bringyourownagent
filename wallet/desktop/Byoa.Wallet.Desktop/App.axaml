@@ -273,18 +273,47 @@
       <Setter Property="CornerRadius" Value="8" />
       <Setter Property="Padding" Value="10,7,10,8" />
     </Style>
-    <!-- the kinds of skill keep their colours: text bluish, pictures reddish, speech greenish (the block, and its chip in "Asks for") -->
-    <Style Selector="Border.row.kind-text">
-      <Setter Property="Background" Value="#f1f5fd" />
-      <Setter Property="BorderBrush" Value="#cdd9f2" />
+    <!-- a block of the consent window is a small window: a header bar and a body. The kinds of skill keep their colours:
+         text blue, pictures red, speech green (the header, a light body of the same hue, and the chip in "Asks for") -->
+    <Style Selector="Border.block">
+      <Setter Property="BorderBrush" Value="{StaticResource WinRule}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="8" />
+      <Setter Property="ClipToBounds" Value="True" />
     </Style>
-    <Style Selector="Border.row.kind-picture">
-      <Setter Property="Background" Value="#fdf2ef" />
-      <Setter Property="BorderBrush" Value="#f0cfc6" />
+    <Style Selector="Border.blockhead">
+      <Setter Property="Background" Value="{StaticResource WinBar}" />
+      <Setter Property="CornerRadius" Value="7,7,0,0" />
+      <Setter Property="Padding" Value="10,7" />
     </Style>
-    <Style Selector="Border.row.kind-speech">
-      <Setter Property="Background" Value="#f0f8f2" />
-      <Setter Property="BorderBrush" Value="#cbe5d3" />
+    <Style Selector="Border.blockhead.kind-text">
+      <Setter Property="Background" Value="#2f5bbf" />
+    </Style>
+    <Style Selector="Border.blockhead.kind-picture">
+      <Setter Property="Background" Value="#c2303c" />
+    </Style>
+    <Style Selector="Border.blockhead.kind-speech">
+      <Setter Property="Background" Value="#2a8550" />
+    </Style>
+    <Style Selector="Border.blockhead.kind-text TextBlock.headtitle, Border.blockhead.kind-picture TextBlock.headtitle, Border.blockhead.kind-speech TextBlock.headtitle">
+      <Setter Property="Foreground" Value="White" />
+    </Style>
+    <Style Selector="Border.block.kind-text">
+      <Setter Property="Background" Value="#eaf0fb" />
+      <Setter Property="BorderBrush" Value="#2f5bbf" />
+    </Style>
+    <Style Selector="Border.block.kind-picture">
+      <Setter Property="Background" Value="#fbecec" />
+      <Setter Property="BorderBrush" Value="#c2303c" />
+    </Style>
+    <Style Selector="Border.block.kind-speech">
+      <Setter Property="Background" Value="#e9f5ed" />
+      <Setter Property="BorderBrush" Value="#2a8550" />
+    </Style>
+    <Style Selector="Border.allowpill">
+      <Setter Property="Background" Value="White" />
+      <Setter Property="CornerRadius" Value="999" />
+      <Setter Property="Padding" Value="8,1,10,1" />
     </Style>
     <Style Selector="Border.field">
       <Setter Property="Background" Value="{StaticResource Field}" />
@@ -334,31 +363,28 @@
       <Setter Property="Foreground" Value="White" />
     </Style>
     <Style Selector="Border.chip.kind-text">
-      <Setter Property="Background" Value="#dbe5f8" />
-    </Style>
-    <Style Selector="Border.chip.kind-text TextBlock">
-      <Setter Property="Foreground" Value="#1c2f73" />
+      <Setter Property="Background" Value="#2f5bbf" />
     </Style>
     <Style Selector="Border.chip.kind-picture">
-      <Setter Property="Background" Value="#f8dbd3" />
-    </Style>
-    <Style Selector="Border.chip.kind-picture TextBlock">
-      <Setter Property="Foreground" Value="#a93514" />
+      <Setter Property="Background" Value="#c2303c" />
     </Style>
     <Style Selector="Border.chip.kind-speech">
-      <Setter Property="Background" Value="#d6eddd" />
+      <Setter Property="Background" Value="#2a8550" />
     </Style>
-    <Style Selector="Border.chip.kind-speech TextBlock">
-      <Setter Property="Foreground" Value="#1d6b3a" />
+    <Style Selector="Border.chip.kind-text TextBlock, Border.chip.kind-picture TextBlock, Border.chip.kind-speech TextBlock">
+      <Setter Property="Foreground" Value="White" />
     </Style>
+    <!-- the number of a block: an orange figure in a white circle with an orange ring, so it shows on any header -->
     <Style Selector="Border.number">
-      <Setter Property="Background" Value="{StaticResource SignalDeep}" />
+      <Setter Property="Background" Value="White" />
+      <Setter Property="BorderBrush" Value="{StaticResource SignalDeep}" />
+      <Setter Property="BorderThickness" Value="2" />
       <Setter Property="CornerRadius" Value="999" />
-      <Setter Property="Width" Value="22" />
-      <Setter Property="Height" Value="22" />
+      <Setter Property="Width" Value="24" />
+      <Setter Property="Height" Value="24" />
     </Style>
     <Style Selector="Border.number TextBlock">
-      <Setter Property="Foreground" Value="White" />
+      <Setter Property="Foreground" Value="{StaticResource SignalDeep}" />
       <Setter Property="FontSize" Value="12.5" />
       <Setter Property="FontWeight" Value="Bold" />
     </Style>
