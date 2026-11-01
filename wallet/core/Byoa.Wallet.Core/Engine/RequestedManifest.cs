@@ -13,33 +13,24 @@ public sealed record RequestedSkill(string Id, bool Required, IReadOnlyList<stri
 public sealed record ModelWish(IReadOnlyList<string> AnyOf);
 
 /// <summary>
-/// The conditions of a site's <c>needs</c> (PROPOSAL-v2 3.1): all of these input and output modalities, at least this many thousands of
-/// tokens of context, and one of these places the source may run. A condition on a property the wallet does not know is never a failure:
-/// the fit engine marks the source unknown instead. The four known keys are read and anything else in the block is ignored.
+/// The conditions of a site's <c>needs</c> (PROPOSAL-v3 1.2): all of these input and output modalities. A condition on a property the wallet
+/// does not know is never a failure: the fit engine marks the source unknown instead. The two known keys are read and anything else in the
+/// block, <c>context</c> and <c>runs</c> of wallet 0.36 included, is ignored as if it were not there.
 /// </summary>
 /// <param name="Input">Every one of these modalities must go in (<c>text</c>, <c>image</c>, <c>audio</c>); null when not asked.</param>
 /// <param name="Output">Every one of these modalities must come out; null when not asked.</param>
-/// <param name="ContextThousands">At least this many thousands of tokens of context; null when not asked.</param>
-/// <param name="Runs">One of these places (<c>local</c>, <c>home-server</c>, <c>api-key</c> — the grant's own words); null when not asked.</param>
-public sealed record ModelNeeds(
-    IReadOnlyList<string>? Input, IReadOnlyList<string>? Output, int? ContextThousands, IReadOnlyList<string>? Runs)
+public sealed record ModelNeeds(IReadOnlyList<string>? Input, IReadOnlyList<string>? Output)
 {
     public const int MaxValues = 8;
-    public const int MaxContextThousands = 200_000;
 
-    public static readonly ModelNeeds Empty = new(null, null, null, null);
+    public static readonly ModelNeeds Empty = new(null, null);
 
-    public bool Any => Input is not null || Output is not null || ContextThousands is not null || Runs is not null;
-
-    /// <summary>The places a source may run, in the grant's own vocabulary (PROPOSAL-v2 3.2); a site that writes another word gets no condition.</summary>
-    public static readonly IReadOnlySet<string> KnownRuns = new HashSet<string>(StringComparer.Ordinal) { "local", "home-server", "api-key" };
+    public bool Any => Input is not null || Output is not null;
 
     public static ModelNeeds? From(JsonNode? node)
     {
         if (node is not JsonObject needs) return null;                 // a `needs` that is not an object is not a set of conditions
-        return new ModelNeeds(Words(needs["input"], Sources.Modalities.Known), Words(needs["output"], Sources.Modalities.Known),
-            Whole(needs["context"]) ?? Whole(needs["context"] is JsonObject form ? form["min"] : null),
-            Words(needs["runs"], KnownRuns));
+        return new ModelNeeds(Words(needs["input"], Sources.Modalities.Known), Words(needs["output"], Sources.Modalities.Known));
     }
 
     /// <summary>An array of words (<c>["text","image"]</c>) or the long form <c>{"includes":[...]}</c> / <c>{"oneOf":[...]}</c>: the known words, or null when none is.</summary>
@@ -61,19 +52,10 @@ public sealed record ModelNeeds(
         return words.Count == 0 ? null : words;
     }
 
-    static int? Whole(JsonNode? node)
-    {
-        if (node is not JsonValue v) return null;
-        if (v.TryGetValue<int>(out var i) && i >= 1) return Math.Min(i, MaxContextThousands);
-        return v.TryGetValue<double>(out var d) && double.IsFinite(d) && d is >= 1 and <= MaxContextThousands ? (int)Math.Ceiling(d) : null;
-    }
-
     /// <summary>The conditions in one comparable line, so a change in them is seen as the site asking for more.</summary>
     public string ToAsk() =>
         (Input is { } input ? "input=" + string.Join("+", input) + ";" : "")
-        + (Output is { } output ? "output=" + string.Join("+", output) + ";" : "")
-        + (ContextThousands is { } context ? "context=" + context.ToString(System.Globalization.CultureInfo.InvariantCulture) + ";" : "")
-        + (Runs is { } runs ? "runs=" + string.Join("|", runs) + ";" : "");
+        + (Output is { } output ? "output=" + string.Join("+", output) + ";" : "");
 }
 
 /// <summary>

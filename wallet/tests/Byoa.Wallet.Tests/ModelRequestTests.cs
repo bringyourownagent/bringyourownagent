@@ -129,11 +129,11 @@ public class RequestedModelsTests
         Assert.Equal("show", spec.OnMismatch);
         Assert.Equal(["text", "image"], spec.Needs!.Input);
         Assert.Equal(["text"], spec.Needs.Output);
-        Assert.Equal(64, spec.Needs.ContextThousands);
-        Assert.Equal(65, Parse("""{"count":1,"needs":{"context":64.9}}""")!.Needs!.ContextThousands);      // "at least 64.9k" is not met by 64k
-        Assert.Equal(["api-key"], spec.Needs.Runs);
         Assert.Equal(["web.search", "image.read", "x-thing"], spec.Abilities);
-        Assert.Contains("needs:input=text+image;output=text;context=64;runs=api-key;", spec.Ask);
+        Assert.Contains("needs:input=text+image;output=text;", spec.Ask);
+        Assert.DoesNotContain("context", spec.Ask);                      // `context` and `runs` of wallet 0.36 are unknown keys now: read as if absent
+        Assert.DoesNotContain("runs", spec.Ask);
+        Assert.False(Parse("""{"count":1,"needs":{"context":64.9,"runs":["local"]}}""")!.Needs!.Any);
         Assert.Contains("kind:any", spec.Ask);
         Assert.Contains("onMismatch:show", spec.Ask);
         Assert.Contains("abilities:web.search,image.read,x-thing", spec.Ask);
@@ -144,11 +144,9 @@ public class RequestedModelsTests
         Assert.Null(plain.OnMismatch);
         Assert.Empty(plain.Abilities);
         Assert.False(plain.Needs?.Any ?? false);
-        var longForm = Parse("""{"count":1,"needs":{"input":{"includes":["TEXT"]},"context":{"min":32},"runs":{"oneOf":["cloud","local"]}}}""")!;
+        var longForm = Parse("""{"count":1,"needs":{"input":{"includes":["TEXT"]},"output":{"oneOf":["Image","smell"]},"context":{"min":32},"runs":{"oneOf":["cloud","local"]}}}""")!;
         Assert.Equal(["text"], longForm.Needs!.Input);
-        Assert.Equal(32, longForm.Needs.ContextThousands);
-        Assert.Null(longForm.Needs.Output);
-        Assert.Equal(["local"], longForm.Needs.Runs);                    // the grant's words only; an unknown word is no condition
+        Assert.Equal(["image"], longForm.Needs.Output);                  // the words the wallet knows only; an unknown word is no condition
 
         // Words the wallet does not know are not conditions, and neither is a `needs` that is not an object.
         var unknown = Parse("""{"count":1,"needs":{"input":["vibes"],"output":"text","context":0,"runs":"local","level":5},"kind":"robot","onMismatch":"maybe"}""")!;
@@ -165,8 +163,9 @@ public class RequestedModelsTests
         var text = Ask("""{"input":["text"]}""");
         Assert.Equal(text, Ask("""{"input":{"includes":["text"]}}"""));        // the same condition in its long form
         Assert.NotEqual(text, Ask("""{"input":["text","image"]}"""));          // a new value asks again
-        Assert.NotEqual(text, Ask("""{"input":["text"],"context":32}"""));     // so does a new key
-        Assert.NotEqual(Ask("""{"context":64}"""), Ask("""{"context":65}""")); // and a raised minimum
+        Assert.NotEqual(text, Ask("""{"input":["text"],"output":["text"]}"""));  // so does a new key
+        Assert.Equal(text, Ask("""{"input":["text"],"context":32,"runs":["local"]}"""));     // a key of wallet 0.36 that is gone asks nothing: it is not seen as the site asking for more
+        Assert.Equal(Ask("""{"context":64}"""), Ask("""{"context":65}"""));
     }
 
     [Fact]

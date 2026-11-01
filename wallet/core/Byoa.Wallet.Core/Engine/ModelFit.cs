@@ -20,8 +20,8 @@ public enum FitState
 
 /// <summary>What <see cref="ModelFit.Evaluate"/> found.</summary>
 /// <param name="Reasons">In plain words, why a source is <see cref="FitState.Mismatch"/> or <see cref="FitState.Excluded"/>.</param>
-/// <param name="UnknownProperties">The properties the site asked about that the wallet does not know (<c>input</c>, <c>output</c>, <c>context</c>).</param>
-/// <param name="Can">One verdict per asked condition whose property is known: the site is told these and never a value (PROPOSAL-v2 3.5). At most four keys.</param>
+/// <param name="UnknownProperties">The properties the site asked about that the wallet does not know (<c>input</c>, <c>output</c>).</param>
+/// <param name="Can">One verdict per asked condition whose property is known: the site is told these and never a value (PROPOSAL-v2 3.5). At most two keys, <c>input</c> and <c>output</c>.</param>
 public sealed record FitVerdict(
     FitState State, IReadOnlyList<string> Reasons, IReadOnlyList<string> UnknownProperties, IReadOnlyDictionary<string, bool> Can)
 {
@@ -61,25 +61,6 @@ public static class ModelFit
             var sure = skill is Vocabulary.Generate or Vocabulary.ImageGenerate ? new[] { Modalities.Text } : [];
             CheckModalities("input", needs.Input, facts.Input, sure);
             CheckModalities("output", needs.Output, facts.Output, sure);
-            if (needs.ContextThousands is { } wanted)
-            {
-                if (facts.ContextThousands is { } has)
-                {
-                    can["context"] = has >= wanted;
-                    if (has < wanted) wrong.Add("reads " + has + "k at most; the site wants " + wanted + "k or more");
-                }
-                else unknown.Add("context");
-            }
-
-            if (needs.Runs is { } places)
-            {
-                if (facts.Runs is { } runs)
-                {
-                    can["runs"] = places.Contains(runs);
-                    if (!places.Contains(runs)) wrong.Add("runs on " + Place(runs) + "; the site wants " + string.Join(" or ", places.Select(Place)));
-                }
-                else unknown.Add("runs");
-            }
         }
 
         if (spec is not null && KindMismatch(facts, modelId, spec) is { } kind) wrong.Add(kind);
@@ -145,7 +126,7 @@ public static class ModelFit
 
     /// <summary>
     /// What a site asked of the models beyond their names, in short plain words, one chip each: "reads pictures", "draws pictures", "hears audio",
-    /// "context 64k+", "runs on this PC", "your own agent". Text is the skill's own word and is not repeated.
+    /// "your own agent". Text is the skill's own word and is not repeated.
     /// </summary>
     public static IReadOnlyList<string> NeedsWords(RequestedModels spec)
     {
@@ -154,8 +135,6 @@ public static class ModelFit
         {
             foreach (var word in needs.Input ?? []) if (word != Modalities.Text) words.Add(word == Modalities.Audio ? "hears audio" : "reads " + Plain(word));
             foreach (var word in needs.Output ?? []) if (word != Modalities.Text) words.Add(word == Modalities.Image ? "draws pictures" : "makes " + Plain(word));
-            if (needs.ContextThousands is { } context) words.Add("context " + context + "k+");
-            if (needs.Runs is { } places) words.Add("runs on " + string.Join(" or ", places.Select(Place)));
         }
 
         if (spec.Kind == RequestedModels.AgentKind) words.Add("your own agent");
@@ -175,8 +154,6 @@ public static class ModelFit
     {
         "input" => "what it reads",
         "output" => "what it makes",
-        "context" => "how much it reads at once",
-        "runs" => "where it runs",
         _ => key,
     };
 

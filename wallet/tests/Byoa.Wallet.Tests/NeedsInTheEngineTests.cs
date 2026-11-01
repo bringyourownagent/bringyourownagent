@@ -199,11 +199,13 @@ public class NeedsInTheEngineTests
         await RequestAsync(Manifest("{\"count\":1,\"needs\":{\"input\":[\"text\"]}}"));
         Assert.Single(_ui.Consents);                                            // the same ask: granted quietly
 
-        await RequestAsync(Manifest("{\"count\":1,\"needs\":{\"input\":[\"text\"],\"context\":64}}"));
+        await RequestAsync(Manifest("{\"count\":1,\"needs\":{\"input\":[\"text\"],\"context\":64,\"runs\":[\"local\"]}}"));
+        Assert.Single(_ui.Consents);                                            // keys of wallet 0.36 that are gone: nothing new is asked
+        await RequestAsync(Manifest("{\"count\":1,\"needs\":{\"input\":[\"text\"],\"output\":[\"text\"]}}"));
         Assert.Equal(2, _ui.Consents.Count);                                    // a new key
-        await RequestAsync(Manifest("{\"count\":1,\"needs\":{\"input\":[\"text\"],\"context\":65}}"));
-        Assert.Equal(3, _ui.Consents.Count);                                    // a raised minimum
-        await RequestAsync(Manifest("{\"count\":1,\"needs\":{\"input\":[\"text\"],\"context\":65},\"kind\":\"any\"}"));
+        await RequestAsync(Manifest("{\"count\":1,\"needs\":{\"input\":[\"text\"],\"output\":[\"text\",\"image\"]}}"));
+        Assert.Equal(3, _ui.Consents.Count);                                    // a new value
+        await RequestAsync(Manifest("{\"count\":1,\"needs\":{\"input\":[\"text\"],\"output\":[\"text\",\"image\"]},\"kind\":\"any\"}"));
         Assert.Equal(4, _ui.Consents.Count);                                    // a new kind
     }
 
@@ -353,9 +355,10 @@ public class NeedsInTheEngineTests
             + "\"needs\":{\"input\":[\"text\",\"image\"],\"output\":[\"text\"],\"context\":64,\"runs\":[\"api-key\"]}}"));
         Assert.Equal(["needs", "can", "kind", "cancel"], granted!["capabilities"]!.AsArray().Select(c => c!.GetValue<string>()));
         var list = granted["models"]!["text.generate"]!.AsArray();
-        Assert.Equal("{\"input\":true,\"output\":true,\"context\":true,\"runs\":true}", list[0]!["can"]!.ToJsonString());
-        // A local model: what it reads and how much it reads are not known, so those keys are not there; it writes text (it was added for that); where it runs is known, and is not what was asked.
-        Assert.Equal("{\"output\":true,\"runs\":false}", list[1]!["can"]!.ToJsonString());
+        // (the manifest still writes `context` and `runs`, as a site for wallet 0.36 does: `can` has input and output only)
+        Assert.Equal("{\"input\":true,\"output\":true}", list[0]!["can"]!.ToJsonString());
+        // A local model: what it reads is not known, so that key is not there; it writes text (it was added for that).
+        Assert.Equal("{\"output\":true}", list[1]!["can"]!.ToJsonString());
         foreach (var entry in list)
         {
             var can = entry!["can"]!.AsObject();
@@ -429,21 +432,21 @@ public class NeedsInTheEngineTests
         var engine = new WalletEngine(new SettingsStore(null), [], _log, _ui, _time, [])
         {
             Catalog = new ListedCatalog(
-                new CatalogModel("openai/big", "OpenAI: Big", 128_000, null, null, 0, ["text"], ["text"]),
+                new CatalogModel("openai/big", "OpenAI: Big", 128_000, null, null, 0, ["text", "image"], ["text"]),
                 new CatalogModel("mistralai/tiny", "Mistral: Tiny", 32_768, null, null, 0, ["text"], ["text"])),
             HasOpenRouterKey = () => true,
         };
         RequestedModels Ask(string models) => RequestedModels.From(JsonNode.Parse(models))!;
 
-        // the site wants 64k: the model that reads 32k is left out (the default for a model), not offered as one that fits
-        Assert.Equal(["new:openrouter:openai/big"], Keys(engine.SearchNewModels(null, Ask("""{"count":1,"needs":{"context":64}}"""))));
+        // the site wants to show pictures: the model that reads text only is left out (the default for a model), not offered as one that fits
+        Assert.Equal(["new:openrouter:openai/big"], Keys(engine.SearchNewModels(null, Ask("""{"count":1,"needs":{"input":["image"]}}"""))));
 
         // a site that wants shortfalls shown gets it unticked, marked, with the reason
-        var shown = engine.SearchNewModels(null, Ask("""{"count":1,"needs":{"context":64},"onMismatch":"show"}"""));
+        var shown = engine.SearchNewModels(null, Ask("""{"count":1,"needs":{"input":["image"]},"onMismatch":"show"}"""));
         Assert.Equal(["new:openrouter:openai/big", "new:openrouter:mistralai/tiny"], Keys(shown));
         var tiny = shown.Single(c => c.Key == "new:openrouter:mistralai/tiny");
         Assert.Equal(FitState.Mismatch, tiny.Fit);
-        Assert.Contains("32k", string.Join(" ", tiny.Marks!));
+        Assert.Contains("cannot read pictures", string.Join(" ", tiny.Marks!));
 
         // a site that asked nothing beyond names sees both, as before
         Assert.Equal(2, engine.SearchNewModels(null).Count);
@@ -460,9 +463,9 @@ public class NeedsInTheEngineTests
             Catalog = new ListedCatalog(new CatalogModel("mistralai/tiny", "Mistral: Tiny", 32_768, null, null, 0, ["text"], ["text"])),
             HasOpenRouterKey = () => true,
         };
-        // an answer that carries a key the window did not offer, for a site that wants 64k: the model reads 32k
+        // an answer that carries a key the window did not offer, for a site that shows pictures: the model reads text only
         _ui.Consent = new ConsentAnswer(true, 0.05m, false, [], new Dictionary<string, IReadOnlyList<string>> { ["text.generate"] = ["new:openrouter:mistralai/tiny"] });
-        var granted = await engine.HandleAsync(Clips.Request(Site, click: true, Manifest("{\"count\":1,\"needs\":{\"context\":64}}"))) as JsonObject;
+        var granted = await engine.HandleAsync(Clips.Request(Site, click: true, Manifest("{\"count\":1,\"needs\":{\"input\":[\"image\"]}}"))) as JsonObject;
 
         Assert.DoesNotContain(store.Snapshot().Sources, s => s.Id == "openrouter:mistralai/tiny");     // never added to his models
         Assert.False(granted?["skills"]?.AsArray().Any(x => x?.GetValue<string>() == Vocabulary.Generate) ?? false);   // the skill is left off, not half given

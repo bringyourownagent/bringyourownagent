@@ -77,10 +77,11 @@ public class ModelFitTests
     public void AKnownPropertyThatIsWrongIsAMismatchWithAReasonInPlainWords()
     {
         var textOnly = new ModelFacts(Input: Text, Output: Text, ContextThousands: 32, Runs: "api-key");
+        // (a manifest of wallet 0.36 that still writes `context` and `runs` is read as if it did not: the model is judged on input and output only)
         var verdict = Evaluate(textOnly, spec: """{"count":1,"needs":{"input":["text","image"],"output":["text"],"context":64,"runs":["local"]}}""");
         Assert.Equal(FitState.Mismatch, verdict.State);
-        Assert.Equal(["cannot read pictures", "reads 32k at most; the site wants 64k or more", "runs on an API key; the site wants this PC"], verdict.Reasons);
-        Assert.Equal(new Dictionary<string, bool> { ["input"] = false, ["output"] = true, ["context"] = false, ["runs"] = false }, verdict.Can);
+        Assert.Equal(["cannot read pictures"], verdict.Reasons);
+        Assert.Equal(new Dictionary<string, bool> { ["input"] = false, ["output"] = true }, verdict.Can);
         Assert.True(verdict.Offered(dropOnMismatch: false));                   // onMismatch "show"
         Assert.False(verdict.Offered(dropOnMismatch: true));                   // onMismatch "drop"
     }
@@ -89,17 +90,17 @@ public class ModelFitTests
     public void APropertyThatIsNotKnownIsNeverAFailureAndIsNeverAVerdict()
     {
         var unknownInput = new ModelFacts(Output: Text, Runs: "local");
-        var verdict = Evaluate(unknownInput, spec: """{"count":1,"needs":{"input":["text","image"],"output":["text"],"context":64,"runs":["local"]}}""");
+        var verdict = Evaluate(unknownInput, spec: """{"count":1,"needs":{"input":["text","image"],"output":["text"]}}""");
         Assert.Equal(FitState.Unknown, verdict.State);
-        Assert.Equal(["input", "context"], verdict.UnknownProperties);
+        Assert.Equal(["input"], verdict.UnknownProperties);
         Assert.Empty(verdict.Reasons);
-        Assert.Equal(new Dictionary<string, bool> { ["output"] = true, ["runs"] = true }, verdict.Can);     // a key is absent when the property is unknown
+        Assert.Equal(new Dictionary<string, bool> { ["output"] = true }, verdict.Can);     // a key is absent when the property is unknown
         Assert.True(verdict.Offered(dropOnMismatch: true));                    // an unknown never drops anything
 
         // A known failure wins over an unknown property.
-        var both = Evaluate(new ModelFacts(Input: Text), spec: """{"count":1,"needs":{"input":["image"],"context":64}}""");
+        var both = Evaluate(new ModelFacts(Input: Text), spec: """{"count":1,"needs":{"input":["image"],"output":["image"]}}""");
         Assert.Equal(FitState.Mismatch, both.State);
-        Assert.Equal(["context"], both.UnknownProperties);
+        Assert.Equal(["output"], both.UnknownProperties);
     }
 
     [Fact]
@@ -122,7 +123,7 @@ public class ModelFitTests
         var facts = new ModelFacts(Input: TextAndImage, Output: Text, ContextThousands: 131, Runs: "api-key");
         var verdict = Evaluate(facts, spec: """{"count":1,"needs":{"input":["text","image"],"context":64}}""");
         Assert.Equal(FitState.Fits, verdict.State);
-        Assert.Equal(new Dictionary<string, bool> { ["input"] = true, ["context"] = true }, verdict.Can);        // not output, not runs: nobody asked
+        Assert.Equal(new Dictionary<string, bool> { ["input"] = true }, verdict.Can);        // not output: nobody asked; not context: it is no key any more
         Assert.Empty(Evaluate(facts, spec: """{"count":1}""").Can);
     }
 
@@ -179,7 +180,7 @@ public class ModelFitTests
     public void TheNeedsOfASiteAreSaidInShortPlainWordsAndTextIsNotRepeated()
     {
         Assert.Empty(ModelFit.NeedsWords(Spec("""{"count":1}""")));
-        Assert.Equal(["reads pictures", "draws pictures", "context 64k+", "runs on this PC or an API key", "a model or your agent"],
+        Assert.Equal(["reads pictures", "draws pictures", "a model or your agent"],       // (`context` and `runs` are not conditions any more: no chip)
             ModelFit.NeedsWords(Spec("""{"count":1,"kind":"any","needs":{"input":["text","image"],"output":["text","image"],"context":64,"runs":["local","api-key"]}}""")));
         Assert.Equal(["hears audio", "your own agent"], ModelFit.NeedsWords(Spec("""{"count":1,"kind":"agent","needs":{"input":["audio"],"output":["text"]}}""")));
     }
@@ -190,7 +191,7 @@ public class ModelFitTests
         var spec = """{"count":1,"needs":{"input":["image"],"context":64}}""";
         Assert.Null(ModelFit.Marks(Evaluate(new ModelFacts(Input: TextAndImage, ContextThousands: 100), spec: spec)));
         Assert.Equal(["cannot read pictures"], ModelFit.Marks(Evaluate(new ModelFacts(Input: Text, ContextThousands: 100), spec: spec)));
-        Assert.Equal(["not known: what it reads, how much it reads at once"], ModelFit.Marks(Evaluate(ModelFacts.Unknown, spec: spec)));
+        Assert.Equal(["not known: what it reads"], ModelFit.Marks(Evaluate(ModelFacts.Unknown, spec: spec)));
     }
 
     // ------------------------------------------------------------------ where the facts come from
