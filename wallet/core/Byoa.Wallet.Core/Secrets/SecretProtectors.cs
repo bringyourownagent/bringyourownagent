@@ -27,6 +27,9 @@ public enum SecretStorage
 
     /// <summary>Linux without a Secret Service: a key file only the current account can read.</summary>
     KeyFile,
+
+    /// <summary>Android: a key generated inside the Android Keystore, which never leaves it (the app supplies the protector, see <see cref="SecretProtectors.UsePlatform"/>).</summary>
+    AndroidKeystore,
 }
 
 public static class SecretProtectors
@@ -34,17 +37,60 @@ public static class SecretProtectors
     /// <summary>The unit tests (only they see it) give a protector that never touches the Keychain or Secret Service of the person who runs them.</summary>
     internal static Func<string, ISecretProtector>? TestFactory { get; set; }
 
+    static readonly object PlatformGate = new();
+    static Func<string, ISecretProtector>? _platformFactory;
+    static SecretStorage _platformStorage;
+
+    /// <summary>
+    /// Android: the core cannot reference the Android Keystore, so the app gives the protector it made over it, once, at start and before any
+    /// secret file is opened (<c>SecretStore</c> and <c>PairingStore</c> ask for theirs when they are created). From then on this protector
+    /// serves every purpose; Windows, macOS and Linux never call this and keep their own.
+    /// </summary>
+    /// <param name="storage">Where the app keeps the key, so that the wallet can say so (<see cref="StorageSentence"/>).</param>
+    /// <param name="factory">Makes the protector of one purpose ("secrets", "pairings"); the purpose must be part of what the seal covers.</param>
+    public static void UsePlatform(SecretStorage storage, Func<string, ISecretProtector> factory)
+    {
+        ArgumentNullException.ThrowIfNull(factory);
+        lock (PlatformGate)
+        {
+            _platformStorage = storage;
+            _platformFactory = factory;
+        }
+    }
+
+    /// <summary>What <see cref="UsePlatform"/> was given, read together so that the storage and its factory always belong to each other; null when nothing was given.</summary>
+    static (SecretStorage Storage, Func<string, ISecretProtector> Factory)? Platform
+    {
+        get
+        {
+            lock (PlatformGate) return _platformFactory is { } factory ? (_platformStorage, factory) : null;
+        }
+    }
+
+    /// <summary>Forgets what <see cref="UsePlatform"/> was given (the unit tests only).</summary>
+    internal static void ForgetPlatform()
+    {
+        lock (PlatformGate)
+        {
+            _platformFactory = null;
+            _platformStorage = default;
+        }
+    }
+
     /// <summary>How keys are kept on this system; worked out once, so a slow or missing session bus is asked only once.</summary>
     public static SecretStorage Storage
     {
         get
         {
+            if (Platform is { } platform) return platform.Storage;
             if (OperatingSystem.IsWindows()) return SecretStorage.WindowsDpapi;
             if (OperatingSystem.IsMacOS()) return SecretStorage.MacKeychain;
             if (OperatingSystem.IsLinux()) return LinuxSecrets.Storage;
-            throw new PlatformNotSupportedException("The wallet keeps keys with Windows DPAPI, the macOS Keychain or the Linux Secret Service.");
+            throw new PlatformNotSupportedException(NoStore);
         }
     }
+
+    const string NoStore = "The wallet keeps keys with Windows DPAPI, the macOS Keychain, the Linux Secret Service or the Android Keystore (the Android app gives its protector to SecretProtectors.UsePlatform at start).";
 
     /// <summary>One sentence for the windows and the help articles: how the wallet protects keys on this system, in plain words.</summary>
     public static string StorageSentence => Storage switch
@@ -52,6 +98,7 @@ public static class SecretProtectors
         SecretStorage.WindowsDpapi => "Keys are stored with Windows DPAPI for your account only.",
         SecretStorage.MacKeychain => "Keys are sealed under a key in your login Keychain.",
         SecretStorage.SecretService => "Keys are sealed under a key in the Secret Service of this desktop session.",
+        SecretStorage.AndroidKeystore => "Keys are sealed under a key in the Android Keystore of this phone, a key that cannot be taken out of it.",
         _ => "This desktop has no Secret Service, so keys are sealed under a key in secrets.key, a file only your account can read.",
     };
 
@@ -61,22 +108,24 @@ public static class SecretProtectors
         SecretStorage.WindowsDpapi => "Windows could not protect the wallet data for this user profile. Try again in the wallet.",
         SecretStorage.MacKeychain => "The wallet could not protect its data with the Keychain of this user. Try again in the wallet.",
         SecretStorage.SecretService => "The wallet could not protect its data with the Secret Service of this desktop. Try again in the wallet.",
+        SecretStorage.AndroidKeystore => "The wallet could not protect its data with the Android Keystore of this phone. Try again in the wallet.",
         _ => "The wallet could not protect its data with its key file in the data folder. Check that the data folder can be written, and try again.",
     };
 
     /// <summary>
     /// The protector of this operating system: Windows DPAPI, a key kept in the macOS Keychain, or on Linux a key kept in the Secret Service
-    /// (or, when the session has none, in a key file of the data folder). <paramref name="purpose"/> ("secrets", "pairings") is mixed in, so
-    /// that a file made for one purpose does not open as the other.
+    /// (or, when the session has none, in a key file of the data folder), or on Android the one the app gave to <see cref="UsePlatform"/>.
+    /// <paramref name="purpose"/> ("secrets", "pairings") is mixed in, so that a file made for one purpose does not open as the other.
     /// </summary>
     public static ISecretProtector CreateDefault(string purpose = "secrets")
     {
         if (TestFactory is { } factory) return factory(purpose);
+        if (Platform is { } platform) return platform.Factory(purpose);
         if (OperatingSystem.IsWindows()) return new DpapiSecretProtector(Encoding.UTF8.GetBytes("BYOA agent wallet " + purpose + " v1"));
         if (OperatingSystem.IsMacOS())
             return new KeychainSecretProtector(new MacKeychainItem(KeychainSecretProtector.Service, KeychainSecretProtector.Account, KeychainSecretProtector.Label), purpose);
         if (OperatingSystem.IsLinux()) return LinuxSecrets.CreateProtector(purpose);
-        throw new PlatformNotSupportedException("The wallet keeps keys with Windows DPAPI, the macOS Keychain or the Linux Secret Service.");
+        throw new PlatformNotSupportedException(NoStore);
     }
 }
 

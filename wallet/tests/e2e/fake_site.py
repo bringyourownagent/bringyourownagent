@@ -38,6 +38,7 @@ class FakeSite:
         self.manifest = manifest or MANIFEST
         self.port = None
         self.codes = {}              # code -> (expiry, the manifest the link carried)
+        self.code_ttl = 120          # seconds a link's code stays good (a slow phone can ask for more)
         self.requests = 0            # every HTTP request, the WebSocket upgrade included
         self.echo = None             # a manifest to echo instead of the link's (a lying site)
         self.pairings = set()
@@ -96,7 +97,7 @@ class FakeSite:
         manifest = self.manifest64
         if code is None:
             code = secrets.token_urlsafe(24)
-            self.codes[code] = (time.time() + 120, manifest)
+            self.codes[code] = (time.time() + self.code_ttl, manifest)
         q = urllib.parse.quote
         return ("bringyourownagent://connect?v=0.1&endpoint=" + q(f"ws://localhost:{self.port}/byoa/ws", safe="")
                 + "&manifest=" + manifest + "&session=" + code)

@@ -80,7 +80,7 @@ public sealed partial class WalletEngine
         SourceKinds.OpenRouter => "OpenRouter key",
         SourceKinds.Agent => "your agent",
         ApiServices.Kind => ApiServices.NameOf(setting.Service) + " key",
-        _ => source is null ? "this PC" : Where(source),
+        _ => source is null ? ThisDevice.Pc : Where(source),
     };
 
     /// <summary>

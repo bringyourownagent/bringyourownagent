@@ -208,7 +208,7 @@ public static class Router
 
         because.Add(s.Paid
             ? "it is paid, about " + Money.Show(s.EstimateCost(5)) + " for a 5 s clip" + (first.AskFirst ? ", and it asks you first" : "")
-            : "it runs on this PC with no cloud bill");
+            : "it runs on " + ThisDevice.Pc + " with no cloud bill");
         because.Add(s.HasMeasuredSeconds
             ? "about " + s.ApproxSeconds.ToString("0.0", CultureInfo.InvariantCulture) + " s a clip"
             : "speed not measured yet");
@@ -242,7 +242,7 @@ public static class Router
         var s = first.Source;
         var because = s.Paid
             ? "it is paid, about " + Money.Show(s.EstimateCost(TypicalRequest)) + " for a short answer" + (first.AskFirst ? ", and it asks you first" : "")
-            : "it runs on this PC with no cloud bill";
+            : "it runs on " + ThisDevice.Pc + " with no cloud bill";
         var text = "Manager suggests " + s.Name + " because " + because + ".";
         var rest = plan.Steps.Skip(1).Select(x => x.Source.Name + (x.Source.Paid ? x.AskFirst ? " (paid, asks first)" : " (paid)" : "")).ToList();
         if (rest.Count > 0) text += " If it cannot answer: " + string.Join(", then ", rest) + ".";

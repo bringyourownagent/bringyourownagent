@@ -168,7 +168,7 @@ public static class ModelFit
     /// <summary>A place in the grant's words, in words for a person.</summary>
     public static string Place(string runs) => runs switch
     {
-        "local" => "this PC",
+        "local" => ThisDevice.Pc,
         "home-server" => "your home server",
         _ => "an API key",
     };

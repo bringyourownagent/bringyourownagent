@@ -936,7 +936,7 @@ public sealed partial class WalletEngine
 
     public static string Where(ISpeechSource s) => s.ProviderKind switch
     {
-        "local-model" => "this PC",
+        "local-model" => ThisDevice.Pc,
         "home-server" => s.Runs,
         _ => "API key",
     };
@@ -950,7 +950,7 @@ public sealed partial class WalletEngine
 
     public static string Where(ITextSource s) => s.ProviderKind switch
     {
-        "local-model" => "this PC",
+        "local-model" => ThisDevice.Pc,
         "home-server" => s.Runs,
         "subscription" => "your agent",
         _ => "API key",

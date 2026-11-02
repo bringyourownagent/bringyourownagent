@@ -22,6 +22,12 @@
     <ProjectReference Include="..\..\mcp\Byoa.Wallet.Mcp\Byoa.Wallet.Mcp.csproj" />
   </ItemGroup>
 
+  <!-- The rules of the Android wallet's serving service have nothing of Android in them: their file is compiled into the tests, so that they run on any machine. -->
+  <ItemGroup>
+    <Compile Include="..\..\android\Byoa.Wallet.Android\ServingPlan.cs" Link="Android\ServingPlan.cs" />
+    <Compile Include="..\..\android\Byoa.Wallet.Android\WalletAddress.cs" Link="Android\WalletAddress.cs" />
+  </ItemGroup>
+
   <ItemGroup>
     <Using Include="Xunit" />
   </ItemGroup>

@@ -1,0 +1,50 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The agent wallet for Android (Avalonia): the same engine, settings, routing and direct links as the desktop wallet, with
+       screens made for a phone. A site reaches it by a bringyourownagent:// link (or its https hand-off page); it holds no model. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0-android</TargetFramework>
+    <SupportedOSPlatformVersion>26</SupportedOSPlatformVersion>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>Byoa.Wallet.Android</AssemblyName>
+    <RootNamespace>Byoa.Wallet.Android</RootNamespace>
+    <ApplicationId>org.bringyourownagent.wallet</ApplicationId>
+    <ApplicationTitle>Agent wallet</ApplicationTitle>
+    <ApplicationDisplayVersion>$(Version)</ApplicationDisplayVersion>
+    <ApplicationVersion>3708</ApplicationVersion>
+    <AndroidPackageFormat>apk</AndroidPackageFormat>
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+  </PropertyGroup>
+
+  <!-- The implicit usings of an Android project include Android.Widget and Android.Views, whose Button, CheckBox and TextBox clash with Avalonia's. -->
+  <ItemGroup>
+    <Using Remove="Android.Widget" />
+    <Using Remove="Android.Views" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\core\Byoa.Wallet.Core\Byoa.Wallet.Core.csproj" />
+    <ProjectReference Include="..\..\core\Byoa.Wallet.Providers\Byoa.Wallet.Providers.csproj" />
+  </ItemGroup>
+
+  <!-- One picture shrinker for both wallets: the desktop's file (it uses SkiaSharp, which Avalonia ships on Android too) is compiled in here, and its
+       unit tests (PictureShrinkerTests) are the tests of this code. -->
+  <ItemGroup>
+    <Compile Include="..\..\desktop\Byoa.Wallet.Desktop\SkiaPictureShrinker.cs" Link="SkiaPictureShrinker.cs" />
+  </ItemGroup>
+
+  <!-- A plain `dotnet build -c Release` signs with the .NET DEBUG key (bin\Release\...\org.bringyourownagent.wallet-Signed.apk): that file is not a release.
+       A release APK is made only by wallet\packaging\make-android-package.ps1, which signs it again with the release key and checks the certificate
+       (it passes ByoaReleaseByScript=true, which silences this warning). -->
+  <Target Name="WarnDebugSignedRelease" BeforeTargets="Build" Condition="'$(Configuration)' == 'Release' And '$(AndroidKeyStore)' != 'true' And '$(ByoaReleaseByScript)' != 'true'">
+    <Warning Code="BYOA0001" Text="This Release build is signed with the .NET debug key, so its -Signed.apk is NOT a release: do not ship it. Make a release APK only with wallet\packaging\make-android-package.ps1 (it signs with the release key and checks the certificate)." />
+  </Target>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia.Android" Version="11.3.22" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.22" />
+    <!-- Google's code scanner (Google Play services): its own camera screen, no camera permission for the wallet; the .NET binding is Microsoft's -->
+    <PackageReference Include="Xamarin.GooglePlayServices.Code.Scanner" Version="116.1.0.17" />
+  </ItemGroup>
+
+</Project>

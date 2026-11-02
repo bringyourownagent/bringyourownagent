@@ -1,0 +1,294 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="Byoa.Wallet.Android.App"
+             RequestedThemeVariant="Light">
+  <!-- The look of the desktop wallet (the BYOA design system: sign blue, signal orange, board black on enamel white), with sizes made for a
+       thumb: every button, tick box and field is at least 48 dp tall. -->
+  <Application.Resources>
+    <ResourceDictionary>
+      <SolidColorBrush x:Key="Sign" Color="#1c2f73" />
+      <SolidColorBrush x:Key="Signal" Color="#e8552e" />
+      <SolidColorBrush x:Key="SignalDeep" Color="#c8401c" />
+      <SolidColorBrush x:Key="SignalDark" Color="#a93514" />
+      <SolidColorBrush x:Key="Ink" Color="#13151b" />
+      <SolidColorBrush x:Key="Ink2" Color="#3c4150" />
+      <SolidColorBrush x:Key="Muted" Color="#5a6070" />
+      <SolidColorBrush x:Key="Rule" Color="#c6cbd5" />
+      <SolidColorBrush x:Key="WinBar" Color="#f2f3f6" />
+      <SolidColorBrush x:Key="WinRule" Color="#dde1e8" />
+      <SolidColorBrush x:Key="Field" Color="#f4f5f8" />
+      <SolidColorBrush x:Key="ChipGrey" Color="#e6e8ed" />
+      <SolidColorBrush x:Key="DenyBorder" Color="#c3c8d2" />
+      <SolidColorBrush x:Key="Outline" Color="#9aa1af" />
+      <SolidColorBrush x:Key="Good" Color="#1d6b3a" />
+
+      <FontFamily x:Key="Mono">monospace</FontFamily>
+
+      <!-- Fluent's accent (ticked boxes, progress) is the visitor's own decision colour: Exit Orange. -->
+      <Color x:Key="SystemAccentColor">#c8401c</Color>
+      <Color x:Key="SystemAccentColorDark1">#a93514</Color>
+      <Color x:Key="SystemAccentColorDark2">#8f2d11</Color>
+      <Color x:Key="SystemAccentColorDark3">#74240e</Color>
+      <Color x:Key="SystemAccentColorLight1">#d8603f</Color>
+      <Color x:Key="SystemAccentColorLight2">#e47f62</Color>
+      <Color x:Key="SystemAccentColorLight3">#ef9f86</Color>
+    </ResourceDictionary>
+  </Application.Resources>
+
+  <Application.Styles>
+    <FluentTheme />
+
+    <Style Selector="UserControl.shell">
+      <Setter Property="FontSize" Value="16" />
+      <Setter Property="Foreground" Value="{StaticResource Ink}" />
+      <Setter Property="Background" Value="White" />
+    </Style>
+
+    <!-- text -->
+    <Style Selector="TextBlock.h1">
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="FontSize" Value="24" />
+    </Style>
+    <Style Selector="TextBlock.h2">
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="FontSize" Value="18" />
+    </Style>
+    <Style Selector="TextBlock.hostmono">
+      <Setter Property="FontFamily" Value="{StaticResource Mono}" />
+      <Setter Property="FontWeight" Value="Bold" />
+      <Setter Property="FontSize" Value="18" />
+    </Style>
+    <Style Selector="TextBlock.label">
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="FontSize" Value="14" />
+      <Setter Property="Foreground" Value="{StaticResource Ink2}" />
+    </Style>
+    <Style Selector="TextBlock.strong">
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+    <Style Selector="TextBlock.muted">
+      <Setter Property="Foreground" Value="{StaticResource Muted}" />
+      <Setter Property="FontSize" Value="14" />
+    </Style>
+    <Style Selector="TextBlock.small">
+      <Setter Property="FontSize" Value="13" />
+    </Style>
+    <Style Selector="TextBlock.mono">
+      <Setter Property="FontFamily" Value="{StaticResource Mono}" />
+      <Setter Property="FontSize" Value="13" />
+    </Style>
+    <Style Selector="TextBlock.bad">
+      <Setter Property="Foreground" Value="{StaticResource SignalDark}" />
+    </Style>
+    <Style Selector="TextBlock.good">
+      <Setter Property="Foreground" Value="{StaticResource Good}" />
+    </Style>
+
+    <!-- fields: tall enough for a thumb -->
+    <Style Selector="TextBox">
+      <Setter Property="MinHeight" Value="48" />
+      <Setter Property="FontSize" Value="16" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+    <Style Selector="TextBox.mono">
+      <Setter Property="FontFamily" Value="{StaticResource Mono}" />
+      <Setter Property="FontSize" Value="14" />
+    </Style>
+    <Style Selector="CheckBox">
+      <Setter Property="MinHeight" Value="48" />
+      <Setter Property="MinWidth" Value="0" />
+    </Style>
+    <Style Selector="RadioButton">
+      <Setter Property="MinHeight" Value="48" />
+      <Setter Property="MinWidth" Value="0" />
+    </Style>
+    <Style Selector="CheckBox.headallow">
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+
+    <!-- buttons: Allow is Exit Orange; Decline is enamel with a grey border; links are sign blue -->
+    <Style Selector="Button">
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="FontSize" Value="16" />
+      <Setter Property="CornerRadius" Value="8" />
+      <Setter Property="Padding" Value="18,10" />
+      <Setter Property="MinHeight" Value="48" />
+      <Setter Property="MinWidth" Value="48" />
+      <Setter Property="HorizontalContentAlignment" Value="Center" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+    <Style Selector="Button.allow">
+      <Setter Property="Background" Value="{StaticResource SignalDeep}" />
+      <Setter Property="Foreground" Value="White" />
+      <Setter Property="BorderThickness" Value="0" />
+    </Style>
+    <Style Selector="Button.allow:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="{StaticResource SignalDark}" />
+      <Setter Property="Foreground" Value="White" />
+    </Style>
+    <Style Selector="Button.allow:pressed /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="{StaticResource SignalDark}" />
+      <Setter Property="Foreground" Value="White" />
+    </Style>
+    <Style Selector="Button.allow:disabled /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="{StaticResource ChipGrey}" />
+      <Setter Property="Foreground" Value="{StaticResource Muted}" />
+    </Style>
+    <Style Selector="Button.deny">
+      <Setter Property="Background" Value="White" />
+      <Setter Property="Foreground" Value="{StaticResource Ink}" />
+      <Setter Property="BorderBrush" Value="{StaticResource DenyBorder}" />
+      <Setter Property="BorderThickness" Value="1" />
+    </Style>
+    <Style Selector="Button.deny:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="White" />
+      <Setter Property="BorderBrush" Value="{StaticResource Ink2}" />
+      <Setter Property="Foreground" Value="{StaticResource Ink}" />
+    </Style>
+    <Style Selector="Button.deny:pressed /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="{StaticResource Field}" />
+      <Setter Property="BorderBrush" Value="{StaticResource Ink2}" />
+      <Setter Property="Foreground" Value="{StaticResource Ink}" />
+    </Style>
+    <Style Selector="Button.deny:disabled /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="{StaticResource Field}" />
+      <Setter Property="Foreground" Value="{StaticResource Muted}" />
+    </Style>
+    <Style Selector="Button.tint">
+      <Setter Property="Background" Value="#fff1ea" />
+      <Setter Property="Foreground" Value="{StaticResource SignalDeep}" />
+      <Setter Property="BorderBrush" Value="{StaticResource Signal}" />
+      <Setter Property="BorderThickness" Value="1.5" />
+    </Style>
+    <Style Selector="Button.tint:pressed /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="{StaticResource SignalDark}" />
+      <Setter Property="BorderBrush" Value="{StaticResource SignalDark}" />
+      <Setter Property="Foreground" Value="White" />
+    </Style>
+    <Style Selector="Button.tint:disabled /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="{StaticResource Field}" />
+      <Setter Property="BorderBrush" Value="{StaticResource WinRule}" />
+      <Setter Property="Foreground" Value="{StaticResource Muted}" />
+    </Style>
+    <Style Selector="Button.small">
+      <Setter Property="FontSize" Value="14" />
+      <Setter Property="Padding" Value="14,8" />
+    </Style>
+    <Style Selector="Button.link">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="Padding" Value="6,8" />
+      <Setter Property="Foreground" Value="{StaticResource Sign}" />
+      <Setter Property="FontSize" Value="15" />
+    </Style>
+    <Style Selector="Button.link:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="Foreground" Value="{StaticResource Sign}" />
+    </Style>
+    <Style Selector="Button.link:pressed /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="Foreground" Value="{StaticResource SignalDark}" />
+    </Style>
+    <Style Selector="Button.close">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="Width" Value="48" />
+      <Setter Property="Height" Value="48" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="Foreground" Value="{StaticResource Ink2}" />
+    </Style>
+    <Style Selector="Button.close:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="Transparent" />
+    </Style>
+    <Style Selector="Button.close:pressed /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="{StaticResource Field}" />
+    </Style>
+
+    <!-- surfaces -->
+    <Style Selector="Border.row">
+      <Setter Property="BorderBrush" Value="{StaticResource WinRule}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="10" />
+      <Setter Property="Padding" Value="12,10" />
+    </Style>
+    <Style Selector="Border.card">
+      <Setter Property="Background" Value="White" />
+      <Setter Property="BorderBrush" Value="{StaticResource WinRule}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="12" />
+      <Setter Property="Padding" Value="14,12" />
+    </Style>
+    <Style Selector="Border.field">
+      <Setter Property="Background" Value="{StaticResource Field}" />
+      <Setter Property="BorderBrush" Value="{StaticResource WinRule}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="10" />
+      <Setter Property="Padding" Value="12,10" />
+    </Style>
+    <!-- a block of the consent page is a small window: a header bar in the colour of its kind and its body under it -->
+    <Style Selector="Border.block">
+      <Setter Property="BorderBrush" Value="{StaticResource WinRule}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="10" />
+    </Style>
+    <Style Selector="Border.blockhead">
+      <Setter Property="Background" Value="{StaticResource WinBar}" />
+      <Setter Property="CornerRadius" Value="9,9,0,0" />
+      <Setter Property="MinHeight" Value="52" />
+      <Setter Property="Padding" Value="12,0,4,0" />
+    </Style>
+    <Style Selector="Border.blockhead.kind-text"><Setter Property="Background" Value="#d5e1f6" /></Style>
+    <Style Selector="Border.blockhead.kind-picture"><Setter Property="Background" Value="#f6d8d5" /></Style>
+    <Style Selector="Border.blockhead.kind-speech"><Setter Property="Background" Value="#d4ecdb" /></Style>
+    <Style Selector="Border.blockhead.kind-text TextBlock.headtitle"><Setter Property="Foreground" Value="#1b3570" /></Style>
+    <Style Selector="Border.blockhead.kind-picture TextBlock.headtitle"><Setter Property="Foreground" Value="#7f2424" /></Style>
+    <Style Selector="Border.blockhead.kind-speech TextBlock.headtitle"><Setter Property="Foreground" Value="#1d5a35" /></Style>
+    <Style Selector="Border.block.kind-text"><Setter Property="Background" Value="#f4f7fd" /></Style>
+    <Style Selector="Border.block.kind-picture"><Setter Property="Background" Value="#fdf5f4" /></Style>
+    <Style Selector="Border.block.kind-speech"><Setter Property="Background" Value="#f3f9f5" /></Style>
+    <Style Selector="Border.chip">
+      <Setter Property="CornerRadius" Value="999" />
+      <Setter Property="Padding" Value="10,4" />
+      <Setter Property="Background" Value="{StaticResource ChipGrey}" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+    <Style Selector="Border.chip TextBlock">
+      <Setter Property="FontSize" Value="13" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+    <Style Selector="Border.chip.ink"><Setter Property="Background" Value="{StaticResource Ink}" /></Style>
+    <Style Selector="Border.chip.ink TextBlock"><Setter Property="Foreground" Value="White" /></Style>
+    <Style Selector="Border.chip.kind-text"><Setter Property="Background" Value="#d5e1f6" /></Style>
+    <Style Selector="Border.chip.kind-text TextBlock"><Setter Property="Foreground" Value="#1b3570" /></Style>
+    <Style Selector="Border.chip.kind-picture"><Setter Property="Background" Value="#f6d8d5" /></Style>
+    <Style Selector="Border.chip.kind-picture TextBlock"><Setter Property="Foreground" Value="#7f2424" /></Style>
+    <Style Selector="Border.chip.kind-speech"><Setter Property="Background" Value="#d4ecdb" /></Style>
+    <Style Selector="Border.chip.kind-speech TextBlock"><Setter Property="Foreground" Value="#1d5a35" /></Style>
+    <Style Selector="Border.chip.allowed"><Setter Property="Background" Value="#e2f2e7" /></Style>
+    <Style Selector="Border.chip.allowed TextBlock"><Setter Property="Foreground" Value="#1d6b3a" /></Style>
+    <Style Selector="Border.chip.orange"><Setter Property="Background" Value="#fbe9cf" /></Style>
+    <Style Selector="Border.chip.orange TextBlock"><Setter Property="Foreground" Value="#8a4b00" /></Style>
+    <Style Selector="Border.chip.outline">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderBrush" Value="{StaticResource Outline}" />
+      <Setter Property="BorderThickness" Value="1" />
+    </Style>
+    <Style Selector="Border.chip.outline TextBlock"><Setter Property="Foreground" Value="{StaticResource Ink2}" /></Style>
+    <!-- the number of a block: a black figure in a plain white circle -->
+    <Style Selector="Border.number">
+      <Setter Property="Background" Value="White" />
+      <Setter Property="CornerRadius" Value="999" />
+      <Setter Property="Width" Value="26" />
+      <Setter Property="Height" Value="26" />
+    </Style>
+    <Style Selector="Border.number TextBlock">
+      <Setter Property="Foreground" Value="{StaticResource Ink}" />
+      <Setter Property="FontSize" Value="13" />
+      <Setter Property="FontWeight" Value="Bold" />
+    </Style>
+    <Style Selector="Border.rule">
+      <Setter Property="Height" Value="1" />
+      <Setter Property="Background" Value="{StaticResource WinRule}" />
+    </Style>
+  </Application.Styles>
+</Application>

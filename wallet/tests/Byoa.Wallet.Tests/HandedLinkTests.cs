@@ -261,6 +261,86 @@ public class HandedLinkTransportTests : IDisposable
     }
 
     [Fact]
+    public async Task AStopAsTheGrantComesStopsTheLinkBeforeAnyConnectionIsMade()
+    {
+        // the review's window 2: the model was already warm, so nothing waited on the token and the grant came although Stop had cancelled it
+        var transport = Transport();
+        using var stop = new CancellationTokenSource();
+        transport.AfterGrantForTests = stop.Cancel;
+        Assert.Null(await transport.HandleLinkAsync(_site.Link(), stop.Token, handed: true));
+        await Task.Delay(300);                                              // a connection that had been made would have reached the site by now
+        Assert.Empty(transport.Connections);
+        Assert.Equal(0, _site.Accepts);
+        var entry = _log.Recent().First(e => e.Kind == "link");
+        Assert.Equal(("closed", "the link was stopped before its connection was made"), (entry.Outcome, entry.Note));
+    }
+
+    [Fact]
+    public async Task AStopBetweenTheCheckAndTheAddIsRefusedUnderTheLockAndNoConnectionStarts()
+    {
+        // the review's window 1: the connection exists and is about to be added when Stop cancels the link; the add is refused, and the connection is never started
+        var transport = Transport();
+        using var stop = new CancellationTokenSource();
+        transport.BeforeAddForTests = stop.Cancel;
+        Assert.Null(await transport.HandleLinkAsync(_site.Link(), stop.Token, handed: true));
+        await Task.Delay(300);
+        Assert.Empty(transport.Connections);
+        Assert.Equal(0, _site.Accepts);
+        Assert.Equal("closed", _log.Recent().First(e => e.Kind == "link").Outcome);
+    }
+
+    [Fact]
+    public async Task ALinkWhoseTokenIsNotCancelledConnectsAsBefore()
+    {
+        // (a link with no token, the desktop's, is what every other test here uses)
+        using var live = new CancellationTokenSource();
+        Assert.NotNull(await Transport().HandleLinkAsync(_site.Link(), live.Token, handed: true));
+        for (var i = 0; i < 100 && _site.Upgrades < 1; i++) await Task.Delay(100);        // the site really is reached
+        Assert.Equal(1, _site.Upgrades);
+    }
+
+    [Fact]
+    public async Task ALinkRefusedByTheCheckThatRecordsLeavesItsEntryInTheLogAndTouchesNoSite()
+    {
+        var transport = Transport();
+        List<ActivityEntry> Links() => _log.Recent().Where(e => e.Kind == "link").ToList();
+        var broken = "bringyourownagent://connect?v=0.1&endpoint=" + Uri.EscapeDataString("wss://geo.example.org/ws")
+            + "&manifest=" + Base64Url.EncodeToString(Encoding.UTF8.GetBytes("{\"byoa\":\"nope\"}")) + "&session=" + TestSite.NewCode();
+
+        Assert.StartsWith("That is not a link from a site.", transport.CheckAndRecordHandedLink("hello"));
+        Assert.Equal(("invalid", true), (Links()[0].Outcome, Links()[0].Note.Contains("a pasted link was ignored", StringComparison.Ordinal)));
+
+        Assert.Equal("That link cannot be used: the link has no valid session code.", transport.CheckAndRecordHandedLink(_site.Link("short")));
+        Assert.Equal(("invalid", true), (Links()[0].Outcome, Links()[0].Note.Contains("a link was ignored", StringComparison.Ordinal)));
+
+        Assert.Equal("That link cannot be used: the site's request is not valid.", transport.CheckAndRecordHandedLink(broken));
+        Assert.Equal("invalid", Links()[0].Outcome);
+        Assert.Equal("geo.example.org", Kit(Links()[0].Origin));
+
+        Assert.Equal(0, _site.Accepts);                       // the refused links touched no site
+        Assert.Empty(_ui.Consents);
+        var session = TestSite.NewCode();
+        Assert.NotNull(await transport.HandleLinkAsync(_site.Link(session), handed: true));
+        var before = Links().Count;
+        Assert.StartsWith("That link was already used.", transport.CheckAndRecordHandedLink(_site.Link(session)));
+        Assert.Equal(before + 1, Links().Count);
+        Assert.Equal(("ignored", "the same link again"), (Links()[0].Outcome, Links()[0].Note));
+
+        _engine.Block(_site.Origin, true);
+        Assert.StartsWith("You blocked ", transport.CheckAndRecordHandedLink(_site.Link()));
+        Assert.Equal(("blocked", _site.Origin), (Links()[0].Outcome, Links()[0].Origin));
+
+        // a good link is not refused and leaves nothing; the plain check (the desktop's) records nothing, as before
+        _engine.Block(_site.Origin, false);
+        var now = Links().Count;
+        Assert.Null(transport.CheckAndRecordHandedLink(_site.Link()));
+        Assert.Null(transport.CheckHandedLink(_site.Link()));
+        Assert.Equal(now, Links().Count);
+
+        static string Kit(string origin) => new Uri(origin).Host;
+    }
+
+    [Fact]
     public async Task TheCheckSaysSoWhenTheSiteIsBlockedOrTheLinkWasAlreadyUsed()
     {
         var transport = Transport();

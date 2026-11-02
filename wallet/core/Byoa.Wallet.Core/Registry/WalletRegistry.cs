@@ -440,7 +440,7 @@ public sealed class WalletRegistry
         if (deleteSecret)
         {
             try { _secrets.Remove(SecretName(id, setting)); }
-            catch (CryptographicException) { return RegistryOperationResult.Failure("Windows could not open the protected key store. The source was not removed."); }
+            catch (CryptographicException) { return RegistryOperationResult.Failure(KeyStoreSays("Windows could not open the protected key store. The source was not removed.")); }
             catch (IOException) { return RegistryOperationResult.Failure("The wallet could not update its protected key store. The source was not removed."); }
         }
         _store.Update(s =>
@@ -658,7 +658,7 @@ public sealed class WalletRegistry
         }
         catch (CryptographicException)
         {
-            return Task.FromResult(RegistryOperationResult.Failure("Windows could not open the protected key store. Try again in the wallet."));
+            return Task.FromResult(RegistryOperationResult.Failure(KeyStoreSays("Windows could not open the protected key store. Try again in the wallet.")));
         }
         // The registry sends the value straight to SecretStore and does not expose a getter or put it in a result.
         try
@@ -667,7 +667,7 @@ public sealed class WalletRegistry
         }
         catch (CryptographicException)
         {
-            return Task.FromResult(RegistryOperationResult.Failure("Windows could not protect the API key for this user profile. Try again in the wallet."));
+            return Task.FromResult(RegistryOperationResult.Failure(KeyStoreSays("Windows could not protect the API key for this user profile. Try again in the wallet.")));
         }
         catch (IOException)
         {
@@ -691,7 +691,11 @@ public sealed class WalletRegistry
         }, ct).WaitAsync(ct).ConfigureAwait(false);
     }
 
-    string[] KnownSourceIds() => _speech.Select(s => s.Id).Concat(_text.Select(s => s.Id)).Concat(_store.Snapshot().Sources.Select(s => s.Id)).Distinct(StringComparer.Ordinal).ToArray();
+    /// <summary>A message about the key store as it was written for Windows; on Android, where it is the Keystore that failed, "Windows" is not the one to blame.</summary>
+    static string KeyStoreSays(string windowsText) =>
+        OperatingSystem.IsAndroid() ? windowsText.Replace("Windows could not", "The wallet could not", StringComparison.Ordinal) : windowsText;
+
+    string[] KnownSourceIds() =>_speech.Select(s => s.Id).Concat(_text.Select(s => s.Id)).Concat(_store.Snapshot().Sources.Select(s => s.Id)).Distinct(StringComparer.Ordinal).ToArray();
 
     static bool Matches(string? skill, IReadOnlyList<string> skills) => skill is null || skills.Contains(skill, StringComparer.Ordinal);
 
@@ -752,7 +756,7 @@ public sealed class WalletRegistry
         catch (CryptographicException)
         {
             hasKey = false;
-            error = "Windows could not open the protected key store. The source was not removed. Try again in the wallet.";
+            error = KeyStoreSays("Windows could not open the protected key store. The source was not removed. Try again in the wallet.");
             return false;
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
@@ -881,7 +885,7 @@ public sealed class WalletRegistry
             var loopback = IPAddress.TryParse(uri.Host, out var address) && (IPAddress.IsLoopback(address) ||
                 (address.IsIPv4MappedToIPv6 && IPAddress.IsLoopback(address.MapToIPv4()))) ||
                 uri.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase);
-            return label + " · " + (loopback ? "this computer" : DisplayAuthority(uri));
+            return label + " · " + (loopback ? ThisDevice.Computer : DisplayAuthority(uri));
         }
         return label;
     }

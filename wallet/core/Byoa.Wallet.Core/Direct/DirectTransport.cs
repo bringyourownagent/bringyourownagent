@@ -97,15 +97,48 @@ public sealed class DirectTransport : IDisposable
     /// What is wrong with a link the visitor pasted, in a sentence for him, or null when the wallet can go on with it. The same checks as
     /// <see cref="HandleLinkAsync"/> makes, asked first so that the window can say so instead of the activity log.
     /// </summary>
-    public string? CheckHandedLink(string? text)
+    public string? CheckHandedLink(string? text) => CheckHandedLink(text, record: false);
+
+    /// <summary>
+    /// <see cref="CheckHandedLink(string?)"/> for a wallet that says the problem on its own screen and does not go on to <see cref="HandleLinkAsync"/> with a link it
+    /// has refused: the refusal leaves the entry in the activity log that <see cref="HandleLinkAsync"/> would have left for the same link (CONTRACT-DIRECT
+    /// section 1: a link that is ignored has an entry in the log), and no network access either way.
+    /// </summary>
+    public string? CheckAndRecordHandedLink(string? text) => CheckHandedLink(text, record: true);
+
+    string? CheckHandedLink(string? text, bool record)
     {
-        if (!HandedLink.TryNormalize(text, out var normal, out var why)) return why;
-        if (!DirectLink.TryParse(normal, Options.DevLocal, out var link, out why)) return "That link cannot be used: " + why + ".";
-        if (!Manifest.Validate(link!.ManifestJson.ToJsonString()).Ok) return "That link cannot be used: the site's request is not valid.";
-        if (Engine.FindSite(link.Origin) is { Status: SiteStatus.Blocked }) return "You blocked " + link.Host + " in this wallet. Unblock it in Sites first.";
+        if (!HandedLink.TryNormalize(text, out var normal, out var why))
+        {
+            if (record) Record("", "invalid", "a pasted link was ignored: " + why);
+            return why;
+        }
+
+        if (!DirectLink.TryParse(normal, Options.DevLocal, out var link, out why))
+        {
+            if (record) Record("", "invalid", "a link was ignored: " + why);
+            return "That link cannot be used: " + why + ".";
+        }
+
+        if (!Manifest.Validate(link!.ManifestJson.ToJsonString()).Ok)
+        {
+            if (record) Record(link.Origin, "invalid", "a link was ignored: the site's request is not valid");
+            return "That link cannot be used: the site's request is not valid.";
+        }
+
+        if (Engine.FindSite(link.Origin) is { Status: SiteStatus.Blocked })
+        {
+            if (record) Record(link.Origin, "blocked", "blocked site: the link was ignored");
+            return "You blocked " + link.Host + " in this wallet. Unblock it in Sites first.";
+        }
+
         lock (_gate)
         {
-            if (_seenSessions.ContainsKey(link.Session)) return "That link was already used. Press Connect on the site's page to get a new one.";
+            if (_seenSessions.ContainsKey(link.Session))
+            {
+                if (record) Record(link.Origin, "ignored", "the same link again");
+                return "That link was already used. Press Connect on the site's page to get a new one.";
+            }
         }
 
         return null;
@@ -142,11 +175,32 @@ public sealed class DirectTransport : IDisposable
         // to the site so far, and a link with no click must stay a quiet request.
         var answer = await Engine.RequestViaLinkAsync(origin, link.ManifestJson, userActivation, ct, link.Session, handed).ConfigureAwait(false);
         if (GrantOf(answer) is not { } grant) return null;
+        AfterGrantForTests?.Invoke();
+        // The caller may have cancelled the link (Stop) while the models were warming, or as the grant was handed out: a model that was already warm does not
+        // look at the token, so the grant can still come. Then no connection is made, and the site is not touched; the same is checked once more, under the
+        // lock, when the connection is added.
+        if (ct.IsCancellationRequested) return Stopped(origin, grant);
         var connection = new DirectConnection(this, origin, link.Endpoint, link.Manifest, link.Session, token: null, grant);
-        if (Add(connection)) return connection;
+        BeforeAddForTests?.Invoke();
+        if (Add(connection, ct)) return connection;
+        if (ct.IsCancellationRequested) return Stopped(origin, grant);
         Engine.DropLinkDecision(grant.Id);                  // the wallet is closing: the link's answer and its grant go unused
         return null;
     }
+
+    /// <summary>The link was cancelled after its grant came and before its connection was made: the grant goes unused, and the log says so.</summary>
+    DirectConnection? Stopped(string origin, GrantSession grant)
+    {
+        Engine.DropLinkDecision(grant.Id);
+        Record(origin, "closed", "the link was stopped before its connection was made");
+        return null;
+    }
+
+    /// <summary>Tests only: runs once the grant of a link has come, before anything is made of it (a Stop that lands in that window).</summary>
+    internal Action? AfterGrantForTests { get; set; }
+
+    /// <summary>Tests only: runs once the connection object exists, before it is added (a Stop that lands in that window).</summary>
+    internal Action? BeforeAddForTests { get; set; }
 
     /// <summary>At start: reconnects to the sites whose pairing is stored and that keep "decide on my own".</summary>
     public void ResumePairings()
@@ -186,13 +240,16 @@ public sealed class DirectTransport : IDisposable
     GrantSession? GrantOf(JsonNode? answer) =>
         answer is JsonObject o && o["grantId"] is JsonValue v && v.TryGetValue<string>(out var id) ? Engine.FindGrant(id) : null;
 
-    /// <summary>Takes a connection and starts it. False, and nothing started, once the transport is disposed.</summary>
-    bool Add(DirectConnection connection)
+    /// <summary>
+    /// Takes a connection and starts it. False, and nothing started, once the transport is disposed, or when the token of the link that made the connection
+    /// is already cancelled (checked under the lock that lists the connections, so that a Stop that cancels and then lists them cannot miss one that is added).
+    /// </summary>
+    bool Add(DirectConnection connection, CancellationToken ct = default)
     {
         List<DirectConnection> replaced;
         lock (_gate)
         {
-            if (_disposed) return false;
+            if (_disposed || ct.IsCancellationRequested) return false;
             var same = _connections.Where(c => c.Origin == connection.Origin).ToList();
             replaced = same.Take(Math.Max(0, same.Count - Options.MaxConnectionsPerOrigin + 1)).ToList();
             _connections.Add(connection);

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The small white sign in the status bar: a key (the same stroke drawing as the desktop wallet's key glyph). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:pathData="M8,9 A4,4 0 1 0 8,17 A4,4 0 1 0 8,9 Z M12,13 L21,13 M18,13 L18,16 M21,13 L21,16"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+</vector>

@@ -65,7 +65,7 @@ public sealed class OpenAiCompatibleSpeechSource : ISpeechSource, ILiveness, ILo
     public string Id => OpenAiCompatibleSource.MakeId(_kind, Model, Endpoint, Vocabulary.Transcribe);
 
     public string RuntimeName => LocalRuntimes.Name(_kind, Endpoint);
-    public string Name => (Label ?? Model) + " · " + (_loopback ? "this computer" : _base.IdnHost);
+    public string Name => (Label ?? Model) + " · " + (_loopback ? ThisDevice.Computer : _base.IdnHost);
     public string Runs => _loopback ? Sources.Runs.ThisDevice : "another computer (" + _base.IdnHost + ")";
     public string ProviderKind => _loopback ? "local-model" : "home-server";
     public IReadOnlyList<string>? Languages => _languages;
