@@ -2,6 +2,10 @@
 
 The libraries share one version number and one rule set. Dates are UTC.
 
+## Unreleased
+
+- Spec only; no rule, frame or library code changes. `spec/CONTRACT-PAIR.md` section 5 (new; "Not specified here" is now section 6): a site SHOULD offer the QR code of the "Open on another device" block to a visitor on a phone or on a computer with no wallet, and a native phone wallet MAY claim the web wallet's address as an Android App Link (later an iOS universal link). A wallet that takes a link this way treats it as a handed link (check code, Allow held until the visitor ticks that the codes match) and takes only a `bringyourownagent://connect?` link from the fragment. The web wallet's origin publishes `/.well-known/assetlinks.json` for the project's Android wallet (`webwallet/.well-known/assetlinks.json`).
+
 ## 0.0.6 (2026-11-01)
 
 - Rule change: `needs` has two conditions, `input` and `output`; `context` and `runs` are unknown keys now (a `needs-unknown` warning, never an error, so every manifest the 0.0.5 libraries accepted is still accepted). `kind` on `image.generate` may only be `model` (M23). The shared vectors say so in all three libraries.

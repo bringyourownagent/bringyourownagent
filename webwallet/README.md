@@ -23,6 +23,7 @@ It lives at `https://wallet.bringyourownagent.org/` (name and address decided by
 | `src/openrouter.js` | Sign-in, model list, one chat call |
 | `src/store.js` | Key and per-site memory in `localStorage` |
 | `src/app.js` | The screens |
+| `.well-known/assetlinks.json` | The Digital Asset Links file that lets the project's Android wallet claim this page's address as an App Link, so that a phone camera scanning a site's QR code (`<this page>#link=...`) opens that wallet when it is installed and this page otherwise (spec/CONTRACT-PAIR.md section 5). Published with the other files, at `/.well-known/assetlinks.json`, as `application/json`, with no redirect |
 | `vendor/byoa/` | The SDK's call gate and manifest validation, copied (a test checks they are identical) |
 | `test/` | `node --test` |
 
