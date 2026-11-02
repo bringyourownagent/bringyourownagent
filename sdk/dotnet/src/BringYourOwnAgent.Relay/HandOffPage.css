@@ -1,0 +1,13 @@
+:root { color-scheme: light dark; }
+body { margin: 0; font: 1.05rem/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background: Canvas; color: CanvasText; }
+main { max-width: 28rem; margin: 0 auto; padding: 1.5rem 1.25rem 3rem; }
+h1 { font-size: 1.5rem; line-height: 1.25; margin: 0 0 1rem; }
+h2 { font-size: 1.1rem; margin: 1.5rem 0 0.5rem; }
+button { font: inherit; border-radius: 0.5rem; border: 1px solid currentColor; background: transparent; color: inherit; cursor: pointer; }
+button.primary { width: 100%; padding: 0.9rem 1rem; font-weight: 600; background: CanvasText; color: Canvas; border-color: CanvasText; }
+button.small { padding: 0.4rem 0.8rem; font-size: 0.9rem; }
+button:disabled { opacity: 0.5; cursor: default; }
+input { font: inherit; padding: 0.5rem 0.6rem; width: 11rem; text-transform: uppercase; letter-spacing: 0.1em; }
+[hidden] { display: none !important; }
+.hint { font-size: 0.9rem; opacity: 0.75; margin-top: 0; }
+#msg { min-height: 1.5rem; }

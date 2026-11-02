@@ -29,6 +29,51 @@ public sealed class RelayOptions
     /// </summary>
     public bool ConnectCheck { get; set; }
 
+    /// <summary>
+    /// Offer the <b>hand-off address</b> of CONTRACT-PAIR.md §2: every code then comes with <c>handoff</c> (an <c>https</c> address on this
+    /// site, <c>https://host/byoa/hand/&lt;token&gt;</c>) and <c>short</c> (a typed form of it, <c>K7MQ-3XPZ</c>), and the relay serves the
+    /// hand-off page and its endpoint (see <see cref="HandOffPath"/>). The address is short enough for any QR code, where a link that
+    /// carries a manifest is not. Off by default: the code answer is then exactly what it was in 0.0.6.
+    /// </summary>
+    public bool HandOff { get; set; }
+
+    string _handOffPath = "/byoa/hand";
+
+    /// <summary>Where the hand-off page lives: <c>{HandOffPath}</c> (the page where a short code is typed and the endpoint the page posts to) and
+    /// <c>{HandOffPath}/{token}</c> (the page a QR code opens). CONTRACT-PAIR.md §2 says <c>/byoa/hand</c>.</summary>
+    public string HandOffPath
+    {
+        get => _handOffPath;
+        set => _handOffPath = Absolute(value, "/byoa/hand");
+    }
+
+    /// <summary>The site's public address (<c>https://example.org</c>, no path) for the hand-off address, when the request's own host is not it:
+    /// a proxy that does not forward the host or the scheme. Empty: the address is built from the request (so a site behind a proxy uses
+    /// <c>app.UseForwardedHeaders()</c>), <c>https</c> for a secure request and <c>http</c> only for a local one.</summary>
+    public string? HandOffBaseUrl { get; set; }
+
+    /// <summary>How long a hand-off address and its short code live (CONTRACT-PAIR.md §2: 120 seconds). Never longer than the code itself.</summary>
+    public int HandOffLifeSeconds { get; set; } = 120;
+
+    /// <summary>The web wallet the hand-off page offers: on a phone the button opens <c>&lt;this address&gt;#link=&lt;link&gt;</c> (the Android
+    /// wallet claims that address as an App Link, CONTRACT-PAIR.md §5, and the web wallet takes it otherwise); on a computer a second, smaller
+    /// button does. <c>null</c> or empty: no web wallet is offered and a phone gets the link itself.</summary>
+    public string? HandOffWebWallet { get; set; } = "https://wallet.bringyourownagent.org/";
+
+    /// <summary>How many wrong short codes one visitor address may try in ten minutes before every further try is refused (CONTRACT-PAIR.md §2: 5).</summary>
+    public int HandOffWrongTriesPer10Minutes { get; set; } = 5;
+
+    /// <summary>The ceiling for wrong short codes tried from all addresses together in a minute; over it every short-code try is refused until the
+    /// minute has passed, so that a crowd of addresses cannot walk through the short codes (CONTRACT-PAIR.md §2: a global ceiling against bulk lookups).</summary>
+    public int HandOffWrongTriesPerMinuteAll { get; set; } = 60;
+
+    /// <summary>The words of the hand-off page, in English unless the site sets its own.</summary>
+    public HandOffLabels HandOffLabels { get; set; } = new();
+
+    /// <summary>Chooses the words of the hand-off page for one request (by the site's own language logic, a cookie, a path, <c>Accept-Language</c>);
+    /// when it is null, or answers null, <see cref="HandOffLabels"/> is used.</summary>
+    public Func<Microsoft.AspNetCore.Http.HttpContext, HandOffLabels?>? HandOffLabelsFor { get; set; }
+
     string _walletPath = "/byoa/ws";
     string _roomPathPrefix = "/api/r";
     string _relayPath = "byoa";

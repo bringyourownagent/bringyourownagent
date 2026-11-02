@@ -49,10 +49,24 @@ public static class RelayEndpoints
         configure(options);
         if (string.IsNullOrWhiteSpace(options.ManifestJson))
             throw new ArgumentException("the BYOA manifest is missing: the links carry it, so set RelayOptions.ManifestJson", nameof(configure));
+        if (options.HandOff) CheckHandOff(options);
         services.AddSingleton(options);
         services.AddSingleton(_ => new DirectHub(options));
         services.AddSingleton(sp => new WalletJobs(sp.GetRequiredService<DirectHub>(), options));
         return services;
+    }
+
+    // a site that turns the hand-off on gets a mistake in its settings at start-up, not on the first visitor's phone
+    static void CheckHandOff(RelayOptions options)
+    {
+        static bool Secure(string address) =>
+            Uri.TryCreate(address, UriKind.Absolute, out var u) && string.IsNullOrEmpty(u.UserInfo) && string.IsNullOrEmpty(u.Fragment)
+            && (u.Scheme == Uri.UriSchemeHttps || (u.Scheme == Uri.UriSchemeHttp && (u.Host is "localhost" or "127.0.0.1")));
+        if (!string.IsNullOrWhiteSpace(options.HandOffBaseUrl) && !Secure(options.HandOffBaseUrl))
+            throw new ArgumentException("RelayOptions.HandOffBaseUrl must be an https address (http only for localhost): the hand-off address is an https address", nameof(options));
+        if (!string.IsNullOrWhiteSpace(options.HandOffWebWallet) && !Secure(options.HandOffWebWallet))
+            throw new ArgumentException("RelayOptions.HandOffWebWallet must be an https address (http only for localhost)", nameof(options));
+        _ = HandOffPage.ContentSecurityPolicy;           // the page's script and style are in the package: fail now if they are not
     }
 
     /// <summary>
@@ -82,13 +96,17 @@ public static class RelayEndpoints
         IResult TooBig(HttpContext ctx) => ctx.Request.ContentLength is { } length && length > Math.Max(1, options.MaxJobRequestBytes)
             ? Results.StatusCode(StatusCodes.Status413PayloadTooLarge) : null!;
 
-        // a one-time code for the bringyourownagent:// link (rate-limited per visitor address), with the check code the page shows
+        // a one-time code for the bringyourownagent:// link (rate-limited per visitor address), with the check code the page shows; with
+        // HandOff on, also the hand-off address and its short code (CONTRACT-PAIR.md §2), which a QR code can carry where the link cannot
         app.MapPost(Path("code"), (string room, HttpContext ctx, DirectHub hub) =>
         {
             if (Bad(room) is { } bad) return bad;
-            if (hub.NewCode(room, ClientIp(ctx), hub.Endpoint(ctx.Request)) is not { } issued)
+            if (hub.Issue(room, ClientIp(ctx), hub.Endpoint(ctx.Request), options.HandOff ? HandOffBase(options, ctx.Request) : null) is not { } issued)
                 return Results.StatusCode(StatusCodes.Status429TooManyRequests);
-            return Results.Ok(new { session = issued.Code, link = issued.Link, check = issued.Check, expiresIn = (int)hub.CodeLife.TotalSeconds });
+            var expiresIn = (int)hub.CodeLife.TotalSeconds;
+            return issued.HandOff is null
+                ? Results.Ok(new { session = issued.Code, link = issued.Link, check = issued.Check, expiresIn })
+                : Results.Ok(new { session = issued.Code, link = issued.Link, check = issued.Check, expiresIn, handoff = issued.HandOff, @short = issued.Short });
         });
 
         // has the wallet come with that code? "waiting", "connected" (with the pairing token, the participants of every skill and the capabilities) or "expired"
@@ -151,7 +169,87 @@ public static class RelayEndpoints
             return Results.Ok(new { cancelled = jobs.Cancel(room, r.Id) });
         });
 
+        if (options.HandOff) MapHandOff(app, options);
+
         return app;
+    }
+
+    /// <summary>What the hand-off page posts: a token (the page opened from a QR code) or a short code (the page where it is typed).</summary>
+    internal sealed record HandOffRequest(string? Token, string? Short);
+
+    /// <summary>The address the hand-off tokens hang from: <c>https://host/byoa/hand</c>, the site's own host (the request's, or
+    /// <see cref="RelayOptions.HandOffBaseUrl"/>), and <c>http</c> only for a request that was not secure.</summary>
+    static string HandOffBase(RelayOptions options, HttpRequest request) =>
+        (string.IsNullOrWhiteSpace(options.HandOffBaseUrl)
+            ? $"{(request.IsHttps ? "https" : "http")}://{request.Host.ToUriComponent()}"
+            : options.HandOffBaseUrl!.Trim().TrimEnd('/')) + options.HandOffPath;
+
+    // The hand-off page and its endpoint (CONTRACT-PAIR.md §2). A GET reveals nothing: the same page for every address that looks like a token,
+    // no link and no code in it, nothing of the request reflected. The link comes from the POST the page makes from a click, once.
+    static void MapHandOff(IEndpointRouteBuilder app, RelayOptions options)
+    {
+        var path = options.HandOffPath;
+
+        // never cached, never sent on in a Referer, never indexed; a framing page or a sniffed type is refused
+        static void Private(HttpContext ctx)
+        {
+            var headers = ctx.Response.Headers;
+            headers.CacheControl = "no-store";
+            headers["Referrer-Policy"] = "no-referrer";
+            headers["X-Robots-Tag"] = "noindex, nofollow";
+            headers["X-Content-Type-Options"] = "nosniff";
+            headers["X-Frame-Options"] = "DENY";
+        }
+
+        IResult Page(HttpContext ctx, string mode)
+        {
+            Private(ctx);
+            ctx.Response.Headers.ContentSecurityPolicy = HandOffPage.ContentSecurityPolicy;
+            var labels = options.HandOffLabelsFor?.Invoke(ctx) ?? options.HandOffLabels;
+            return Results.Content(HandOffPage.Render(labels, mode, path, options.HandOffWebWallet), "text/html; charset=utf-8");
+        }
+
+        app.MapGet(path, (HttpContext ctx) => Page(ctx, "short"));
+        app.MapGet(path + "/{token}", (string token, HttpContext ctx) => IsTokenShape(token) ? Page(ctx, "token") : Results.NotFound());
+
+        app.MapPost(path, async (HttpContext ctx, DirectHub hub, CancellationToken ct) =>
+        {
+            Private(ctx);
+            if (!IsJson(ctx)) return Results.StatusCode(StatusCodes.Status415UnsupportedMediaType);
+            var (request, refusal) = await ReadSmallAsync<HandOffRequest>(ctx, 2048, ct);
+            if (refusal is not null) return refusal;
+            if (request is null || (request.Token is null && request.Short is null)) return Results.BadRequest(new { error = "bad-request" });
+            var result = hub.HandOffOpen(request.Token, request.Short, ClientIp(ctx));
+            return result.Outcome switch
+            {
+                HandOffOutcome.Released => Results.Ok(new { link = result.Link }),
+                HandOffOutcome.Used => Results.Json(new { error = "used" }, statusCode: StatusCodes.Status410Gone),
+                HandOffOutcome.Gone => Results.Json(new { error = "gone" }, statusCode: StatusCodes.Status410Gone),
+                HandOffOutcome.Throttled => Results.Json(new { error = "slow" }, statusCode: StatusCodes.Status429TooManyRequests),
+                _ => Results.Json(new { error = "wrong" }, statusCode: StatusCodes.Status404NotFound),
+            };
+        });
+    }
+
+    /// <summary>A token as <see cref="DirectHub.NewSecret"/> makes it: URL-safe characters, not too many. A page for an address of any other
+    /// shape is a plain 404; nothing is looked up.</summary>
+    static bool IsTokenShape(string? token) =>
+        token is { Length: >= 16 and <= 128 } && token.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_');
+
+    /// <summary>A small JSON body: over <paramref name="max"/> bytes is a 413, anything that is not the shape is a 400.</summary>
+    static async Task<(T? Body, IResult? Refusal)> ReadSmallAsync<T>(HttpContext ctx, int max, CancellationToken ct) where T : class
+    {
+        using var buffer = new MemoryStream();
+        var chunk = new byte[1024];
+        while (true)
+        {
+            var read = await ctx.Request.Body.ReadAsync(chunk, ct);
+            if (read == 0) break;
+            if (buffer.Length + read > max) return (null, Results.StatusCode(StatusCodes.Status413PayloadTooLarge));
+            buffer.Write(chunk, 0, read);
+        }
+        try { return (JsonSerializer.Deserialize<T>(buffer.GetBuffer().AsSpan(0, (int)buffer.Length), JsonSerializerOptions.Web), null); }
+        catch (JsonException) { return (null, Results.BadRequest(new { error = "bad-request" })); }
     }
 
     /// <summary>

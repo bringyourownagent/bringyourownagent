@@ -19,6 +19,10 @@ export interface CrossDeviceLabels {
   qrHandoff: string;
   qrWebWallet: string;
   qrAlt: string;
+  /** One line shown instead of the QR code when the text is too long for any QR code (a link with a manifest, with no hand-off address). */
+  qrTooLong: string;
+  /** Above the page address and the short code, when the site gives a `short` code. */
+  shortHow: string;
 }
 
 export const DEFAULT_LABELS: Readonly<CrossDeviceLabels>;
@@ -43,7 +47,7 @@ export interface CrossDevicePlan {
   text: string;
   textKind: 'handoff' | 'link';
   walletUrl: string | null;
-  /** What the QR code carries. */
+  /** What the QR code carries: the hand-off address when there is one, else the web wallet's address with the link in the fragment, else the link. */
   qrText: string;
   qrKind: 'webwallet' | 'handoff' | 'link';
 }
@@ -54,8 +58,10 @@ export interface CrossDeviceOptions {
   link: string;
   /** The check code the server sent next to the link: shown large, with the line that tells the visitor to compare it. */
   check?: string;
-  /** An https address the site made for this link; offered instead of the raw link. */
+  /** An https address the site made for this link (spec/CONTRACT-PAIR.md section 2); offered instead of the raw link, and what the QR code carries: it is short, so it always fits. */
   handoff?: string;
+  /** The typed form of the hand-off address (`K7MQ-3XPZ`), shown with the address of the page where it is entered. */
+  short?: string;
   /** The address of a web wallet the site recommends. Left out, it is the project's own (`DEFAULT_WEB_WALLET`); `null` offers none. */
   webWallet?: string | null;
   /** 'auto' (the default) hides the QR code on a phone, which cannot scan itself. */

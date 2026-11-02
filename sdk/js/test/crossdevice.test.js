@@ -68,12 +68,20 @@ describe('the plan', () => {
     assert.deepEqual(planCrossDevice({ link: LINK, handoff: HANDOFF }), { text: HANDOFF, textKind: 'handoff', walletUrl: null, qrText: HANDOFF, qrKind: 'handoff' });
   });
 
-  test('a web wallet makes the QR code open it, and keeps the text as it was', () => {
-    const plan = planCrossDevice({ link: LINK, handoff: HANDOFF, webWallet: WALLET });
-    assert.equal(plan.text, HANDOFF);
+  test('a web wallet makes the QR code open it when there is no hand-off address', () => {
+    const plan = planCrossDevice({ link: LINK, webWallet: WALLET });
+    assert.equal(plan.text, LINK);
     assert.equal(plan.qrKind, 'webwallet');
     assert.equal(plan.qrText, plan.walletUrl);
     assert.equal(plan.walletUrl, WALLET + '#link=' + LINK);
+  });
+
+  test('a hand-off address is what the QR code carries even when a web wallet is offered: it is short, and its page opens the wallet', () => {
+    const plan = planCrossDevice({ link: LINK, handoff: HANDOFF, webWallet: WALLET });
+    assert.equal(plan.text, HANDOFF);
+    assert.equal(plan.qrKind, 'handoff');
+    assert.equal(plan.qrText, HANDOFF);
+    assert.equal(plan.walletUrl, WALLET + '#link=' + LINK);              // the button for the web wallet stays
   });
 
   test('anything that is not a BYOA link, or not https, is refused', () => {
@@ -191,11 +199,48 @@ describe('the block', () => {
     assert.equal(role(block({ webWallet: WALLET }).root, 'webwallet').attrs.href, WALLET + '#link=' + LINK);
   });
 
-  test('a text too long for any QR code gets no QR code and no error', () => {
+  test('a text too long for any QR code gets no QR code and no error, and one plain line that says so', () => {
     const long = LINK + '&pad=' + 'a'.repeat(3000);
     const { root } = block({ link: long });
     assert.equal(role(root, 'qr'), null);
     assert.equal(role(root, 'text').value, long);                        // the text is still there to copy
+    assert.equal(role(root, 'qr-too-long').textContent, DEFAULT_LABELS.qrTooLong);
+  });
+
+  test('a link with a manifest in it (about 3,400 characters) does not fit: the web wallet\'s address is longer still, so the line says so; the hand-off address fits', () => {
+    const real = LINK + '&pad=' + 'a'.repeat(3300 - LINK.length);
+    assert.ok(real.length > 3200 && real.length < 3500);
+    const withWallet = block({ link: real, webWallet: WALLET }).root;
+    assert.equal(role(withWallet, 'qr'), null);
+    assert.ok(role(withWallet, 'qr-too-long'));
+    assert.equal(role(withWallet, 'webwallet').attrs.href, WALLET + '#link=' + real);   // the button still works: it is a link, not a code
+
+    const withHandoff = block({ link: real, handoff: HANDOFF, webWallet: WALLET }).root;
+    assert.equal(role(withHandoff, 'qr-too-long'), null);
+    const path = all(role(withHandoff, 'qr'), (n) => n.tag === 'path')[0];
+    assert.equal(path.attrs.d, qrPath(encodeQr(HANDOFF, 'L'), 4));                      // the QR code carries the hand-off address, whatever the link
+  });
+
+  test('no line about a QR code that is not wanted: on a phone, or with showQr false', () => {
+    const long = LINK + '&pad=' + 'a'.repeat(3000);
+    assert.equal(role(block({ link: long }, phone()).root, 'qr-too-long'), null);
+    assert.equal(role(block({ link: long, showQr: false }).root, 'qr-too-long'), null);
+  });
+
+  test('the short code is shown with the page where it is typed, the hand-off address without its token', () => {
+    const { root } = block({ handoff: HANDOFF, short: 'K7MQ3XPZ' });
+    assert.equal(role(root, 'short').textContent, 'K7MQ-3XPZ');
+    assert.equal(role(root, 'short-page').textContent, 'https://geo.example.org/byoa/hand');
+    assert.equal(role(root, 'short-how').textContent, DEFAULT_LABELS.shortHow);
+    assert.ok(!text(root).includes('Zm9vYmFyYmF6cXV4MTIzNDU2/'));
+    assert.equal(role(block({ handoff: HANDOFF }).root, 'short'), null);                    // none given, none shown
+    assert.equal(role(block({ short: 'K7MQ-3XPZ' }).root, 'short'), null);                  // a short code means nothing without the hand-off address
+  });
+
+  test('a short code that is not eight characters of the check alphabet is a mistake of the site, not shown', () => {
+    for (const bad of ['K7MQ', 'k7mq-3xpz', 'K7MQ-3XP0', '<b>K7MQ-3X</b>']) {
+      assert.throws(() => block({ handoff: HANDOFF, short: bad }), /short must be eight characters/);
+    }
   });
 
   test('the words can be replaced, and are set as text', () => {

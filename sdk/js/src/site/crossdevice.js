@@ -39,6 +39,8 @@ export const DEFAULT_LABELS = Object.freeze({
   qrHandoff: 'Or scan this with the camera of the device where your wallet is.',
   qrWebWallet: 'Or scan this with a phone’s camera to use the web wallet there.',
   qrAlt: 'QR code',
+  qrTooLong: 'This link is too long for a QR code. Copy it or share it instead.',
+  shortHow: 'No camera? On the device where your wallet is, open this page and type the code:',
 });
 
 /**
@@ -108,7 +110,10 @@ export async function checkCodeOf(session, subtle = globalThis.crypto?.subtle) {
 
 /**
  * What the block offers: the text to copy and share (the hand-off address when the site has one, since an https address is clickable
- * everywhere, else the link), and what the QR code carries (the web wallet's address when a web wallet is offered, else the same text).
+ * everywhere, else the link), and what the QR code carries: the hand-off address when the site has one (a few dozen characters, so it
+ * always fits, and the page it opens leads the phone's wallet to the link, CONTRACT-PAIR section 2), else the web wallet's address with the
+ * link in the fragment when a web wallet is offered, else the link. A real link carries the site's manifest and is often over 3,000
+ * characters, more than any QR code holds (2,953 bytes): that is what the hand-off address is for.
  * @returns {{ text: string, textKind: 'handoff'|'link', walletUrl: string|null, qrText: string, qrKind: 'webwallet'|'handoff'|'link' }}
  */
 export function planCrossDevice({ link, handoff = null, webWallet = null }) {
@@ -123,8 +128,8 @@ export function planCrossDevice({ link, handoff = null, webWallet = null }) {
     text,
     textKind: handoff ? 'handoff' : 'link',
     walletUrl,
-    qrText: walletUrl ?? text,
-    qrKind: walletUrl ? 'webwallet' : handoff ? 'handoff' : 'link',
+    qrText: handoff ?? walletUrl ?? text,
+    qrKind: handoff ? 'handoff' : walletUrl ? 'webwallet' : 'link',
   };
 }
 
@@ -162,8 +167,9 @@ function qrElement(doc, qr, label, pixels) {
  * @param {object} options
  * @param {string} options.link         The `bringyourownagent://connect?...` link the server made for this page.
  * @param {string} [options.check]      The check code the server sent next to the link; shown large, with the line that tells the visitor to compare it.
- * @param {string} [options.handoff]    An https address the site made for this link (CONTRACT-PAIR section 2); offered instead of the raw link.
- * @param {string|null} [options.webWallet=DEFAULT_WEB_WALLET]  The address of a web wallet the site recommends; adds a button and makes the QR code open it. `null` offers none.
+ * @param {string} [options.handoff]    An https address the site made for this link (CONTRACT-PAIR section 2); offered instead of the raw link, and what the QR code carries.
+ * @param {string} [options.short]      The typed form of the hand-off address (`K7MQ-3XPZ`), shown with the address of the page where it is typed.
+ * @param {string|null} [options.webWallet=DEFAULT_WEB_WALLET]  The address of a web wallet the site recommends; adds a button, and makes the QR code open it when there is no hand-off address. `null` offers none.
  * @param {boolean|'auto'} [options.showQr='auto']  'auto' hides the QR code on a phone (a phone cannot scan itself).
  * @param {'L'|'M'|'Q'|'H'} [options.qrEcl='L']
  * @param {number} [options.qrPixels=240]
@@ -178,6 +184,7 @@ export function createCrossDeviceBlock(options) {
   const labels = { ...DEFAULT_LABELS, ...options.labels };
   const plan = planCrossDevice({ ...options, webWallet: options.webWallet === undefined ? DEFAULT_WEB_WALLET : options.webWallet });
   if (options.check != null && !/^[ABCDEFGHJKMNPQRSTUVWXYZ2-9]{4}$/.test(options.check)) throw new TypeError('check must be four characters of the check alphabet');
+  if (options.short != null && !/^[ABCDEFGHJKMNPQRSTUVWXYZ2-9]{4}-?[ABCDEFGHJKMNPQRSTUVWXYZ2-9]{4}$/.test(options.short)) throw new TypeError('short must be eight characters of the check alphabet');
 
   const root = el(doc, 'section', { class: 'byoa-crossdevice', 'aria-label': labels.title });
   root.append(el(doc, 'h3', {}, labels.title));
@@ -235,7 +242,21 @@ export function createCrossDeviceBlock(options) {
     if (qr) {
       const note = plan.qrKind === 'webwallet' ? labels.qrWebWallet : plan.qrKind === 'handoff' ? labels.qrHandoff : labels.qrLink;
       root.append(el(doc, 'div', { class: 'byoa-qr', 'data-byoa-role': 'qr' }, qrElement(doc, qr, labels.qrAlt, options.qrPixels ?? 240), el(doc, 'p', { class: 'byoa-qr-note' }, note)));
+    } else {
+      // too long for any symbol (a link with a manifest in it): say so in one line, so the visitor looks at the link instead of for a code that is not there
+      root.append(el(doc, 'p', { class: 'byoa-qr-note', 'data-byoa-role': 'qr-too-long' }, labels.qrTooLong));
     }
+  }
+
+  if (options.short && plan.textKind === 'handoff') {
+    // the page where the typed form is entered is the hand-off address without its token
+    const page = plan.text.slice(0, plan.text.lastIndexOf('/'));
+    const typed = options.short.length === 8 ? `${options.short.slice(0, 4)}-${options.short.slice(4)}` : options.short;
+    root.append(
+      el(doc, 'p', { class: 'byoa-short', 'data-byoa-role': 'short-how' }, labels.shortHow),
+      el(doc, 'p', { class: 'byoa-short-page' }, el(doc, 'code', { 'data-byoa-role': 'short-page' }, page)),
+      el(doc, 'p', {}, el(doc, 'strong', { class: 'byoa-short-code', 'data-byoa-role': 'short', translate: 'no' }, typed)),
+    );
   }
   return root;
 }

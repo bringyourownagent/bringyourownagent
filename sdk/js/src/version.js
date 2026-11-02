@@ -1,2 +1,2 @@
 /** Version of this library (not of the protocol). */
-export const VERSION = '0.0.6';
+export const VERSION = '0.0.7';

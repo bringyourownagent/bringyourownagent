@@ -80,6 +80,12 @@ public sealed class DirectHub
         public string Manifest { get; } = manifest;
         public bool Used, Cancelled;
         public string? Pairing;
+        // the hand-off address of CONTRACT-PAIR.md §2, when the site offers one: a token and a short code for the same link, one use between them
+        public string? HandToken, HandShort;
+        /// <summary>The link the hand-off releases; dropped as it is released, so that it is given out once.</summary>
+        public string? HandLink;
+        public DateTimeOffset HandExpires;
+        public bool HandUsed;
     }
 
     sealed class Pairing(string token, string room)
@@ -94,6 +100,10 @@ public sealed class DirectHub
     readonly Dictionary<string, Code> _codes = new(StringComparer.Ordinal);
     readonly Dictionary<string, Pairing> _pairings = new(StringComparer.Ordinal);
     readonly Dictionary<string, Queue<DateTimeOffset>> _asked = new(StringComparer.Ordinal);
+    readonly Dictionary<string, Code> _handByToken = new(StringComparer.Ordinal);
+    readonly Dictionary<string, Code> _handByShort = new(StringComparer.Ordinal);
+    readonly Dictionary<string, Queue<DateTimeOffset>> _handWrong = new(StringComparer.Ordinal);       // wrong short codes, by visitor address
+    readonly Queue<DateTimeOffset> _handWrongAll = new();                                               // wrong short codes, all addresses together
     readonly TimeProvider _clock;
 
     /// <param name="options">The site's settings; <see cref="RelayOptions.ManifestJson"/> must be set.</param>
@@ -151,8 +161,17 @@ public sealed class DirectHub
 
     /// <summary>A new one-time code for this room's page and the link that carries it (built here, so the server knows exactly which
     /// manifest string it issued), with the check code the page shows while it waits; null when this address asked for too many in the
-    /// last minute or the server holds too many codes already.</summary>
-    public (string Code, string Link, string Check)? NewCode(string room, string? ip, string endpoint)
+    /// last minute or the server holds too many codes already. No hand-off address: <see cref="Issue"/> makes one.</summary>
+    public (string Code, string Link, string Check)? NewCode(string room, string? ip, string endpoint) =>
+        Issue(room, ip, endpoint) is { } issued ? (issued.Code, issued.Link, issued.Check) : null;
+
+    /// <summary>
+    /// <see cref="NewCode"/> and, when <paramref name="handOffBase"/> is given (<c>https://host/byoa/hand</c>), the hand-off address of
+    /// CONTRACT-PAIR.md §2 for the same code: <c>{handOffBase}/{token}</c> and the short code. The token is 192 random bits; the short
+    /// code is 8 characters of the check alphabet. Both live <see cref="RelayOptions.HandOffLifeSeconds"/> (never longer than the code),
+    /// are good for one use between them, and die with the code.
+    /// </summary>
+    public IssuedCode? Issue(string room, string? ip, string endpoint, string? handOffBase = null)
     {
         if (!IsRoomId(room)) return null;
         var now = Now;
@@ -166,8 +185,110 @@ public sealed class DirectHub
             times.Enqueue(now);
             var code = new Code(NewSecret(), room, now + CodeLife, Manifest);
             _codes[code.Value] = code;
-            return (code.Value, Link(endpoint, code.Manifest, code.Value), ConnectCheck.Compute(code.Value));
+            var link = Link(endpoint, code.Manifest, code.Value);
+            string? handoff = null, typed = null;
+            if (handOffBase is not null)
+            {
+                code.HandLink = link;
+                code.HandToken = NewSecret();
+                code.HandShort = NewShortCode();
+                var life = now + TimeSpan.FromSeconds(Math.Max(1, Options.HandOffLifeSeconds));
+                code.HandExpires = life < code.Expires ? life : code.Expires;
+                _handByToken[code.HandToken] = code;
+                _handByShort[code.HandShort] = code;
+                handoff = handOffBase.TrimEnd('/') + "/" + code.HandToken;
+                typed = FormatShortCode(code.HandShort);
+            }
+            return new IssuedCode(code.Value, link, ConnectCheck.Compute(code.Value), handoff, typed);
         }
+    }
+
+    // 8 characters of the check alphabet (31 symbols, about 40 bits), not in use by another live short code
+    string NewShortCode()
+    {
+        Span<char> chars = stackalloc char[ShortCodeLength];
+        while (true)
+        {
+            for (var i = 0; i < chars.Length; i++) chars[i] = ConnectCheck.Alphabet[RandomNumberGenerator.GetInt32(ConnectCheck.Alphabet.Length)];
+            var value = new string(chars);
+            if (!_handByShort.ContainsKey(value)) return value;
+        }
+    }
+
+    /// <summary>The length of a short code, without the hyphen.</summary>
+    public const int ShortCodeLength = 8;
+
+    /// <summary>A short code as it is shown and typed: <c>K7MQ-3XPZ</c>.</summary>
+    public static string FormatShortCode(string eight) => eight.Length == ShortCodeLength ? eight[..4] + "-" + eight[4..] : eight;
+
+    /// <summary>What a person typed, as the eight characters a short code is: capitals, no hyphen or spaces. Null when it cannot be a short code
+    /// (wrong length, or a character that is not in the check alphabet).</summary>
+    public static string? NormalizeShortCode(string? typed)
+    {
+        if (typed is null || typed.Length > 40) return null;
+        var chars = new List<char>(ShortCodeLength);
+        foreach (var c in typed)
+        {
+            if (c is '-' or ' ' or '‐' or '‑' or '–' or ' ') continue;
+            var up = char.ToUpperInvariant(c);
+            if (ConnectCheck.Alphabet.IndexOf(up) < 0) return null;
+            chars.Add(up);
+        }
+        return chars.Count == ShortCodeLength ? new string(chars.ToArray()) : null;
+    }
+
+    /// <summary>
+    /// A click on the hand-off page: swap a token (from the address) or a typed short code for the link, once (CONTRACT-PAIR.md §2). The
+    /// token answers <see cref="HandOffOutcome.Used"/> when it was spent and <see cref="HandOffOutcome.Gone"/> when it is unknown or has
+    /// died; a short code answers <see cref="HandOffOutcome.Wrong"/> for a wrong, a used and an expired code alike. More than
+    /// <see cref="RelayOptions.HandOffWrongTriesPer10Minutes"/> wrong short codes from one address in ten minutes, or more than
+    /// <see cref="RelayOptions.HandOffWrongTriesPerMinuteAll"/> in a minute from all, are <see cref="HandOffOutcome.Throttled"/>, whatever
+    /// the code. The code stays valid after its link is released, so that the wallet can still connect.
+    /// </summary>
+    /// <param name="token">The token of the hand-off address, or null.</param>
+    /// <param name="shortCode">What the visitor typed, or null. Used only when there is no token.</param>
+    /// <param name="ip">The visitor's address, for the limit on wrong short codes.</param>
+    public HandOffResult HandOffOpen(string? token, string? shortCode, string? ip)
+    {
+        var now = Now;
+        var key = IpKey.Of(ip);
+        lock (_gate)
+        {
+            Sweep(now);
+            Code? code;
+            if (token is not null)
+            {
+                if (!_handByToken.TryGetValue(token, out code)) return new HandOffResult(HandOffOutcome.Gone, null);
+                if (code.HandUsed) return new HandOffResult(HandOffOutcome.Used, null);
+                return HandAlive(code, now) ? ReleaseHandOff(code) : new HandOffResult(HandOffOutcome.Gone, null);
+            }
+
+            if (!_handWrong.TryGetValue(key, out var mine)) _handWrong[key] = mine = new Queue<DateTimeOffset>();
+            while (mine.Count > 0 && now - mine.Peek() >= HandWrongWindow) mine.Dequeue();
+            while (_handWrongAll.Count > 0 && now - _handWrongAll.Peek() >= TimeSpan.FromMinutes(1)) _handWrongAll.Dequeue();
+            if (mine.Count >= Math.Max(1, Options.HandOffWrongTriesPer10Minutes) || _handWrongAll.Count >= Math.Max(1, Options.HandOffWrongTriesPerMinuteAll))
+                return new HandOffResult(HandOffOutcome.Throttled, null);
+
+            var normal = NormalizeShortCode(shortCode);
+            if (normal is not null && _handByShort.TryGetValue(normal, out code) && HandAlive(code, now)) return ReleaseHandOff(code);
+            mine.Enqueue(now);
+            _handWrongAll.Enqueue(now);
+            return new HandOffResult(HandOffOutcome.Wrong, null);
+        }
+    }
+
+    static readonly TimeSpan HandWrongWindow = TimeSpan.FromMinutes(10);
+
+    // alive: not spent, within its own 120 seconds, and its code still waiting for a wallet (a code that was cancelled, used or has expired takes the hand-off with it)
+    static bool HandAlive(Code c, DateTimeOffset now) =>
+        c.HandToken is not null && c.HandLink is not null && !c.HandUsed && now < c.HandExpires && !c.Used && !c.Cancelled && now < c.Expires;
+
+    static HandOffResult ReleaseHandOff(Code c)
+    {
+        var link = c.HandLink;
+        c.HandUsed = true;
+        c.HandLink = null;                      // given out once; the code itself stays valid until its own expiry
+        return new HandOffResult(HandOffOutcome.Released, link);
     }
 
     /// <summary>Has the wallet come with this code? "waiting", "connected" (with the pairing token, for the page to keep) or "expired"
@@ -295,7 +416,13 @@ public sealed class DirectHub
     // old codes and pairings nobody uses any more are forgotten, and the rate table does not grow without end
     void Sweep(DateTimeOffset now)
     {
-        foreach (var c in _codes.Values.Where(c => c.Used ? now - c.Expires > UsedCodeKept : c.Cancelled || now >= c.Expires).ToList()) _codes.Remove(c.Value);
+        foreach (var c in _codes.Values.Where(c => c.Used ? now - c.Expires > UsedCodeKept : c.Cancelled || now >= c.Expires).ToList())
+        {
+            _codes.Remove(c.Value);
+            if (c.HandToken is not null) _handByToken.Remove(c.HandToken);
+            if (c.HandShort is not null) _handByShort.Remove(c.HandShort);
+        }
+        foreach (var k in _handWrong.Where(a => a.Value.Count == 0 || now - a.Value.Last() >= HandWrongWindow).Select(a => a.Key).ToList()) _handWrong.Remove(k);
         var idle = TimeSpan.FromHours(Math.Max(1, Options.PairingIdleHours));
         foreach (var p in _pairings.Values.Where(p => p.Live is null && now - p.LastUsed > idle).ToList()) _pairings.Remove(p.Token);
         foreach (var k in _asked.Where(a => a.Value.Count == 0 || now - a.Value.Last() > TimeSpan.FromMinutes(2)).Select(a => a.Key).ToList()) _asked.Remove(k);

@@ -35,7 +35,7 @@ keeps one visitor's wallet out of another visitor's page.
 
 | Endpoint | Body | Answer |
 |---|---|---|
-| `POST /api/r/{room}/byoa/code` | — | `{ session, link, check, expiresIn }` — the `bringyourownagent://connect` link, and the check code the page shows |
+| `POST /api/r/{room}/byoa/code` | — | `{ session, link, check, expiresIn }` — the `bringyourownagent://connect` link, and the check code the page shows; with `HandOff = true` also `handoff` and `short` (see below) |
 | `POST /api/r/{room}/byoa/wait` | `{ session }` | `{ state: "waiting" \| "connected" \| "expired", pairing, models, limits, capabilities }` |
 | `POST /api/r/{room}/byoa/cancel` | `{ session }` | `{ cancelled }` — the page stopped waiting |
 | `POST /api/r/{room}/byoa/status` | `{ pairing }` | `{ state: "live" \| "offline" \| "unknown", models, limits, skills, capabilities }` — after a reload |
@@ -44,6 +44,8 @@ keeps one visitor's wallet out of another visitor's page.
 | `POST /api/r/{room}/byoa/job/poll` | `{ id }` | `{ state: "pending" \| "done" \| "unknown", ok, text, partial, reason, lacks, images }` |
 | `POST /api/r/{room}/byoa/job/cancel` | `{ id }` | `{ cancelled }` — «Stop»: the answer is dropped and the wallet is told to stop the call |
 | `GET /byoa/ws` (WebSocket) | the wallet's frames | the wallet's channel |
+| `GET /byoa/hand`, `GET /byoa/hand/{token}` | — | with `HandOff = true`: the hand-off page (HTML), see below |
+| `POST /byoa/hand` | `{ token }` or `{ short }` | with `HandOff = true`: `{ link }` once; else `{ error: "used" \| "gone" \| "wrong" \| "slow" }` with 410, 410, 404, 429 |
 
 `models` is the list of `text.generate` participants, `[{ref,name,id,runs,kind,can?}]`, exactly as in 0.0.3: a page written for it keeps working. `modelsBySkill` is the wallet's contract shape, one list per skill: `{"text.generate":[...],"image.generate":[...]}`; it carries every skill the visitor gave the site (CONTRACT.md §3.3). Each entry also carries `can`, the wallet's verdicts for the conditions the site asked about in `needs` (booleans only, at most four keys), and an agent entry carries `abilities` the same way. `capabilities` is the wallet's closed list of supported features (`needs`, `can`, `kind`, `cancel`, `image.generate`, `images-in`, `parts`, `frame-limit`); an older wallet sends no `capabilities` (the field is `null`, not an empty list: an empty list means a wallet that understands none), and the page then knows it cannot check `needs` or `can`. The jobs stay text-only for now: `job` asks `text.generate` for a `ref` of the `text.generate` list.
 
@@ -69,6 +71,12 @@ request open behind a proxy. `state` never tells a «no» from a «no wallet».
 | `MaxModels` | `64` | Participants read out of one skill's list of a grant (at most eight skills are read) |
 | `MaxJobRequestBytes` | `1 500 000` | A bigger request body is refused (413) before it is read |
 | `CodeLifeSeconds` | `600` | How long a one-time code lives |
+| `HandOff` | `false` | Offer the hand-off address ([CONTRACT-PAIR.md](https://github.com/bringyourownagent/bringyourownagent/blob/main/spec/CONTRACT-PAIR.md) §2): a short address for a QR code, see below |
+| `HandOffPath`, `HandOffBaseUrl` | `/byoa/hand`, from the request | Where the page lives, and the site's public address when a proxy hides it (`https://example.org`) |
+| `HandOffLifeSeconds` | `120` | How long a hand-off address lives (never longer than its code) |
+| `HandOffWebWallet` | `https://wallet.bringyourownagent.org/` | The web wallet the page offers; `null` offers none |
+| `HandOffWrongTriesPer10Minutes`, `HandOffWrongTriesPerMinuteAll` | `5`, `60` | Wrong short codes one address may try, and the ceiling for all addresses together |
+| `HandOffLabels`, `HandOffLabelsFor` | English | The words of the page; `HandOffLabelsFor(HttpContext)` picks them per request (your own language logic) |
 | `CodesPerMinute`, `MaxCodes` | `10`, `2000` | Per visitor address, and the whole table |
 | `MaxPairings`, `PairingIdleHours` | `1000`, `24` | A full table makes room instead of refusing; idle pairings are forgotten |
 | `JobSeconds`, `JobsPerMinute`, `MaxJobsPerRoom`, `MaxJobs` | `300`, `30`, `24`, `2000` | How long a call may take and how many a page may start |
@@ -90,6 +98,54 @@ if (channel is not null && channel.Has("audio.transcribe"))
 
 `AddByoaRelay` registers the `DirectHub` and the `WalletJobs` as singletons, so a minimal-API handler takes them as parameters and any
 other class of yours takes them from its constructor.
+
+## The hand-off address (a QR code that fits)
+
+A link carries your manifest, so a real one is often over 3,000 characters, and no QR code holds that (2,953 bytes at most). With
+`HandOff = true` every code answer also carries a short address on your own host and a typed form of it
+([CONTRACT-PAIR.md](https://github.com/bringyourownagent/bringyourownagent/blob/main/spec/CONTRACT-PAIR.md) §2):
+
+```csharp
+builder.Services.AddByoaRelay(options =>
+{
+    options.ManifestJson = File.ReadAllText("wwwroot/byoa/manifest.json");
+    options.ConnectCheck = true;
+    options.HandOff = true;                       // the code answer gets "handoff" and "short"; the relay serves the page
+    // options.HandOffBaseUrl = "https://example.org";     // only if a proxy hides your host from the request
+    // options.HandOffLabels = new HandOffLabels { Lang = "ru", Title = "...", Open = "..." };   // your own words
+});
+```
+
+```json
+POST /api/r/{room}/byoa/code  ->  { "session": "...", "link": "bringyourownagent://connect?...", "check": "K7MQ", "expiresIn": 600,
+                                    "handoff": "https://example.org/byoa/hand/3kJ...", "short": "H4XR-2NQP" }
+```
+
+Your page gives `handoff` (and `short`) to `createCrossDeviceBlock` of `bringyourownagent/crossdevice`; its QR code then carries the
+hand-off address, which is under 100 characters. The visitor photographs it; the phone opens the page the relay serves, and one button
+opens the wallet: on a phone the web wallet address with the link (`<web wallet>#link=<link>`, which the Android wallet claims as an App
+Link, the web wallet takes otherwise), on a computer the `bringyourownagent://` link, with a second, smaller button for the web wallet.
+The wallet asks the visitor with the check code, as always.
+
+What the relay holds to, from the spec:
+
+- A token is 192 random bits and lives 120 seconds, until its first use, or as long as its code, whichever ends first. The code itself
+  stays valid after the link is released, so the wallet can still connect.
+- A `GET` of the page reveals nothing: the same page for every address of the right shape, no link, code or token in it, nothing of the
+  request reflected, `Cache-Control: no-store`, `Referrer-Policy: no-referrer`, `X-Robots-Tag: noindex`, and a Content-Security-Policy that
+  allows only the page's own script and style (by hash), connections to your host, and no framing. Previews, mail scanners and robots
+  that fetch it spend nothing.
+- The link comes only from a `POST` the page makes from a click, with the token in the body (JSON only: a form from another site cannot
+  send it), once. A second `POST` is told the link was used.
+- The short code is 8 characters of the check alphabet, typed in any case, with or without the hyphen, at `/byoa/hand`. A wrong, a used and
+  an expired code get the same answer. More than 5 wrong tries from one address in 10 minutes, or more than 60 from all addresses in a
+  minute, and every short-code try is refused with 429, the right code included.
+- The library never logs a token, a short code or a link. The page's address does hold the token, so your own web server's request log
+  records it for a `GET`; it is good for nothing after 120 seconds or its first use, and a `GET` never releases the link.
+- The page tries nothing to learn whether a wallet started: "no wallet", "declined" and "not yet" look the same to your site.
+
+The page's words are English; `HandOffLabels` replaces all of them, and `HandOffLabelsFor` picks a set per request when your site speaks
+several languages. They are set into the page as text, never as markup.
 
 ## The connect check code
 
